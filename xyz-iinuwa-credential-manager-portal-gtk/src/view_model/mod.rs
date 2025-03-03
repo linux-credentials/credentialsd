@@ -234,6 +234,7 @@ impl ViewModel {
                             UsbState::UserCancelled => break,
                             _ => {},
                         };
+                        async_std::task::sleep(Duration::from_millis(50)).await;
                     }
                 });
             }
