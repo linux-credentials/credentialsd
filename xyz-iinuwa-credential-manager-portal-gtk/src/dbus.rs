@@ -9,8 +9,9 @@ use base64::Engine;
 use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
+use libwebauthn::fido::AuthenticatorDataFlags;
 use libwebauthn::ops::webauthn::{MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
-use libwebauthn::proto::ctap2::{Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
+use libwebauthn::proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::{fdo, interface, connection::{self, Connection}, Result};
 
@@ -94,35 +95,64 @@ struct CredentialManager {
 impl CredentialManager {
     async fn create_credential(
         &self,
-        request: CreateCredentialRequest,
+        mut request: CreateCredentialRequest,
     ) -> fdo::Result<CreateCredentialResponse> {
         if let Some(tx) = self.app_lock.try_lock() {
             let origin = request
                 .origin
                 .clone()
                 .unwrap_or("xyz.iinuwa.credentials.CredentialManager:local".to_string());
+            let is_same_origin = request.is_same_origin.unwrap_or(false);
             let response = match (
                 request.r#type.as_ref(),
                 &request.password,
                 &request.public_key,
             ) {
                 ("password", Some(password_request), _) => {
-                    let password_response = create_password(&origin, password_request).await?;
+                    let password_response = create_password(&origin, is_same_origin, password_request).await?;
                     Ok(password_response.into())
                 }
                 ("publicKey", _, Some(passkey_request)) => {
-                    let make_cred_request = request.clone().try_into().map_err(|_| fdo::Error::Failed("Could not parse passkey creation request.".to_owned()))?;
+                    _ = request.origin.get_or_insert("xyz.iinuwa.credentials.CredentialManager:local".to_string());
+                    let (make_cred_request, client_data_json) = request.clone().try_into_ctap2_request().map_err(|_| fdo::Error::Failed("Could not parse passkey creation request.".to_owned()))?;
                     let request = CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
                     let (data_tx, data_rx) = async_std::channel::bounded(1);
                     tx.send((request, data_tx)).await.unwrap();
                     let data_rx = Arc::new(data_rx);
                     if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = data_rx.recv().await.unwrap() {
-                        let id = cred_response.authenticator_data.attested_credential.unwrap().credential_id;
+                        // TODO: Cred ID should always be returned from a make
+                        // credential ceremony, but the only way to get it is to
+                        // unwrap the optional attested credential. Should we
+                        // update the API? I think we can make
+                        // attested_credential required and have
+                        // make_credential() return an error instead if attested
+                        // credential is not parsed from authenticator response.
+                        let attested_credential = cred_response.authenticator_data.attested_credential.as_ref().expect("attested credential data to exist");
+                        let public_key = encode_public_key(&attested_credential.credential_public_key)?;
+                        cred_response.authenticator_data.signature_count;
+                        let attested_credential_data =
+                            webauthn::create_attested_credential_data(&attested_credential.credential_id, &public_key, &attested_credential.aaguid).unwrap();
+
+                        let auth_data = &cred_response.authenticator_data;
+                        let authenticator_data_blob = create_authenticator_data(
+                            &auth_data.rp_id_hash,
+                            &auth_data.flags,
+                            (&auth_data).signature_count,
+                            Some(&attested_credential_data),
+                            // TODO: what's the format for extensions... JSON?
+                            auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref(),
+                        );
+                        let attestation_object = create_attestation_object(
+                            &authenticator_data_blob,
+                            &cred_response.attestation_statement,
+                            cred_response.enterprise_attestation.unwrap_or(false),
+                        )?;
+                        // do we need to check that the client_data_hash is the same?
                         let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
-                            id,
-                            vec![],
-                            vec![],
-                            "{\"type\":\"webauthn.create\", /* BOGUS */}".to_string(),
+                            attested_credential.credential_id.clone(),
+                            attestation_object,
+                            authenticator_data_blob,
+                            client_data_json,
                             Some(vec!["usb".to_string()]),
                             None,
                         ).to_json();
@@ -151,6 +181,7 @@ impl CredentialManager {
 
 async fn create_password(
     origin: &str,
+    is_same_origin: bool,
     request: &CreatePasswordCredentialRequest,
 ) -> fdo::Result<CreatePasswordCredentialResponse> {
     /*
@@ -179,6 +210,7 @@ async fn create_password(
 
 async fn create_passkey(
     origin: &str,
+    is_same_origin: bool,
     request: &CreatePublicKeyCredentialRequest,
 ) -> fdo::Result<CreatePublicKeyCredentialResponse> {
     let (response, cred_source, user) =
@@ -225,11 +257,114 @@ async fn create_passkey(
 #[zvariant(signature = "dict")]
 pub struct CreateCredentialRequest {
     origin: Option<String>,
+    is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     r#type: String,
     password: Option<CreatePasswordCredentialRequest>,
     #[zvariant(rename = "publicKey")]
     public_key: Option<CreatePublicKeyCredentialRequest>,
+}
+
+impl CreateCredentialRequest {
+    fn try_into_ctap2_request(&self) -> std::result::Result<(MakeCredentialRequest, String), webauthn::Error> {
+        if self.public_key.is_none() {
+            return Err(webauthn::Error::NotSupported);
+        }
+        let options = self.public_key.as_ref().unwrap();
+        let request_value = serde_json::from_str::<serde_json::Value>(&options.request_json)
+            .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+        let json = request_value
+            .as_object()
+            .ok_or_else(|| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+        let challenge = json
+            .get("challenge")
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| webauthn::Error::Internal("JSON missing `challenge` field".to_string()))?
+            .to_owned();
+        let rp = json
+            .get("rp")
+            .and_then(|val| serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok())
+            .ok_or_else(|| webauthn::Error::Internal("JSON missing `rp` field".to_string()))?;
+        let user = json
+            .get("user")
+            .ok_or(webauthn::Error::Internal("JSON missing `user` field".to_string()))
+            .and_then(|val| {
+                serde_json::from_str::<Ctap2PublicKeyCredentialUserEntity>(&val.to_string()).map_err(|e| {
+                    let msg = format!("JSON missing `user` field: {e}");
+                    webauthn::Error::Internal(msg)
+                })
+            })?;
+        let other_options = serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
+            .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+        let (require_resident_key, user_verification) =
+            if let Some(authenticator_selection) = other_options.authenticator_selection {
+                let is_authenticator_storage_capable = true;
+                let require_resident_key = authenticator_selection.resident_key.map_or_else(
+                    || false,
+                    |r| r == "required" || (r == "preferred" && is_authenticator_storage_capable),
+                ); // fallback to authenticator_selection.require_resident_key == true for WebAuthn Level 1?
+
+                let user_verification = authenticator_selection.user_verification.map(|uv| match uv.as_ref() {
+                    "required" => UserVerificationRequirement::Required,
+                    "preferred" => UserVerificationRequirement::Preferred,
+                    "discouraged" => UserVerificationRequirement::Discouraged,
+                    _ => todo!("This should be fixed in the future"),
+                }).unwrap_or(UserVerificationRequirement::Preferred);
+
+                (require_resident_key, user_verification)
+            } else {
+                (false, UserVerificationRequirement::Preferred)
+            };
+        let extensions = None;
+        let credential_parameters = request_value
+            .clone()
+            .get("pubKeyCredParams")
+            .ok_or_else(|| {
+                webauthn::Error::Internal("Request JSON missing or invalid `pubKeyCredParams` key".to_string())
+            })
+            .and_then(|val| -> std::result::Result<Vec<_>, webauthn::Error> {
+                serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string()).map_err(
+                    |e| {
+                        webauthn::Error::Internal(format!(
+                            "Request JSON missing or invalid `pubKeyCredParams` key: {e}"
+                        ))
+                    },
+                )
+            })?;
+        let algorithms = credential_parameters.iter().filter_map(|p| p.try_into().ok()).collect();
+        let exclude = other_options.excluded_credentials
+            .map(|v|
+                v.iter().map(|e| e.try_into())
+                    .filter_map(|e| e.ok())
+                    .collect());
+        let (origin, is_cross_origin) = match (self.origin.as_ref(), self.is_same_origin.as_ref()) {
+            (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
+            (Some(origin), None) => (origin.to_string(), true),
+            // origin should always be set on request either by client or D-Bus service,
+            // so this shouldn't be called
+            (None, _) => {
+                return Err(webauthn::Error::Internal("Error reading origin from request".to_string()));
+            }
+        };
+        let client_data_json = format_client_data_json(Operation::Create { cred_type: CredentialType::Passkey }, &challenge, &origin, is_cross_origin);
+        let client_data_hash = digest::digest(&digest::SHA256, client_data_json.as_bytes())
+            .as_ref()
+            .to_owned();
+        Ok((MakeCredentialRequest {
+            hash: client_data_hash,
+            origin,
+
+            relying_party: rp,
+            user,
+            require_resident_key,
+            user_verification,
+            algorithms,
+            exclude,
+            extensions,
+            timeout: other_options.timeout.unwrap_or(Duration::from_secs(300)),
+
+        }, client_data_json))
+    }
 }
 
 #[derive(Clone, Debug, DeserializeDict, Type)]
@@ -296,107 +431,107 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
     }
 }
 
-impl TryFrom<CreateCredentialRequest> for MakeCredentialRequest {
-    type Error = crate::webauthn::Error;
+fn format_client_data_json(op: Operation, challenge: &str, origin: &str, is_cross_origin: bool) -> String {
+    let op_str = match op {
+        Operation::Create { .. } => "webauthn.create",
+        Operation::Get  { .. }=> "webauthn.get",
+    };
+    let cross_origin_str = if is_cross_origin { "true" } else { "false" };
+    format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
+}
 
-    fn try_from(value: CreateCredentialRequest) -> std::result::Result<Self, Self::Error> {
-        MakeCredentialRequest::try_from(&value)
+/// returns CTAP2-serialized public key and algorithm
+fn encode_public_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>> {
+    match public_key {
+            cosey::PublicKey::P256Key(p256_key) => {
+            let mut cose_key: Vec<u8> = Vec::new();
+            cose_key.push(0b101_00101); // map with 5 items
+            cose_key.extend([0b000_00001, 0b000_00010]); // kty (1): EC2 (2)
+            cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): ECDSA-SHA256 (-7)
+            cose_key.extend([0b001_00000, 0b000_00001]); // crv (-1): P256 (1)
+            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
+            cose_key.extend(p256_key.x.clone());
+            cose_key.extend([0b001_00010, 0b010_11000, 0b0010_0000]); // y (-3): <32-byte string>
+            cose_key.extend(p256_key.y.clone());
+            Ok(cose_key)
+        },
+        cosey::PublicKey::Ed25519Key(ed25519_key) => {
+            // TODO: Check this
+            let mut cose_key: Vec<u8> = Vec::new();
+            cose_key.push(0b101_00100); // map with 4 items
+            cose_key.extend([0b000_00001, 0b000_00001]); // kty (1): OKP (1)
+            cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): EdDSA (-8)
+            cose_key.extend([0b001_00000, 0b000_00110]); // crv (-1): ED25519 (6)
+            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
+            cose_key.extend(ed25519_key.x.clone());
+            Ok(cose_key)
+        },
+        _ => return Err(zbus::Error::Failure(format!("Cannot serialize unknown key type {:?}", public_key))),
     }
 }
-impl TryFrom<&CreateCredentialRequest> for MakeCredentialRequest {
-    type Error = crate::webauthn::Error;
 
-    fn try_from(value: &CreateCredentialRequest) -> std::result::Result<Self, Self::Error> {
-        if value.public_key.is_none() {
-            return Err(Self::Error::NotSupported);
-        }
-        let options = value.public_key.as_ref().unwrap();
-        let request_value = serde_json::from_str::<serde_json::Value>(&options.request_json)
-            .map_err(|_| Self::Error::Internal("Invalid request JSON".to_string()))?;
-        let json = request_value
-            .as_object()
-            .ok_or_else(|| Self::Error::Internal("Invalid request JSON".to_string()))?;
-        let challenge = json
-            .get("challenge")
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| Self::Error::Internal("JSON missing `challenge` field".to_string()))?
-            .to_owned();
-        let rp = json
-            .get("rp")
-            .and_then(|val| serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok())
-            .ok_or_else(|| Self::Error::Internal("JSON missing `rp` field".to_string()))?;
-        let user = json
-            .get("user")
-            .ok_or(Self::Error::Internal("JSON missing `user` field".to_string()))
-            .and_then(|val| {
-                serde_json::from_str::<Ctap2PublicKeyCredentialUserEntity>(&val.to_string()).map_err(|e| {
-                    let msg = format!("JSON missing `user` field: {e}");
-                    Self::Error::Internal(msg)
-                })
-            })?;
-        let other_options = serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
-            .map_err(|_| Self::Error::Internal("Invalid request JSON".to_string()))?;
-        let (require_resident_key, user_verification) =
-            if let Some(authenticator_selection) = other_options.authenticator_selection {
-                let is_authenticator_storage_capable = true;
-                let require_resident_key = authenticator_selection.resident_key.map_or_else(
-                    || false,
-                    |r| r == "required" || (r == "preferred" && is_authenticator_storage_capable),
-                ); // fallback to authenticator_selection.require_resident_key == true for WebAuthn Level 1?
+fn create_authenticator_data(rp_id_hash: &[u8], flags: &AuthenticatorDataFlags, signature_counter: u32, attested_credential_data: Option<&[u8]>, extensions: Option<&[u8]>) -> Vec<u8> {
+    let mut authenticator_data: Vec<u8> = Vec::new();
+    authenticator_data.extend(rp_id_hash);
 
-                let user_verification = authenticator_selection.user_verification.map(|uv| match uv.as_ref() {
-                    "required" => UserVerificationRequirement::Required,
-                    "preferred" => UserVerificationRequirement::Preferred,
-                    "discouraged" => UserVerificationRequirement::Discouraged,
-                    _ => todo!("This should be fixed in the future"),
-                }).unwrap_or(UserVerificationRequirement::Preferred);
+    authenticator_data.push(flags.bits());
 
-                (require_resident_key, user_verification)
-            } else {
-                (false, UserVerificationRequirement::Preferred)
-            };
-        let extensions = None;
-        let credential_parameters = request_value
-            .clone()
-            .get("pubKeyCredParams")
-            .ok_or_else(|| {
-                Self::Error::Internal("Request JSON missing or invalid `pubKeyCredParams` key".to_string())
-            })
-            .and_then(|val| -> std::result::Result<Vec<_>, webauthn::Error> {
-                serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string()).map_err(
-                    |e| {
-                        Self::Error::Internal(format!(
-                            "Request JSON missing or invalid `pubKeyCredParams` key: {e}"
-                        ))
-                    },
-                )
-            })?;
-        let algorithms = credential_parameters.iter().filter_map(|p| p.try_into().ok()).collect();
-        let exclude = other_options.excluded_credentials
-            .map(|v|
-                v.iter().map(|e| e.try_into())
-                    .filter_map(|e| e.ok())
-                    .collect());
-        let origin = value.origin.as_ref().map_or_else(|| "xyz.iinuwa.credentials.CredentialManager:local", |s| &s).to_string();
-        let cross_origin = true;
-        let cross_origin_str = if cross_origin { "true" } else { "false" };
-        let client_data_json = format!("{{\"type\":\"webauthn.create\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}");
-        let client_data_hash = digest::digest(&digest::SHA256, client_data_json.as_bytes())
-            .as_ref()
-            .to_owned();
-        Ok(MakeCredentialRequest {
-            hash: client_data_hash,
-            origin,
+    authenticator_data.extend(signature_counter.to_be_bytes());
 
-            relying_party: rp,
-            user,
-            require_resident_key,
-            user_verification,
-            algorithms,
-            exclude,
-            extensions,
-            timeout: other_options.timeout.unwrap_or(Duration::from_secs(300)),
-
-        })
+    if let Some(attested_credential_data) = attested_credential_data {
+        authenticator_data.extend(attested_credential_data);
     }
+
+    if extensions.is_some() {
+        todo!("Implement processed extensions");
+        // TODO: authenticator_data.append(processed_extensions.to_bytes());
+    }
+    authenticator_data
+}
+
+fn create_attestation_object(
+    authenticator_data: &[u8],
+    attestation_statement:&Ctap2AttestationStatement,
+    _enterprise_attestation_possible: bool,
+) -> Result<Vec<u8>> {
+    let mut attestation_object = Vec::new();
+    let mut cbor_writer = crate::cbor::CborWriter::new(&mut attestation_object);
+    cbor_writer.write_map_start(3).unwrap();
+    cbor_writer.write_text("fmt").unwrap();
+    match attestation_statement {
+        Ctap2AttestationStatement::PackedOrAndroid(att_stmt) => {
+            cbor_writer.write_text("packed").unwrap();
+            cbor_writer.write_text("attStmt").unwrap();
+            let len = if att_stmt.certificates.is_empty() { 2 } else { 3 };
+            cbor_writer.write_map_start(len).unwrap();
+            cbor_writer.write_text("alg").unwrap();
+            let alg = match att_stmt.algorithm {
+                Ctap2COSEAlgorithmIdentifier::ES256 => -7,
+                Ctap2COSEAlgorithmIdentifier::EDDSA => -8,
+                // TODO: What's this?
+                Ctap2COSEAlgorithmIdentifier::TOPT => return Err(zbus::Error::Failure(format!("Unknown public key algorithm type: {:?}", att_stmt.algorithm))),
+            };
+            cbor_writer.write_number(alg).unwrap();
+            cbor_writer.write_text("sig").unwrap();
+            cbor_writer.write_bytes(att_stmt.signature.as_ref()).unwrap();
+            if !att_stmt.certificates.is_empty() {
+                cbor_writer.write_text("x5c").unwrap();
+                cbor_writer.write_array_start(att_stmt.certificates.len()).unwrap();
+                for cert in att_stmt.certificates.iter() {
+                    cbor_writer.write_bytes(cert).unwrap();
+                }
+            }
+        },
+        Ctap2AttestationStatement::None(_) => {
+            cbor_writer.write_text("none").unwrap();
+            cbor_writer.write_text("attStmt").unwrap();
+            cbor_writer.write_map_start(0).unwrap();
+        }
+        _ => return Err(zbus::Error::Failure(format!("Unsupported attestation type: {:?}", attestation_statement))),
+    };
+
+    cbor_writer.write_text("authData").unwrap();
+    cbor_writer.write_bytes(authenticator_data).unwrap();
+
+    Ok(attestation_object)
 }

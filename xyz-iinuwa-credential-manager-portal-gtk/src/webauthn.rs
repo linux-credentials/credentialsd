@@ -549,7 +549,7 @@ fn sign_attestation(
     }
 }
 
-fn create_attested_credential_data(
+pub(crate) fn create_attested_credential_data(
     credential_id: &[u8],
     public_key: &[u8],
     aaguid: &[u8],
