@@ -99,7 +99,7 @@ impl ViewModel {
                                 ViewUpdate::SetCredentials(credentials) => { view_model.update_credentials(&credentials) },
                                 ViewUpdate::SelectDevice(device) => { view_model.select_device(&device) },
                                 ViewUpdate::SelectCredential(cred_id) => { view_model.select_credential(cred_id) },
-                                ViewUpdate::UsbNeedsPin => { view_model.set_usb_pin_entry_visible(true) },
+                                ViewUpdate::UsbNeedsPin { attempts_left } => { view_model.set_usb_pin_entry_visible(true) },
                                 ViewUpdate::Completed => { view_model.set_completed(true) },
                             }
                         },

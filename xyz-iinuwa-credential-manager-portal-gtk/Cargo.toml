@@ -19,3 +19,6 @@ serde_json = "1.0.138"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
 zbus = "5.5.0"
+xdg-credentials-portal = { path = "../../libwebauthn/libwebauthn" }
+async-trait = "0.1.86"
+tokio = { version = "1", features = ["rt-multi-thread"] }

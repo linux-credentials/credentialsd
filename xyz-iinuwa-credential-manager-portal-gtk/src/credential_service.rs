@@ -1,33 +1,38 @@
 use std::{
     ops::Add,
-    sync::{Arc, Mutex},
-    thread,
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_std::task;
+use async_trait::async_trait;
+use libwebauthn::{self, pin::PinProvider, proto::ctap2::Ctap2MakeCredentialResponse, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
 
-use crate::view_model::{Device, InternalPinState, Transport};
+use async_std::{channel::TryRecvError, sync::{Arc as AsyncArc, Mutex as AsyncMutex}, task};
+use tokio::runtime::Runtime;
+use tracing::warn;
+
+use crate::{dbus::{CredentialRequest, CredentialResponse}, view_model::{Device, InternalPinState, Transport}};
 
 #[derive(Debug)]
 pub struct CredentialService {
     devices: Vec<Device>,
 
-    usb_state: UsbState,
-    usb_poll_count: i32,
-    usb_needs_pin: bool,
-    usb_pin_entered: bool,
+    usb_state: AsyncArc<AsyncMutex<UsbState>>,
+    usb_uv_handler: UsbUvHandler,
 
     internal_device_credentials: Vec<CredentialMetadata>,
     internal_device_state: InternalDeviceState,
     internal_pin_attempts_left: u32,
     internal_pin_unlock_time: Option<SystemTime>,
 
-    data: Arc<Mutex<Option<(Device, String)>>>,
+
+    cred_request: CredentialRequest,
+    // Place to store data to be returned to the caller
+    cred_response: Arc<Mutex<Option<CredentialResponse>>>,
 }
 
 impl CredentialService {
-    pub fn new(data: Arc<Mutex<Option<(Device, String)>>>) -> Self {
+    pub fn new(cred_request: CredentialRequest, cred_response: Arc<Mutex<Option<(CredentialResponse)>>>) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -52,20 +57,21 @@ impl CredentialService {
                 username: String::from("cooliojoe"),
             },
         ];
+        let usb_state = AsyncArc::new(AsyncMutex::new(UsbState::Idle));
         Self {
             devices,
 
-            usb_state: UsbState::Idle,
-            usb_poll_count: -1,
-            usb_needs_pin: false,
-            usb_pin_entered: false,
+            usb_state: usb_state.clone(),
+            usb_uv_handler: UsbUvHandler::new(),
 
             internal_device_credentials,
             internal_device_state: InternalDeviceState::Idle,
             internal_pin_attempts_left: 5,
             internal_pin_unlock_time: None,
 
-            data,
+            cred_request,
+            cred_response,
+
         }
     }
 
@@ -73,76 +79,135 @@ impl CredentialService {
         Ok(self.devices.to_owned())
     }
 
-    pub(crate) async fn start_device_discovery_usb(&mut self) -> Result<UsbPollResponse, ()> {
+    pub(crate) async fn start_device_discovery_usb(&mut self) -> Result<(), String> {
         println!("frontend: Start USB flow");
-        self.usb_state = UsbState::Waiting;
-        self.usb_poll_count = 0;
-        self.usb_needs_pin = true;
-        self.usb_pin_entered = false;
-        Ok(UsbPollResponse {
-            state: self.usb_state,
-            poll_count: self.usb_poll_count,
-            needs_pin: self.usb_needs_pin,
-            pin_entered: self.usb_pin_entered,
-        })
+        if *self.usb_state.lock().await != UsbState::Idle {
+            return Err("Ongoing USB request already happening.".to_owned());
+        }
+        Ok(())
     }
 
     pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
-        thread::sleep(Duration::from_millis(25));
-
-        match self.usb_state {
-            // process polling
-            UsbState::Waiting => {}
-            UsbState::Idle => return Err(String::from("USB polling not started.")),
-            // UsbPinState::Completed => return Err(String::from("USB polling not started.")),
-            _ => {}
+        let devices = libwebauthn::transport::hid::list_devices().await.unwrap();
+        if devices.is_empty() {
+            let state = UsbState::Waiting;
+            *self.usb_state.lock().await = state;
+            return Ok(state);
         }
 
-        let prev_state = self.usb_state;
-        let mut msg = None;
+        let prev_usb_state = self.usb_state.lock().await.clone();
+        let next_usb_state = match prev_usb_state {
+            UsbState::Idle => {
+                if devices.is_empty() {
+                    Ok(UsbState::Waiting)
+                }
+                else {
+                    Ok(UsbState::Connected)
+                }
+            },
+            UsbState::Waiting => {
+                if devices.is_empty() {
+                    Ok(UsbState::Waiting)
+                }
+                else {
+                    Ok(UsbState::Connected)
+                }
+            },
+            UsbState::Connected => {
+                if devices.is_empty() {
+                    Ok(UsbState::Waiting)
+                }
+                else {
+                    // TODO: I'm not sure how we want to handle multiple usb devices
+                    // just take the first one found for now.
+                    // TODO: store this device reference, perhaps in the enum itself
+                    let handler = self.usb_uv_handler.clone();
+                    let pin_provider: Box<dyn PinProvider> = Box::new(self.usb_uv_handler.clone());
+                    let cred_request = self.cred_request.clone();
+                    tokio().spawn( async move {
+                         match cred_request {
+                            CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
+                                let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
+                                let device = devices.first_mut().unwrap();
+                                let mut channel = device.channel().await.unwrap();
+                                loop {
+                                     match channel
+                                        .webauthn_make_credential(&make_cred_request, &pin_provider)
+                                        .await
+                                    {
+                                        Ok(response) => {
+                                            handler.notify_ceremony_completed(response).await;
+                                            break
+                                        },
+                                        Err(WebAuthnError::Ctap(ctap_error)) if ctap_error.is_retryable_user_error() => {
+                                            warn!("Retrying WebAuthn make credential operation");
+                                            continue;
+                                        },
+                                        Err(err) => {
+                                            handler.notify_ceremony_failed(err.to_string()).await;
+                                            break;
+                                        }
+                                    };
+                                };
+                            }
+                        };
+                    });
+                    match self.usb_uv_handler.wait_for_notification().await {
+                        Ok(UsbUvMessage::NeedsPin { attempts_left }) => {
+                            Ok(UsbState::NeedsPin { attempts_left})
+                        },
+                        Ok(UsbUvMessage::ReceivedCredential(response)) => {
+                            let mut cred_response = self.cred_response.lock().unwrap();
+                            cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(response));
+                            Ok(UsbState::Completed)
+                        },
+                        Err(err) => Err(err),
 
-        self.usb_poll_count += 1;
-        if self.usb_poll_count < 10 {
-            self.usb_state = UsbState::Waiting;
-        } else if self.usb_poll_count < 20 {
-            msg.replace("frontend: Discovered FIDO USB key");
-            self.usb_state = UsbState::Connected;
-            self.usb_needs_pin = true; // This may be false for U2F devices or devices that don't support user verification.
-        } else if self.usb_poll_count < 25 && self.usb_state == UsbState::Connected {
-            if self.usb_needs_pin {
-                msg.replace("frontend: FIDO USB token requested PIN unlock");
-                self.usb_state = UsbState::NeedsPin;
-            } else {
-                msg.replace(
-                    "frontend: Received user verification and credential from FIDO USB device.",
-                );
-                self.usb_poll_count = -1;
-                self.usb_state = UsbState::Completed;
+                    }
+                }
             }
-        }
+            UsbState::NeedsPin{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
+                Err("No more USB attempts left".to_string())
+            },
+            UsbState::NeedsPin { .. } => {
+                match self.usb_uv_handler.check_notification().await? {
+                    Some(UsbUvMessage::NeedsPin { attempts_left }) => {
+                        Ok(UsbState::NeedsPin { attempts_left})
+                    },
+                    Some(UsbUvMessage::ReceivedCredential(response)) => {
+                        let mut cred_response = self.cred_response.lock().unwrap();
+                        cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(response));
+                        Ok(UsbState::Completed)
+                    },
+                    None => Ok(prev_usb_state),
+                }
+            }
+            UsbState::Completed => {
+                Ok(prev_usb_state)
+            }
+            UsbState::UserCancelled => {
+                Ok(prev_usb_state)
+            }
+        }?;
 
-        if prev_state != self.usb_state && msg.is_some() {
-            println!("{}", msg.unwrap());
-        }
-        Ok(self.usb_state)
+        *self.usb_state.lock().await = next_usb_state;
+        Ok(next_usb_state)
     }
 
     pub(crate) async fn cancel_device_discovery_usb(&mut self) -> Result<(), String> {
-        self.usb_state = UsbState::Idle;
-        self.usb_poll_count = -1;
+        *self.usb_state.lock().await = UsbState::Idle;
         println!("frontend: Cancel USB request");
         Ok(())
     }
 
-    pub(crate) async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<bool, ()> {
-        if self.usb_state != UsbState::NeedsPin {
-            return Err(());
-        }
-        if pin == "123456" {
-            self.usb_state = UsbState::Completed;
-            Ok(true)
-        } else {
-            Ok(false)
+    pub(crate) async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()> {
+        let current_state = self.usb_state.lock().await.clone();
+        match current_state {
+            UsbState::NeedsPin { attempts_left: Some(attempts_left) } if attempts_left > 1 => {
+                self.usb_uv_handler.send_pin(pin).await;
+                Ok(())
+            }
+            _ => Err(())
         }
     }
 
@@ -231,9 +296,9 @@ impl CredentialService {
         Ok(())
     }
 
-    pub(crate) fn complete_auth(&mut self, device: &Device, cred_id: &str) {
-        let mut data = self.data.lock().unwrap();
-        data.replace((device.clone(), cred_id.to_owned()));
+    pub(crate) fn complete_auth(&mut self) {
+        // let mut data = self.output_data.lock().unwrap();
+        // data.replace((self.cred_response));
     }
 }
 
@@ -258,7 +323,7 @@ pub enum UsbState {
     Connected,
 
     /// The device needs the PIN to be entered.
-    NeedsPin,
+    NeedsPin { attempts_left: Option<u32> },
 
     /// USB tapped, received credential
     Completed,
@@ -312,4 +377,77 @@ pub(crate) struct CredentialMetadata {
 
     /// Username of credential, if any.
     pub(crate) username: String,
+}
+
+
+#[derive(Clone, Debug)]
+pub struct UsbUvHandler {
+    signal_tx: async_std::channel::Sender<Result<UsbUvMessage, String>>,
+    signal_rx: async_std::channel::Receiver<Result<UsbUvMessage, String>>,
+    pin_tx: async_std::channel::Sender<String>,
+    pin_rx: async_std::channel::Receiver<String>,
+}
+
+impl UsbUvHandler {
+    fn new() -> Self {
+        let (signal_tx, signal_rx) = async_std::channel::unbounded();
+        let (pin_tx, pin_rx) = async_std::channel::unbounded();
+        UsbUvHandler {
+            signal_tx,
+            signal_rx,
+            pin_tx,
+            pin_rx
+        }
+    }
+
+    async fn notify_ceremony_completed(&self, response: Ctap2MakeCredentialResponse) {
+        self.signal_tx.send(Ok(UsbUvMessage::ReceivedCredential(response))).await.unwrap();
+    }
+
+    async fn notify_ceremony_failed(&self, err: String) {
+        self.signal_tx.send(Err(err)).await.unwrap();
+    }
+
+    async fn send_pin(&self, pin: &str) {
+        self.pin_tx.send(pin.to_owned()).await.unwrap();
+    }
+
+    async fn wait_for_notification(&self) -> Result<UsbUvMessage, String> {
+        match self.signal_rx.recv().await {
+            Ok(msg) => msg,
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
+    async fn check_notification(&self) -> Result<Option<UsbUvMessage>, String> {
+        match self.signal_rx.try_recv() {
+            Ok(msg) => Ok(Some(msg?)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Closed) => Err("USB UV handler channel closed".to_string()),
+        }
+    }
+}
+
+#[async_trait]
+impl PinProvider for UsbUvHandler {
+    async fn provide_pin(&self, attempts_left:Option<u32>) -> Option<String> {
+        let _ = self.signal_tx.send(Ok(UsbUvMessage::NeedsPin { attempts_left })).await;
+        if attempts_left.map_or(false, |num| num <= 1) {
+            return None;
+        }
+        if let Ok(pin) = self.pin_rx.recv().await {
+            Some(pin)
+        } else { None }
+    }
+}
+
+enum UsbUvMessage {
+    NeedsPin { attempts_left: Option<u32> },
+    ReceivedCredential(Ctap2MakeCredentialResponse),
+}
+fn tokio() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Runtime::new().expect("Tokio runtime to start")
+    })
 }

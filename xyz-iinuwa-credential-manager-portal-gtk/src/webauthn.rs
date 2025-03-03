@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use cose::{CoseKeyAlgorithmIdentifier, CoseKeyType, encode_public_key};
+use libwebauthn::proto::ctap2::{Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport};
 use openssl::{pkey::PKey, rsa::Rsa};
 use ring::{
     digest::{self, digest},
@@ -593,7 +594,7 @@ fn create_authenticator_data(
     }
     authenticator_data
 }
-fn create_attestation_object(
+pub(crate) fn create_attestation_object(
     algorithm: CoseKeyAlgorithmIdentifier,
     authenticator_data: &[u8],
     signature: &[u8],
@@ -786,6 +787,38 @@ pub(crate) struct CredentialDescriptor {
     transports: Vec<String>,
 }
 
+impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
+    type Error = Error;
+    fn try_from(value: &CredentialDescriptor) -> Result<Self, Self::Error> {
+        let transports = if value.transports.is_empty() {
+            None
+        } else {
+            let mut t = value.transports.iter().map(|t| match t.as_ref() {
+                "ble" => Some(Ctap2Transport::BLE),
+                "nfc" => Some(Ctap2Transport::NFC),
+                "usb" => Some(Ctap2Transport::USB),
+                "internal" => Some(Ctap2Transport::INTERNAL),
+                _ => None,
+            });
+            if t.any(|t| t.is_none()) {
+                return Err(Error::Internal("Invalid transport type specified".to_owned()));
+            }
+            t.collect()
+        };
+        Ok(Self {
+            r#type: Ctap2PublicKeyCredentialType::PublicKey,
+            id: value.id.clone().into(),
+            transports,
+        })
+    }
+}
+impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
+    type Error = Error;
+    fn try_from(value: CredentialDescriptor) -> Result<Self, Self::Error> {
+        Ctap2PublicKeyCredentialDescriptor::try_from(&value)
+    }
+}
+
 #[derive(DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-authenticatorSelection
@@ -809,7 +842,7 @@ pub(crate) struct AuthenticatorSelectionCriteria {
 
 #[derive(Clone, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialparameters
-struct PublicKeyCredentialParameters {
+pub(crate) struct PublicKeyCredentialParameters {
     #[serde(rename = "type")]
     pub cred_type: String,
     pub alg: i64,
@@ -818,6 +851,23 @@ struct PublicKeyCredentialParameters {
 impl PublicKeyCredentialParameters {
     fn new(alg: i64) -> Self {
         Self { cred_type: "public-key".to_string(), alg }
+    }
+}
+
+impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
+    type Error = Error;
+
+    fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
+        let algorithm = match value.alg {
+            -7 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::ES256,
+            -8 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::EDDSA,
+            // TODO: we should still pass on the raw value to the authenticator and let it decide whether it's supported.
+            _ => return Err(Error::Internal("Invalid algorithm passed for new credential".to_owned())),
+        };
+        Ok(Self {
+            public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
+            algorithm,
+        })
     }
 }
 

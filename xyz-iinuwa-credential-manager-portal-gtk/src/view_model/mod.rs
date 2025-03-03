@@ -8,6 +8,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex,
 };
+use tracing::info;
 
 use crate::credential_service::{CredentialService, InternalDeviceState};
 
@@ -204,6 +205,7 @@ impl ViewModel {
         match device.transport {
             Transport::Usb => {
                 let cred_service = self.credential_service.clone();
+                /*
                 _ = self
                     .credential_service
                     .lock()
@@ -211,10 +213,9 @@ impl ViewModel {
                     .start_device_discovery_usb()
                     .await
                     .unwrap();
+                */
                 let tx = self.bg_update.clone();
                 async_std::task::spawn(async move {
-                    // TODO: repeat poll in loop
-                    async_std::task::sleep(Duration::from_millis(150)).await;
                     // TODO: add cancellation
                     let mut prev_state = UsbState::default();
                     while let Ok(usb_state) =
@@ -228,6 +229,11 @@ impl ViewModel {
                                 .unwrap();
                         }
                         prev_state = state;
+                        match prev_state {
+                            UsbState::Completed => break,
+                            UsbState::UserCancelled => break,
+                            _ => {},
+                        };
                     }
                 });
             }
@@ -242,8 +248,6 @@ impl ViewModel {
                     .unwrap();
                 let tx = self.bg_update.clone();
                 async_std::task::spawn(async move {
-                    // TODO: repeat poll in loop
-                    async_std::task::sleep(Duration::from_millis(150)).await;
                     // TODO: add cancellation
                     let mut prev_state = InternalDeviceState::default();
                     while let Ok(current_state) = cred_service
@@ -339,10 +343,18 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
                     self.usb_device_state = state;
                     match self.usb_device_state {
-                        UsbState::NeedsPin => {
-                            self.tx_update.send(ViewUpdate::UsbNeedsPin).await.unwrap();
+                        UsbState::Connected => {
+                            info!("Found USB device")
+                        }
+
+                        UsbState::NeedsPin { attempts_left } => {
+                            self.tx_update.send(ViewUpdate::UsbNeedsPin { attempts_left }).await.unwrap();
                         }
                         UsbState::Completed => {
+                            self.credential_service
+                                .lock()
+                                .await
+                                .complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         _ => {}
@@ -358,7 +370,7 @@ impl ViewModel {
                             self.credential_service
                                 .lock()
                                 .await
-                                .complete_auth(&device, &cred_id);
+                                .complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         _ => {}
@@ -384,7 +396,7 @@ pub enum ViewUpdate {
     SetCredentials(Vec<Credential>),
     SelectDevice(Device),
     SelectCredential(String),
-    UsbNeedsPin,
+    UsbNeedsPin { attempts_left: Option<u32> },
     Completed,
 }
 
@@ -543,7 +555,7 @@ pub enum UsbState {
     Waiting,
 
     /// The device needs the PIN to be entered.
-    NeedsPin,
+    NeedsPin { attempts_left: Option<u32> },
 
     /// USB device connected, prompt user to tap
     Connected,
@@ -561,7 +573,7 @@ impl From<crate::credential_service::UsbState> for UsbState {
             crate::credential_service::UsbState::Idle => UsbState::NotListening,
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
             crate::credential_service::UsbState::Connected => UsbState::Connected,
-            crate::credential_service::UsbState::NeedsPin => UsbState::NeedsPin,
+            crate::credential_service::UsbState::NeedsPin { attempts_left }=> UsbState::NeedsPin { attempts_left },
             crate::credential_service::UsbState::Completed => UsbState::Completed,
             crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
         }
