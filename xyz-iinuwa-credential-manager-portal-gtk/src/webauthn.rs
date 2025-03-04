@@ -1205,7 +1205,7 @@ mod cose {
                 let mut cose_key: Vec<u8> = Vec::new();
                 cose_key.push(0b101_00100); // map with 4 items
                 cose_key.extend([0b000_00001, 0b000_00001]); // kty (1): OKP (1)
-                cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): EdDSA (-8)
+                cose_key.extend([0b000_00011, 0b001_00111]); // alg (3): EdDSA (-8)
                 cose_key.extend([0b001_00000, 0b000_00110]); // crv (-1): ED25519 (6)
                 cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
                 cose_key.extend(public_key);
