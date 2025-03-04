@@ -120,20 +120,12 @@ impl CredentialManager {
                     tx.send((request, data_tx)).await.unwrap();
                     let data_rx = Arc::new(data_rx);
                     if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = data_rx.recv().await.unwrap() {
-                        // TODO: Cred ID should always be returned from a make
-                        // credential ceremony, but the only way to get it is to
-                        // unwrap the optional attested credential. Should we
-                        // update the API? I think we can make
-                        // attested_credential required and have
-                        // make_credential() return an error instead if attested
-                        // credential is not parsed from authenticator response.
-                        let attested_credential = cred_response.authenticator_data.attested_credential.as_ref().expect("attested credential data to exist");
+                        let auth_data = &cred_response.authenticator_data;
+                        let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| fdo::Error::Failed("Invalid credential received from authenticator".to_string()))?;
                         let public_key = encode_public_key(&attested_credential.credential_public_key)?;
-                        cred_response.authenticator_data.signature_count;
                         let attested_credential_data =
                             webauthn::create_attested_credential_data(&attested_credential.credential_id, &public_key, &attested_credential.aaguid).unwrap();
 
-                        let auth_data = &cred_response.authenticator_data;
                         let authenticator_data_blob = create_authenticator_data(
                             &auth_data.rp_id_hash,
                             &auth_data.flags,
