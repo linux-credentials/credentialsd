@@ -12,7 +12,7 @@ use ring::{
         ECDSA_P256_SHA256_ASN1_SIGNING, RSA_PKCS1_SHA256,
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use zbus::zvariant::{DeserializeDict, Type};
 
@@ -101,7 +101,7 @@ pub(crate) fn create_credential(
         })?;
     let excluded_credentials = other_options.excluded_credentials.unwrap_or(Vec::new());
 
-    super::webauthn::make_credential(
+    make_credential(
         challenge,
         origin,
         !same_origin,
@@ -769,7 +769,44 @@ pub(crate) struct MakeCredentialOptions {
     pub extension_data: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct GetCredentialOptions {
+    /// Challenge bytes in base64url-encoding with no padding.
+    pub(crate) challenge: String,
+
+    #[serde(deserialize_with = "duration_from_ms")]
+    pub(crate) timeout: Option<Duration>,
+
+    /// Relying Party ID.
+    /// If not set, the request origin's effective domain will be used instead.
+    #[serde(rename = "rpId")]
+    pub(crate) rp_id: Option<String>,
+
+    /// An list of allowed credentials, in descending order of RP preference.
+    /// If empty, then any credential that can fulfill the request is allowed.
+    #[serde(rename = "allowCredentials")]
+    #[serde(default)]
+    pub(crate) allow_credentials: Vec<CredentialDescriptor>,
+
+    /// Defaults to `preferred`
+    #[serde(rename = "userVerification")]
+    pub(crate) user_verification: Option<String>,
+
+    /// Contextual information from the RP to help the client guide the user
+    /// through the authentication ceremony.
+    #[serde(default)]
+    pub(crate) hints: Vec<String>,
+
+    extensions: Option<()>,
+}
+
+
 // pub(crate) struct CredentialList(Vec<CredentialDescriptor>);
+
+fn duration_from_ms<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where D: Deserializer<'de> {
+    Option::<u32>::deserialize(deserializer).map(|ms_opt| ms_opt.map(|ms| Duration::from_millis(ms as u64)))
+}
 
 #[derive(DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
@@ -1057,6 +1094,24 @@ pub struct GetPublicKeyCredentialResponse {
     /// created. This item is nullable, however user handle MUST always be
     /// populated for discoverable credentials.
     user_handle: Option<Vec<u8>>,
+}
+
+impl GetPublicKeyCredentialResponse {
+    pub(crate) fn new(client_data_json: String, id: Option<Vec<u8>>, authenticator_data: Vec<u8>, signature: Vec<u8>, attestation_object: Option<Vec<u8>>, user_handle: Option<Vec<u8>>) -> Self {
+        Self {
+            cred_type: "public-key".to_string(),
+            client_data_json,
+            raw_id: id,
+            authenticator_data,
+            signature,
+            attestation_object,
+            user_handle,
+        }
+    }
+    pub fn to_json(&self) -> String {
+        // TODO:
+        todo!()
+    }
 }
 
 mod cose {

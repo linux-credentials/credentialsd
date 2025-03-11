@@ -5,13 +5,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use libwebauthn::{self, pin::PinProvider, proto::ctap2::Ctap2MakeCredentialResponse, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
+use libwebauthn::{self, ops::webauthn::{GetAssertionResponse, MakeCredentialResponse}, pin::PinProvider, proto::ctap2::Ctap2MakeCredentialResponse, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
 
 use async_std::{channel::TryRecvError, sync::{Arc as AsyncArc, Mutex as AsyncMutex}, task};
 use tokio::runtime::Runtime;
 use tracing::warn;
 
-use crate::{dbus::{CredentialRequest, CredentialResponse}, view_model::{Device, InternalPinState, Transport}};
+use crate::{dbus::{CredentialRequest, CredentialResponse, GetCredentialResponse}, view_model::{Device, InternalPinState, Transport}};
 
 #[derive(Debug)]
 pub struct CredentialService {
@@ -136,7 +136,7 @@ impl CredentialService {
                                         .await
                                     {
                                         Ok(response) => {
-                                            handler.notify_ceremony_completed(response).await;
+                                            handler.notify_ceremony_completed(AuthenticatorResponse::CredentialCreated(response)).await;
                                             break
                                         },
                                         Err(WebAuthnError::Ctap(ctap_error)) if ctap_error.is_retryable_user_error() => {
@@ -149,6 +149,31 @@ impl CredentialService {
                                         }
                                     };
                                 };
+                            },
+                            CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => {
+                                let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
+                                let device = devices.first_mut().unwrap();
+                                let mut channel = device.channel().await.unwrap();
+                                loop {
+                                     match channel
+                                        .webauthn_get_assertion(&get_cred_request, &pin_provider)
+                                        .await
+                                    {
+                                        Ok(response) => {
+                                            handler.notify_ceremony_completed(AuthenticatorResponse::CredentialsAsserted(response)).await;
+                                            break
+                                        },
+                                        Err(WebAuthnError::Ctap(ctap_error)) if ctap_error.is_retryable_user_error() => {
+                                            warn!("Retrying WebAuthn make credential operation");
+                                            continue;
+                                        },
+                                        Err(err) => {
+                                            handler.notify_ceremony_failed(err.to_string()).await;
+                                            break;
+                                        }
+                                    };
+                                };
+
                             }
                         };
                     });
@@ -157,9 +182,26 @@ impl CredentialService {
                             Ok(UsbState::NeedsPin { attempts_left})
                         },
                         Ok(UsbUvMessage::ReceivedCredential(response)) => {
-                            let mut cred_response = self.cred_response.lock().unwrap();
-                            cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(response));
-                            Ok(UsbState::Completed)
+                            match response {
+                                AuthenticatorResponse::CredentialCreated(r) => {
+                                    let mut cred_response = self.cred_response.lock().unwrap();
+                                    cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(r));
+                                    Ok(UsbState::Completed)
+
+                                },
+                                AuthenticatorResponse::CredentialsAsserted(r) => {
+                                    // at least one credential is returned from the authenticator
+                                    assert!(!r.assertions.is_empty());
+                                    if r.assertions.len() == 1 {
+                                        let mut cred_response = self.cred_response.lock().unwrap();
+                                        cred_response.replace(CredentialResponse::GetPublicKeyCredentialResponse(r.assertions[0].clone()));
+                                        Ok(UsbState::Completed)
+                                    }
+                                    else {
+                                        todo!("need to support selection from multiple credentials");
+                                    }
+                                },
+                            }
                         },
                         Err(err) => Err(err),
 
@@ -172,12 +214,29 @@ impl CredentialService {
             UsbState::NeedsPin { .. } => {
                 match self.usb_uv_handler.check_notification().await? {
                     Some(UsbUvMessage::NeedsPin { attempts_left }) => {
-                        Ok(UsbState::NeedsPin { attempts_left})
+                        Ok(UsbState::NeedsPin { attempts_left })
                     },
                     Some(UsbUvMessage::ReceivedCredential(response)) => {
-                        let mut cred_response = self.cred_response.lock().unwrap();
-                        cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(response));
-                        Ok(UsbState::Completed)
+                        match response {
+                            AuthenticatorResponse::CredentialCreated(r) => {
+                                let mut cred_response = self.cred_response.lock().unwrap();
+                                cred_response.replace(CredentialResponse::CreatePublicKeyCredentialResponse(r));
+                                Ok(UsbState::Completed)
+
+                            },
+                            AuthenticatorResponse::CredentialsAsserted(r) => {
+                                // at least one credential is returned from the authenticator
+                                assert!(!r.assertions.is_empty());
+                                if r.assertions.len() == 1 {
+                                    let mut cred_response = self.cred_response.lock().unwrap();
+                                    cred_response.replace(CredentialResponse::GetPublicKeyCredentialResponse(r.assertions[0].clone()));
+                                    Ok(UsbState::Completed)
+                                }
+                                else {
+                                    todo!("need to support selection from multiple credentials");
+                                }
+                            },
+                        }
                     },
                     None => Ok(prev_usb_state),
                 }
@@ -400,7 +459,7 @@ impl UsbUvHandler {
         }
     }
 
-    async fn notify_ceremony_completed(&self, response: Ctap2MakeCredentialResponse) {
+    async fn notify_ceremony_completed(&self, response: AuthenticatorResponse) {
         self.signal_tx.send(Ok(UsbUvMessage::ReceivedCredential(response))).await.unwrap();
     }
 
@@ -443,11 +502,16 @@ impl PinProvider for UsbUvHandler {
 
 enum UsbUvMessage {
     NeedsPin { attempts_left: Option<u32> },
-    ReceivedCredential(Ctap2MakeCredentialResponse),
+    ReceivedCredential(AuthenticatorResponse),
 }
 fn tokio() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         Runtime::new().expect("Tokio runtime to start")
     })
+}
+
+enum AuthenticatorResponse {
+    CredentialCreated(MakeCredentialResponse),
+    CredentialsAsserted(GetAssertionResponse),
 }
