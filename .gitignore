@@ -4,6 +4,7 @@ target/
 
 # Python
 /env
+__pycache__
 
 # Build
 /build/

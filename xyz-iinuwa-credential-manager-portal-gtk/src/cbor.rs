@@ -70,6 +70,12 @@ where
         Ok(())
     }
 
+    pub fn write_array_start(&mut self, len: usize) -> Result<(), Error> {
+        self.write_cbor_value(MajorType::Array, len as u64, None)?;
+        Ok(())
+    }
+
+
     pub fn write_text(&mut self, text: &str) -> Result<(), Error> {
         let data = text.as_bytes();
         self.write_cbor_value(

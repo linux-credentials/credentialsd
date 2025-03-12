@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use cose::{CoseKeyAlgorithmIdentifier, CoseKeyType, encode_public_key};
+use libwebauthn::proto::ctap2::{Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport};
 use openssl::{pkey::PKey, rsa::Rsa};
 use ring::{
     digest::{self, digest},
@@ -11,7 +12,7 @@ use ring::{
         ECDSA_P256_SHA256_ASN1_SIGNING, RSA_PKCS1_SHA256,
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use zbus::zvariant::{DeserializeDict, Type};
 
@@ -100,7 +101,7 @@ pub(crate) fn create_credential(
         })?;
     let excluded_credentials = other_options.excluded_credentials.unwrap_or(Vec::new());
 
-    super::webauthn::make_credential(
+    make_credential(
         challenge,
         origin,
         !same_origin,
@@ -466,12 +467,9 @@ fn get_credential(
 
         // authenticatorData
         authenticator_data,
+
         // signature
         signature,
-
-
-        // The attestation object, if an attestation object was created for this assertion.
-        attestation_object: attestation_object,
 
         // selectedCredential.userHandle
         // Note: In cases where allowCredentialDescriptorList was supplied the returned userHandle value may be null, see: userHandleResult.
@@ -548,7 +546,7 @@ fn sign_attestation(
     }
 }
 
-fn create_attested_credential_data(
+pub(crate) fn create_attested_credential_data(
     credential_id: &[u8],
     public_key: &[u8],
     aaguid: &[u8],
@@ -593,7 +591,7 @@ fn create_authenticator_data(
     }
     authenticator_data
 }
-fn create_attestation_object(
+pub(crate) fn create_attestation_object(
     algorithm: CoseKeyAlgorithmIdentifier,
     authenticator_data: &[u8],
     signature: &[u8],
@@ -768,9 +766,43 @@ pub(crate) struct MakeCredentialOptions {
     pub extension_data: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct GetCredentialOptions {
+    /// Challenge bytes in base64url-encoding with no padding.
+    pub(crate) challenge: String,
+
+    #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
+    #[serde(default)]
+    pub(crate) timeout: Option<Duration>,
+
+    /// Relying Party ID.
+    /// If not set, the request origin's effective domain will be used instead.
+    #[serde(rename = "rpId")]
+    pub(crate) rp_id: Option<String>,
+
+    /// An list of allowed credentials, in descending order of RP preference.
+    /// If empty, then any credential that can fulfill the request is allowed.
+    #[serde(rename = "allowCredentials")]
+    #[serde(default)]
+    pub(crate) allow_credentials: Vec<CredentialDescriptor>,
+
+    /// Defaults to `preferred`
+    #[serde(rename = "userVerification")]
+    pub(crate) user_verification: Option<String>,
+
+    /// Contextual information from the RP to help the client guide the user
+    /// through the authentication ceremony.
+    #[serde(default)]
+    pub(crate) hints: Vec<String>,
+
+    extensions: Option<()>,
+}
+
+
 // pub(crate) struct CredentialList(Vec<CredentialDescriptor>);
 
-#[derive(DeserializeDict, Type)]
+
+#[derive(Deserialize, Type)]
 #[zvariant(signature = "dict")]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-credential-descriptor
 pub(crate) struct CredentialDescriptor {
@@ -779,11 +811,46 @@ pub(crate) struct CredentialDescriptor {
     /// The value SHOULD be a member of PublicKeyCredentialType but client
     /// platforms MUST ignore any PublicKeyCredentialDescriptor with an unknown
     /// type.
-    #[zvariant(rename = "type")]
-    cred_type: String,
+    #[serde(rename = "type")]
+    pub(crate) cred_type: String,
     /// Credential ID of the public key credential the caller is referring to.
-    id: Vec<u8>,
-    transports: Vec<String>,
+    #[serde(with = "crate::serde::b64")]
+    pub(crate) id: Vec<u8>,
+    pub(crate) transports: Option<Vec<String>>,
+}
+
+impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
+    type Error = Error;
+    fn try_from(value: &CredentialDescriptor) -> Result<Self, Self::Error> {
+        let transports = value.transports.as_ref().filter(|t| !t.is_empty());
+        let transports =  match transports {
+            Some(transports) => {
+                let mut transport_list = transports.iter().map(|t| match t.as_ref() {
+                    "ble" => Some(Ctap2Transport::BLE),
+                    "nfc" => Some(Ctap2Transport::NFC),
+                    "usb" => Some(Ctap2Transport::USB),
+                    "internal" => Some(Ctap2Transport::INTERNAL),
+                    _ => None,
+                });
+                if transport_list.any(|t| t.is_none()) {
+                    return Err(Error::Internal("Invalid transport type specified".to_owned()));
+                }
+                transport_list.collect()
+            },
+            None => None,
+        };
+        Ok(Self {
+            r#type: Ctap2PublicKeyCredentialType::PublicKey,
+            id: value.id.clone().into(),
+            transports,
+        })
+    }
+}
+impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
+    type Error = Error;
+    fn try_from(value: CredentialDescriptor) -> Result<Self, Self::Error> {
+        Ctap2PublicKeyCredentialDescriptor::try_from(&value)
+    }
 }
 
 #[derive(DeserializeDict, Type)]
@@ -809,7 +876,7 @@ pub(crate) struct AuthenticatorSelectionCriteria {
 
 #[derive(Clone, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialparameters
-struct PublicKeyCredentialParameters {
+pub(crate) struct PublicKeyCredentialParameters {
     #[serde(rename = "type")]
     pub cred_type: String,
     pub alg: i64,
@@ -818,6 +885,23 @@ struct PublicKeyCredentialParameters {
 impl PublicKeyCredentialParameters {
     fn new(alg: i64) -> Self {
         Self { cred_type: "public-key".to_string(), alg }
+    }
+}
+
+impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
+    type Error = Error;
+
+    fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
+        let algorithm = match value.alg {
+            -7 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::ES256,
+            -8 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::EDDSA,
+            // TODO: we should still pass on the raw value to the authenticator and let it decide whether it's supported.
+            _ => return Err(Error::Internal("Invalid algorithm passed for new credential".to_owned())),
+        };
+        Ok(Self {
+            public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
+            algorithm,
+        })
     }
 }
 
@@ -1000,13 +1084,57 @@ pub struct GetPublicKeyCredentialResponse {
 
     signature: Vec<u8>,
 
-    /// Bytes containing authenticator data and an attestation statement.
-    attestation_object: Option<Vec<u8>>,
-
     /// The user handle associated when this public key credential source was
     /// created. This item is nullable, however user handle MUST always be
     /// populated for discoverable credentials.
     user_handle: Option<Vec<u8>>,
+}
+
+impl GetPublicKeyCredentialResponse {
+    pub(crate) fn new(client_data_json: String, id: Option<Vec<u8>>, authenticator_data: Vec<u8>, signature: Vec<u8>, user_handle: Option<Vec<u8>>) -> Self {
+        Self {
+            cred_type: "public-key".to_string(),
+            client_data_json,
+            raw_id: id,
+            authenticator_data,
+            signature,
+            user_handle,
+        }
+    }
+    pub fn to_json(&self) -> String {
+        let response = json!({
+            "clientDataJSON": self.client_data_json,
+            "authenticatorData": URL_SAFE_NO_PAD.encode(&self.authenticator_data),
+            "signature": URL_SAFE_NO_PAD.encode(&self.signature),
+            "userHandle": self.user_handle.as_ref().map(|h| URL_SAFE_NO_PAD.encode(h))
+        });
+        // TODO: I believe this optional since authenticators may omit sending the credential ID if it was
+        // unambiguously specified in the request. As a convenience, we should
+        // always return a credential ID, even if the authenticator doesn't.
+        // This means we'll have to remember the ID on the request if the allow-list has exactly one
+        // credential descriptor, then we'll need. This should probably be done in libwebauthn.
+        let id = self.raw_id.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id));
+        // TODO: Fix for platorm authenticator
+        let attachment = "cross-platform";
+        let output = json!({
+            "id": id,
+            "rawId": id,
+            "authenticatorAttachment": attachment,
+            "response": response
+        });
+        // TODO: support client extensions
+        /*
+        if let Some(extensions) = &self.extensions {
+            let extension_value =
+                serde_json::from_str(extensions).expect("Extensions json to be formatted properly");
+            output
+                .as_object_mut()
+                .unwrap()
+                .insert("clientExtensionResults".to_string(), extension_value);
+        }
+        */
+        output.to_string()
+    }
 }
 
 mod cose {
@@ -1155,7 +1283,7 @@ mod cose {
                 let mut cose_key: Vec<u8> = Vec::new();
                 cose_key.push(0b101_00100); // map with 4 items
                 cose_key.extend([0b000_00001, 0b000_00001]); // kty (1): OKP (1)
-                cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): EdDSA (-8)
+                cose_key.extend([0b000_00011, 0b001_00111]); // alg (3): EdDSA (-8)
                 cose_key.extend([0b001_00000, 0b000_00110]); // crv (-1): ED25519 (6)
                 cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
                 cose_key.extend(public_key);
