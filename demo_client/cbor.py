@@ -153,6 +153,6 @@ class Parser:
         return value
 
 
-def load(cbor):
-    parser = Parser(cbor)
+def loads(data):
+    parser = Parser(data)
     return parser.parse()

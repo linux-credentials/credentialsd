@@ -431,5 +431,5 @@ class CborTests(unittest.TestCase):
                 if (data[0] >> 5) >= 6:
                     continue
                 expected = tv['decoded']
-                actual = cbor.load(data)
+                actual = cbor.loads(data)
                 self.assertEqual(expected, actual)
