@@ -4,6 +4,7 @@ mod cbor;
 mod config;
 mod credential_service;
 mod dbus;
+mod serde;
 mod store;
 #[allow(dead_code)]
 mod view_model;

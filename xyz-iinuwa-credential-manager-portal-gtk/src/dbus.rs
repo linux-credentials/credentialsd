@@ -10,8 +10,8 @@ use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
 use libwebauthn::fido::AuthenticatorDataFlags;
-use libwebauthn::ops::webauthn::{GetAssertionRequest, GetAssertionResponse, MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
-use libwebauthn::proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2GetAssertionRequest, Ctap2GetAssertionResponse, Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
+use libwebauthn::ops::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
+use libwebauthn::proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::{fdo, interface, connection::{self, Connection}, Result};
 
@@ -284,7 +284,7 @@ pub(crate) enum CredentialRequest {
 #[derive(Clone, Debug)]
 pub(crate) enum CredentialResponse {
     CreatePublicKeyCredentialResponse(MakeCredentialResponse),
-    GetPublicKeyCredentialResponse(Ctap2GetAssertionResponse)
+    GetPublicKeyCredentialResponse(Assertion)
 }
 
 // D-Bus <-> Client types
@@ -512,9 +512,12 @@ impl GetCredentialRequest {
         }
         let options = self.public_key.as_ref().unwrap();
         let request: webauthn::GetCredentialOptions = serde_json::from_str(&options.request_json)
-            .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+            .map_err(|e| webauthn::Error::Internal(format!("Invalid request JSON: {:?}", e)))?;
         let allow = request.allow_credentials.iter()
-            .filter_map(|cred| cred.try_into().ok())
+            .filter_map(|cred| {
+                if cred.cred_type != "public-key" { None }
+                else { cred.try_into().ok() }
+            })
             .collect();
         let (origin, is_cross_origin) = match (self.origin.as_ref(), self.is_same_origin.as_ref()) {
             (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
@@ -570,33 +573,35 @@ pub struct GetPublicKeyCredentialRequest {
 }
 
 impl GetPublicKeyCredentialResponse {
-    fn try_from_ctap2_response(response: &Ctap2GetAssertionResponse, client_data_json: String) -> std::result::Result<Self, fdo::Error> {
+    fn try_from_ctap2_response(response: &Assertion, client_data_json: String) -> std::result::Result<Self, fdo::Error> {
         let auth_data = &response.authenticator_data;
-        let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| fdo::Error::Failed("Invalid credential received from authenticator".to_string()))?;
-        let public_key = encode_public_key(&attested_credential.credential_public_key)?;
-        let attested_credential_data =
-            webauthn::create_attested_credential_data(&attested_credential.credential_id, &public_key, &attested_credential.aaguid).unwrap();
+        let attested_credential_data = match &auth_data.attested_credential {
+            None => None,
+            Some(att) => {
+                let public_key = encode_public_key(&att.credential_public_key)?;
+                let data = webauthn::create_attested_credential_data(&att.credential_id, &public_key, &att.aaguid)
+                    .map_err(|_| zbus::Error::Failure("Failed to parse attested credential data".to_string()))?;
+                Some(data)
+            },
+        };
+
+        // TODO: what's the format for extensions... CBOR?
+        // let ext = auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref();
+        let extensions = None;
 
         let authenticator_data_blob = create_authenticator_data(
             &auth_data.rp_id_hash,
             &auth_data.flags,
             (&auth_data).signature_count,
-            Some(&attested_credential_data),
-            // TODO: what's the format for extensions... JSON?
-            auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref(),
+            attested_credential_data.as_deref(),
+            extensions,
         );
-        let attestation_object = response.attestation_statement.as_ref().and_then(|att_stmt| create_attestation_object(
-            &authenticator_data_blob,
-            &att_stmt,
-            response.enterprise_attestation.unwrap_or(false),
-        ).ok());
-        // do we need to check that the client_data_hash is the same?
+
         let registration_response_json = webauthn::GetPublicKeyCredentialResponse::new(
             client_data_json,
             response.credential_id.as_ref().map(|c| c.id.clone().into_vec()),
             authenticator_data_blob,
-            response.signature.clone().into_vec(),
-            attestation_object,
+            response.signature.clone(),
             response.user.as_ref().map(|u| u.id.clone().into_vec()),
         ).to_json();
         let response = GetPublicKeyCredentialResponse {

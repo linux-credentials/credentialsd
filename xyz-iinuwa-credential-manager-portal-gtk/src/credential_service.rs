@@ -5,13 +5,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use libwebauthn::{self, ops::webauthn::{GetAssertionResponse, MakeCredentialResponse}, pin::PinProvider, proto::ctap2::Ctap2MakeCredentialResponse, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
+use libwebauthn::{self, ops::webauthn::{GetAssertionResponse, MakeCredentialResponse}, pin::{PinRequestReason, UvProvider}, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
 
 use async_std::{channel::TryRecvError, sync::{Arc as AsyncArc, Mutex as AsyncMutex}, task};
 use tokio::runtime::Runtime;
 use tracing::warn;
 
-use crate::{dbus::{CredentialRequest, CredentialResponse, GetCredentialResponse}, view_model::{Device, InternalPinState, Transport}};
+use crate::{dbus::{CredentialRequest, CredentialResponse}, view_model::{Device, InternalPinState, Transport}};
 
 #[derive(Debug)]
 pub struct CredentialService {
