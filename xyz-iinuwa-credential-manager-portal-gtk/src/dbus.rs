@@ -46,11 +46,12 @@ fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<CredentialResponse>)
                 let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
                 let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
                 let data = Arc::new(Mutex::new(None));
+                let operation = match &cred_request {
+                    CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create { cred_type: CredentialType::Passkey },
+                    CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get { cred_types: vec![CredentialType::Passkey] },
+                };
                 let credential_service = CredentialService::new(cred_request, data.clone());
                 let event_loop = async_std::task::spawn(async move {
-                    let operation = Operation::Create {
-                        cred_type: CredentialType::Passkey,
-                    };
                     let mut vm = view_model::ViewModel::new(
                         operation,
                         credential_service,
