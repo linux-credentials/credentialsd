@@ -122,7 +122,7 @@ impl CredentialService {
                     // just take the first one found for now.
                     // TODO: store this device reference, perhaps in the enum itself
                     let handler = self.usb_uv_handler.clone();
-                    let pin_provider: Box<dyn PinProvider> = Box::new(self.usb_uv_handler.clone());
+                    let pin_provider: Box<dyn UvProvider> = Box::new(self.usb_uv_handler.clone());
                     let cred_request = self.cred_request.clone();
                     tokio().spawn( async move {
                          match cred_request {
@@ -181,6 +181,9 @@ impl CredentialService {
                         Ok(UsbUvMessage::NeedsPin { attempts_left }) => {
                             Ok(UsbState::NeedsPin { attempts_left})
                         },
+                        Ok(UsbUvMessage::NeedsUv { attempts_left }) => {
+                            Ok(UsbState::NeedsUv { attempts_left})
+                        },
                         Ok(UsbUvMessage::ReceivedCredential(response)) => {
                             match response {
                                 AuthenticatorResponse::CredentialCreated(r) => {
@@ -211,10 +214,16 @@ impl CredentialService {
             UsbState::NeedsPin{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
                 Err("No more USB attempts left".to_string())
             },
-            UsbState::NeedsPin { .. } => {
+            UsbState::NeedsUv{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
+                Err("No more on-device user device attempts left".to_string())
+            },
+            UsbState::NeedsPin { .. } | UsbState::NeedsUv { .. } => {
                 match self.usb_uv_handler.check_notification().await? {
                     Some(UsbUvMessage::NeedsPin { attempts_left }) => {
                         Ok(UsbState::NeedsPin { attempts_left })
+                    },
+                    Some(UsbUvMessage::NeedsUv { attempts_left }) => {
+                        Ok(UsbState::NeedsUv { attempts_left })
                     },
                     Some(UsbUvMessage::ReceivedCredential(response)) => {
                         match response {
@@ -384,6 +393,9 @@ pub enum UsbState {
     /// The device needs the PIN to be entered.
     NeedsPin { attempts_left: Option<u32> },
 
+    /// The device needs on-device user verification.
+    NeedsUv { attempts_left: Option<u32> },
+
     /// USB tapped, received credential
     Completed,
 
@@ -488,8 +500,8 @@ impl UsbUvHandler {
 }
 
 #[async_trait]
-impl PinProvider for UsbUvHandler {
-    async fn provide_pin(&self, attempts_left:Option<u32>) -> Option<String> {
+impl UvProvider for UsbUvHandler {
+    async fn provide_pin(&self, attempts_left:Option<u32>, request_reason: PinRequestReason) -> Option<String> {
         let _ = self.signal_tx.send(Ok(UsbUvMessage::NeedsPin { attempts_left })).await;
         if attempts_left.map_or(false, |num| num <= 1) {
             return None;
@@ -498,10 +510,15 @@ impl PinProvider for UsbUvHandler {
             Some(pin)
         } else { None }
     }
+
+    async fn prompt_uv_retry(&self, attempts_left: Option<u32>) {
+        todo!("UV retry not implemented");
+    }
 }
 
 enum UsbUvMessage {
     NeedsPin { attempts_left: Option<u32> },
+    NeedsUv { attempts_left: Option<u32> },
     ReceivedCredential(AuthenticatorResponse),
 }
 fn tokio() -> &'static Runtime {

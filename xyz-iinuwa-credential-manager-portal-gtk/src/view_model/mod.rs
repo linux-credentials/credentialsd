@@ -558,6 +558,9 @@ pub enum UsbState {
     /// The device needs the PIN to be entered.
     NeedsPin { attempts_left: Option<u32> },
 
+    /// The device needs on-device user verification to be entered.
+    NeedsUv { attempts_left: Option<u32> },
+
     /// USB device connected, prompt user to tap
     Connected,
 
@@ -575,6 +578,7 @@ impl From<crate::credential_service::UsbState> for UsbState {
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
             crate::credential_service::UsbState::Connected => UsbState::Connected,
             crate::credential_service::UsbState::NeedsPin { attempts_left }=> UsbState::NeedsPin { attempts_left },
+            crate::credential_service::UsbState::NeedsUv { attempts_left }=> UsbState::NeedsUv { attempts_left },
             crate::credential_service::UsbState::Completed => UsbState::Completed,
             crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
         }

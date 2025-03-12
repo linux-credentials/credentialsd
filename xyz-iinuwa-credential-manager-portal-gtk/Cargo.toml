@@ -24,4 +24,4 @@ async-trait = "0.1.86"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 # this is temporary until we move COSE -> Vec<u8> serialization methods into libwebauthn
-cosey = { path = "../../libwebauthn/cosey" }
+cosey = "0.3.2"
