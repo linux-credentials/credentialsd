@@ -172,12 +172,13 @@ impl CredentialManager {
                     let (data_tx, data_rx) = async_std::channel::bounded(1);
                     tx.send((request, data_tx)).await.unwrap();
                     let data_rx = Arc::new(data_rx);
-                    if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = data_rx.recv().await.unwrap() {
-                        let public_key_response = GetPublicKeyCredentialResponse::try_from_ctap2_response(&cred_response, client_data_json)?;
-                        Ok(public_key_response.into())
-                    }
-                    else {
-                        Err(fdo::Error::Failed("Failed to get passkey".to_string()))
+                    match data_rx.recv().await {
+                        Ok(CredentialResponse::GetPublicKeyCredentialResponse(cred_response)) => {
+                            let public_key_response = GetPublicKeyCredentialResponse::try_from_ctap2_response(&cred_response, client_data_json)?;
+                            Ok(public_key_response.into())
+                        },
+                        Ok(_) => Err(fdo::Error::Failed("Invalid credential response received from authenticator".to_string())),
+                        Err(_) => Err(fdo::Error::Failed("User cancelled operation".to_string())),
                     }
                 }
                 _ => Err(fdo::Error::Failed(
