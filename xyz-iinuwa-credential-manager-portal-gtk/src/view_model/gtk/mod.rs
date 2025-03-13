@@ -43,6 +43,9 @@ mod imp {
         pub usb_pin_entry_visible: RefCell<bool>,
 
         #[property(get, set)]
+        pub prompt: RefCell<String>,
+
+        #[property(get, set)]
         pub completed: RefCell<bool>,
 
         // pub(super) vm: RefCell<Option<crate::view_model::ViewModel>>,
@@ -99,8 +102,18 @@ impl ViewModel {
                                 ViewUpdate::SetCredentials(credentials) => { view_model.update_credentials(&credentials) },
                                 ViewUpdate::SelectDevice(device) => { view_model.select_device(&device) },
                                 ViewUpdate::SelectCredential(cred_id) => { view_model.select_credential(cred_id) },
-                                ViewUpdate::UsbNeedsPin { attempts_left } => { view_model.set_usb_pin_entry_visible(true) },
-                                ViewUpdate::Completed => { view_model.set_completed(true) },
+                                ViewUpdate::UsbNeedsPin { attempts_left } => {
+                                    let prompt = match attempts_left {
+                                        Some(1) => "Enter your PIN. 1 attempt remaining.".to_string(),
+                                        Some(attempts_left) => format!("Enter your PIN. {attempts_left} attempts remaining."),
+                                        None => format!("Enter your PIN."),
+                                    };
+                                    view_model.set_prompt(prompt);
+                                    view_model.set_usb_pin_entry_visible(true);
+                                },
+                                ViewUpdate::Completed => {
+                                    view_model.set_completed(true);
+                                },
                             }
                         },
                         Err(e) => {
@@ -204,7 +217,9 @@ impl ViewModel {
 
     fn select_device(&self, device: &Device) {
         match device.transport {
-            Transport::Usb => {}
+            Transport::Usb => {
+                self.set_prompt("Insert your security key.");
+            }
             Transport::Internal => {}
             _ => {
                 todo!();
