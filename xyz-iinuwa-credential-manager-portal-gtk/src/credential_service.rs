@@ -181,8 +181,11 @@ impl CredentialService {
                         Ok(UsbUvMessage::NeedsPin { attempts_left }) => {
                             Ok(UsbState::NeedsPin { attempts_left})
                         },
-                        Ok(UsbUvMessage::NeedsUv { attempts_left }) => {
-                            Ok(UsbState::NeedsUv { attempts_left})
+                        Ok(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
+                            Ok(UsbState::NeedsUserVerification { attempts_left})
+                        },
+                        Ok(UsbUvMessage::NeedsUserPresence) => {
+                            Ok(UsbState::NeedsUserPresence)
                         },
                         Ok(UsbUvMessage::ReceivedCredential(response)) => {
                             match response {
@@ -214,16 +217,19 @@ impl CredentialService {
             UsbState::NeedsPin{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
                 Err("No more USB attempts left".to_string())
             },
-            UsbState::NeedsUv{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
+            UsbState::NeedsUserVerification{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
                 Err("No more on-device user device attempts left".to_string())
             },
-            UsbState::NeedsPin { .. } | UsbState::NeedsUv { .. } => {
+            UsbState::NeedsPin { .. } | UsbState::NeedsUserVerification { .. }  | UsbState::NeedsUserPresence => {
                 match self.usb_uv_handler.check_notification().await? {
                     Some(UsbUvMessage::NeedsPin { attempts_left }) => {
                         Ok(UsbState::NeedsPin { attempts_left })
                     },
-                    Some(UsbUvMessage::NeedsUv { attempts_left }) => {
-                        Ok(UsbState::NeedsUv { attempts_left })
+                    Some(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
+                        Ok(UsbState::NeedsUserVerification { attempts_left })
+                    },
+                    Some(UsbUvMessage::NeedsUserPresence) => {
+                        Ok(UsbState::NeedsUserPresence)
                     },
                     Some(UsbUvMessage::ReceivedCredential(response)) => {
                         match response {
@@ -394,7 +400,10 @@ pub enum UsbState {
     NeedsPin { attempts_left: Option<u32> },
 
     /// The device needs on-device user verification.
-    NeedsUv { attempts_left: Option<u32> },
+    NeedsUserVerification { attempts_left: Option<u32> },
+
+    /// The device needs evidence of user presence (e.g. touch) to release the credential.
+    NeedsUserPresence,
 
     /// USB tapped, received credential
     Completed,
@@ -518,7 +527,8 @@ impl UvProvider for UsbUvHandler {
 
 enum UsbUvMessage {
     NeedsPin { attempts_left: Option<u32> },
-    NeedsUv { attempts_left: Option<u32> },
+    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsUserPresence,
     ReceivedCredential(AuthenticatorResponse),
 }
 fn tokio() -> &'static Runtime {

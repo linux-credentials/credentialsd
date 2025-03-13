@@ -351,6 +351,12 @@ impl ViewModel {
                         UsbState::NeedsPin { attempts_left } => {
                             self.tx_update.send(ViewUpdate::UsbNeedsPin { attempts_left }).await.unwrap();
                         }
+                        UsbState::NeedsUserVerification { attempts_left } => {
+                            self.tx_update.send(ViewUpdate::UsbNeedsUserVerification { attempts_left }).await.unwrap();
+                        }
+                        UsbState::NeedsUserPresence  => {
+                            self.tx_update.send(ViewUpdate::UsbNeedsUserPresence).await.unwrap();
+                        }
                         UsbState::Completed => {
                             self.credential_service
                                 .lock()
@@ -398,6 +404,8 @@ pub enum ViewUpdate {
     SelectDevice(Device),
     SelectCredential(String),
     UsbNeedsPin { attempts_left: Option<u32> },
+    UsbNeedsUserVerification { attempts_left: Option<u32> },
+    UsbNeedsUserPresence,
     Completed,
 }
 
@@ -559,7 +567,10 @@ pub enum UsbState {
     NeedsPin { attempts_left: Option<u32> },
 
     /// The device needs on-device user verification to be entered.
-    NeedsUv { attempts_left: Option<u32> },
+    NeedsUserVerification { attempts_left: Option<u32> },
+
+    /// The device needs on-device user verification to be entered.
+    NeedsUserPresence,
 
     /// USB device connected, prompt user to tap
     Connected,
@@ -578,7 +589,8 @@ impl From<crate::credential_service::UsbState> for UsbState {
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
             crate::credential_service::UsbState::Connected => UsbState::Connected,
             crate::credential_service::UsbState::NeedsPin { attempts_left }=> UsbState::NeedsPin { attempts_left },
-            crate::credential_service::UsbState::NeedsUv { attempts_left }=> UsbState::NeedsUv { attempts_left },
+            crate::credential_service::UsbState::NeedsUserVerification { attempts_left }=> UsbState::NeedsUserVerification { attempts_left },
+            crate::credential_service::UsbState::NeedsUserPresence => UsbState::NeedsUserPresence,
             crate::credential_service::UsbState::Completed => UsbState::Completed,
             crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
         }
