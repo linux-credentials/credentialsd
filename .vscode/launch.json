@@ -11,65 +11,12 @@
             "program": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/src/xyz-iinuwa-credential-manager-portal-gtk",
             "args": [],
             "env": {
-                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data"
+                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data",
+
             },
+            "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Meson: Build all targets"
         },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'backend'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=backend",
-                    "--package=backend"
-                ],
-                "filter": {
-                    "name": "backend",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'frontend'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=frontend",
-                    "--package=frontend"
-                ],
-                "filter": {
-                    "name": "frontend",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'frontend'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=frontend",
-                    "--package=frontend"
-                ],
-                "filter": {
-                    "name": "frontend",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        }
     ]
 }
