@@ -16,6 +16,7 @@ glib_compile_resources = find_program('glib-compile-resources', required: true)
 glib_compile_schemas = find_program('glib-compile-schemas', required: true)
 # Usually provided by gettext package
 msgfmt = find_program('msgfmt', required: false)
+xmllint = find_program('xmllint', required: false)
 
 desktop_file_validate = find_program('desktop-file-validate', required: false)
 appstreamcli = find_program('appstreamcli', required: false)
