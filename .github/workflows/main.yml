@@ -18,7 +18,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt install -y --no-install-recommends \
-            curl git build-essential python3 python3-pip python3-setuptools python3-wheel ninja-build \
+            curl git build-essential meson \
             libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
             desktop-file-utils
       - name: Setup meson project
