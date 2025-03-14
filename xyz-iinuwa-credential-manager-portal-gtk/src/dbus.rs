@@ -232,50 +232,6 @@ async fn get_password(origin: &str, is_same_origin: bool, request: &GetPasswordC
     todo!()
 }
 
-async fn create_passkey(
-    origin: &str,
-    is_same_origin: bool,
-    request: &CreatePublicKeyCredentialRequest,
-) -> fdo::Result<CreatePublicKeyCredentialResponse> {
-    let (response, cred_source, user) =
-        webauthn::create_credential(origin, &request.request_json, true).map_err(|_| {
-            fdo::Error::Failed("Failed to create public key credential".to_string())
-        })?;
-
-    let mut contents = String::new();
-    contents.push_str("type=public-key"); // TODO: Don't hardcode public-key?
-    contents.push_str("&id=");
-    URL_SAFE_NO_PAD.encode_string(cred_source.id, &mut contents);
-    contents.push_str("&key=");
-    URL_SAFE_NO_PAD.encode_string(cred_source.private_key, &mut contents);
-    contents.push_str("&rp_id=");
-    contents.push_str(&cred_source.rp_id);
-    if let Some(user_handle) = &cred_source.user_handle {
-        contents.push_str("&user_handle=");
-        URL_SAFE_NO_PAD.encode_string(user_handle, &mut contents);
-    }
-
-    if let Some(other_ui) = cred_source.other_ui {
-        contents.push_str("&other_ui=");
-        contents.push_str(&other_ui);
-    }
-    let content_type = "secret/public-key";
-    let display_name = "test"; // TODO
-    store::store_secret(
-        &[origin],
-        display_name,
-        &user.display_name,
-        content_type,
-        None,
-        contents.as_bytes(),
-    )
-    .await
-    .map_err(|_| fdo::Error::Failed("Failed to save passkey to storage".to_string()))?;
-
-    Ok(CreatePublicKeyCredentialResponse {
-        registration_response_json: response.to_json(),
-    })
-}
 // D-Bus <-> internal types
 #[derive(Clone, Debug)]
 pub(crate) enum CredentialRequest {
