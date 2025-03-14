@@ -2,7 +2,7 @@ project(
   'xyz-iinuwa-credential-manager-portal-gtk',
   'rust',
   version: '0.1.0',
-  meson_version: '>= 0.59',
+  meson_version: '>= 0.60',
   # license: 'MIT',
 )
 
