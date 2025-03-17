@@ -1,7 +1,9 @@
+mod store;
+
 use std::collections::HashMap;
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use libwebauthn::{fido::AuthenticatorDataFlags, management::AuthenticatorConfig};
+use libwebauthn::fido::AuthenticatorDataFlags;
 use openssl::{pkey::PKey, rsa::Rsa};
 use ring::{
     digest::{self},
@@ -170,7 +172,7 @@ pub(crate) fn make_credential(
     // TODO:
     let supported_algorithms: [CoseKeyType; 3] = [
         CoseKeyType::ES256_P256,
-        CoseKeyType::EdDSA_Ed25519,
+        CoseKeyType::EDDSA_ED25519,
         CoseKeyType::RS256,
     ];
 
@@ -539,7 +541,7 @@ fn create_key_pair(parameters: CoseKeyType) -> Result<Vec<u8>, WebAuthnError> {
     let rng = &SystemRandom::new();
     let key_pair = match parameters {
         CoseKeyType::ES256_P256 => EcdsaKeyPair::generate_pkcs8(P256, rng).map(|d| d.as_ref().to_vec()),
-        CoseKeyType::EdDSA_Ed25519 => Ed25519KeyPair::generate_pkcs8(rng).map(|d| d.as_ref().to_vec()),
+        CoseKeyType::EDDSA_ED25519 => Ed25519KeyPair::generate_pkcs8(rng).map(|d| d.as_ref().to_vec()),
         CoseKeyType::RS256 => {
             let rsa_key = Rsa::generate(2048).unwrap();
             let private_key = PKey::from_rsa(rsa_key).unwrap();
@@ -588,13 +590,13 @@ fn sign_attestation(
             let ecdsa = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, key_pair, &SystemRandom::new()).unwrap();
             Ok(ecdsa.sign(rng, &signed_data).unwrap().as_ref().to_vec())
         }
-        CoseKeyType::EdDSA_Ed25519 => {
+        CoseKeyType::EDDSA_ED25519 => {
             let eddsa = Ed25519KeyPair::from_pkcs8(key_pair).unwrap();
             Ok(eddsa.sign(&signed_data).as_ref().to_vec())
         }
         CoseKeyType::RS256 => {
             let rsa = RsaKeyPair::from_pkcs8(key_pair).unwrap();
-            let mut signature = vec![0; rsa.public_modulus_len()];
+            let mut signature = vec![0; rsa.public().modulus_len()];
             let _ = rsa.sign(&RSA_PKCS1_SHA256, rng, &signed_data, &mut signature);
             Ok(signature)
         }

@@ -7,7 +7,6 @@ use async_std::sync::Mutex as AsyncMutex;
 use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
-use libwebauthn::fido::AuthenticatorDataFlags;
 use libwebauthn::ops::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
 use libwebauthn::proto::ctap2::{Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
@@ -17,14 +16,11 @@ use crate::application::ExampleApplication;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use crate::cose;
 use crate::credential_service::CredentialService;
-use crate::store;
 use crate::view_model::CredentialType;
 use crate::view_model::Operation;
 use crate::view_model::{self, ViewEvent, ViewUpdate};
 use crate::webauthn::{self, PublicKeyCredentialParameters};
 use ring::digest;
-// use crate::store;
-// use crate::webauthn;
 
 pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Connection> {
     let (gui_tx, gui_rx) = async_std::channel::bounded(1);
@@ -214,6 +210,7 @@ async fn create_password(
         request.password.replace('%', "%25").replace('&', "%26")
     );
     let display_name = format!("Password for {origin}"); // TODO
+    /*
     store::store_secret(
         &[origin],
         &display_name,
@@ -224,6 +221,7 @@ async fn create_password(
     )
     .await
     .map_err(|_| fdo::Error::Failed("".to_string()))?;
+    */
     Ok(CreatePasswordCredentialResponse {})
 }
 

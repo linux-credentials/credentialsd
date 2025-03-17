@@ -1,10 +1,9 @@
 
 use libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier;
 use ring::{
-    agreement::PublicKey, digest::{self, digest}, rand::SystemRandom, signature::{
-        EcdsaKeyPair, EcdsaSigningAlgorithm, EcdsaVerificationAlgorithm, Ed25519KeyPair, KeyPair,
-        RsaKeyPair, VerificationAlgorithm, ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA256_ASN1_SIGNING,
-        RSA_PKCS1_SHA256,
+    rand::SystemRandom, signature::{
+        EcdsaKeyPair, Ed25519KeyPair, KeyPair,
+        RsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING,
     }
 };
 use tracing::debug;
@@ -13,7 +12,7 @@ use tracing::debug;
 #[repr(i64)]
 pub(super) enum CoseKeyType {
     ES256_P256,
-    EdDSA_Ed25519,
+    EDDSA_ED25519,
     RS256,
 }
 
@@ -50,7 +49,7 @@ impl From<CoseKeyType> for CoseKeyParameters {
     fn from(value: CoseKeyType) -> Self {
         match value {
             CoseKeyType::ES256_P256 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::ES256, crv: Some(CoseEllipticCurveIdentifier::P256) },
-            CoseKeyType::EdDSA_Ed25519 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::EdDSA, crv: Some(CoseEllipticCurveIdentifier::Ed25519) },
+            CoseKeyType::EDDSA_ED25519 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::EdDSA, crv: Some(CoseEllipticCurveIdentifier::Ed25519) },
             CoseKeyType::RS256 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::RS256, crv: None, },
         }
     }
@@ -156,7 +155,7 @@ pub(super) fn encode_pkcs8_key(
             cose_key.extend(y);
             Ok(cose_key)
         }
-        CoseKeyType::EdDSA_Ed25519 => {
+        CoseKeyType::EDDSA_ED25519 => {
             let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_key).map_err(|_| Error::InvalidKey)?;
             let public_key = key_pair.public_key().as_ref();
             let mut cose_key: Vec<u8> = Vec::new();
@@ -177,7 +176,7 @@ pub(super) fn encode_pkcs8_key(
             // https://stackoverflow.com/a/12750816/11931787
             let n = &public_key[9..(9 + 256)];
             let e = &public_key[public_key.len() - 3..];
-            debug_assert_eq!(n.len(), key_pair.public_modulus_len());
+            debug_assert_eq!(n.len(), key_pair.public().modulus_len());
             let mut cose_key: Vec<u8> = Vec::new();
             cose_key.push(0b101_00100); // map with 4 items
             cose_key.extend([0b000_00001, 0b000_00010]); // kty (1): RSA (3)

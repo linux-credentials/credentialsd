@@ -7,7 +7,6 @@ mod credential_service;
 mod dbus;
 mod platform_authenticator;
 mod serde;
-mod store;
 #[allow(dead_code)]
 mod view_model;
 mod webauthn;

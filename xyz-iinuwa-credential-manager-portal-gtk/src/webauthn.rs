@@ -1,19 +1,13 @@
 use std::time::Duration;
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use libwebauthn::{fido::AuthenticatorDataFlags, proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport}};
-use ring::{
-    digest::{self, digest},
-    signature::{
-        EcdsaSigningAlgorithm, ECDSA_P256_SHA256_ASN1_SIGNING,
-    },
-};
+use libwebauthn::{fido::AuthenticatorDataFlags, proto::ctap2::{Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport}};
+use ring::digest;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::debug;
 use zbus::zvariant::{DeserializeDict, Type};
 
-use crate::cbor::CborWriter;
 use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
 #[derive(Debug)]
@@ -313,7 +307,7 @@ impl TryFrom<&PublicKeyCredentialParameters> for CoseKeyType {
     fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
         match value.alg {
             -7 => Ok(CoseKeyType::ES256_P256),
-            -8 => Ok(CoseKeyType::EdDSA_Ed25519),
+            -8 => Ok(CoseKeyType::EDDSA_ED25519),
             -257 => Ok(CoseKeyType::RS256),
             _ => Err("Invalid or unsupported algorithm specified".to_owned()),
         }
