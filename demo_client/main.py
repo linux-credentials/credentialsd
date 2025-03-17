@@ -38,7 +38,7 @@ async def run(cmd):
         user_data = {
             "id": 1,
             "name": username,
-            "user_handle": user_handle,
+            "user_handle": util.b64_encode(user_handle),
             "cred_id": util.b64_encode(auth_data.cred_id),
             "pub_key": util.b64_encode(auth_data.pub_key_bytes),
             "sign_count": auth_data.sign_count,
