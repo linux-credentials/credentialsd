@@ -4,19 +4,18 @@ use std::time::Duration;
 
 use async_std::channel::{Receiver, Sender};
 use async_std::sync::Mutex as AsyncMutex;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
 use libwebauthn::fido::AuthenticatorDataFlags;
 use libwebauthn::ops::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
-use libwebauthn::proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
+use libwebauthn::proto::ctap2::{Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::{fdo, interface, connection::{self, Connection}, Result};
 
 use crate::application::ExampleApplication;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
+use crate::cose;
 use crate::credential_service::CredentialService;
 use crate::store;
 use crate::view_model::CredentialType;
@@ -378,11 +377,11 @@ impl CreatePublicKeyCredentialResponse {
     fn try_from_ctap2_response(response: &Ctap2MakeCredentialResponse, client_data_json: String) -> std::result::Result<Self, fdo::Error> {
         let auth_data = &response.authenticator_data;
         let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| fdo::Error::Failed("Invalid credential received from authenticator".to_string()))?;
-        let public_key = encode_public_key(&attested_credential.credential_public_key)?;
+        let public_key = cose::encode_cose_key(&attested_credential.credential_public_key).map_err(|_| fdo::Error::Failed(format!("Unable to serialize public key type: {:?}", &attested_credential.credential_public_key)))?;
         let attested_credential_data =
             webauthn::create_attested_credential_data(&attested_credential.credential_id, &public_key, &attested_credential.aaguid).unwrap();
 
-        let authenticator_data_blob = create_authenticator_data(
+        let authenticator_data_blob = webauthn::create_authenticator_data(
             &auth_data.rp_id_hash,
             &auth_data.flags,
             (&auth_data).signature_count,
@@ -390,11 +389,13 @@ impl CreatePublicKeyCredentialResponse {
             // TODO: what's the format for extensions... JSON?
             auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref(),
         );
-        let attestation_object = create_attestation_object(
+        let attestation_statement = (&response.attestation_statement).try_into().map_err(|_| fdo::Error::Failed("Could not serialize attestation statement".to_string()))?;
+        let attestation_object = webauthn::create_attestation_object(
             &authenticator_data_blob,
-            &response.attestation_statement,
+            &attestation_statement,
             response.enterprise_attestation.unwrap_or(false),
-        )?;
+        )
+        .map_err(|_| zbus::Error::Failure("Failed to create attestation object".to_string()))?;
         // do we need to check that the client_data_hash is the same?
         let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
             attested_credential.credential_id.clone(),
@@ -536,7 +537,7 @@ impl GetPublicKeyCredentialResponse {
         let attested_credential_data = match &auth_data.attested_credential {
             None => None,
             Some(att) => {
-                let public_key = encode_public_key(&att.credential_public_key)?;
+                let public_key = cose::encode_cose_key(&att.credential_public_key).map_err(|_| fdo::Error::Failed(format!("Unable to serialize public key type: {:?}", &att.credential_public_key)))?;
                 let data = webauthn::create_attested_credential_data(&att.credential_id, &public_key, &att.aaguid)
                     .map_err(|_| zbus::Error::Failure("Failed to parse attested credential data".to_string()))?;
                 Some(data)
@@ -547,7 +548,7 @@ impl GetPublicKeyCredentialResponse {
         // let ext = auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref();
         let extensions = None;
 
-        let authenticator_data_blob = create_authenticator_data(
+        let authenticator_data_blob = webauthn::create_authenticator_data(
             &auth_data.rp_id_hash,
             &auth_data.flags,
             (&auth_data).signature_count,
@@ -616,100 +617,4 @@ fn format_client_data_json(op: Operation, challenge: &str, origin: &str, is_cros
     };
     let cross_origin_str = if is_cross_origin { "true" } else { "false" };
     format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
-}
-
-/// returns CTAP2-serialized public key and algorithm
-fn encode_public_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>> {
-    match public_key {
-            cosey::PublicKey::P256Key(p256_key) => {
-            let mut cose_key: Vec<u8> = Vec::new();
-            cose_key.push(0b101_00101); // map with 5 items
-            cose_key.extend([0b000_00001, 0b000_00010]); // kty (1): EC2 (2)
-            cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): ECDSA-SHA256 (-7)
-            cose_key.extend([0b001_00000, 0b000_00001]); // crv (-1): P256 (1)
-            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
-            cose_key.extend(p256_key.x.clone());
-            cose_key.extend([0b001_00010, 0b010_11000, 0b0010_0000]); // y (-3): <32-byte string>
-            cose_key.extend(p256_key.y.clone());
-            Ok(cose_key)
-        },
-        cosey::PublicKey::Ed25519Key(ed25519_key) => {
-            // TODO: Check this
-            let mut cose_key: Vec<u8> = Vec::new();
-            cose_key.push(0b101_00100); // map with 4 items
-            cose_key.extend([0b000_00001, 0b000_00001]); // kty (1): OKP (1)
-            cose_key.extend([0b000_00011, 0b001_00111]); // alg (3): EdDSA (-8)
-            cose_key.extend([0b001_00000, 0b000_00110]); // crv (-1): ED25519 (6)
-            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
-            cose_key.extend(ed25519_key.x.clone());
-            Ok(cose_key)
-        },
-        _ => return Err(zbus::Error::Failure(format!("Cannot serialize unknown key type {:?}", public_key))),
-    }
-}
-
-fn create_authenticator_data(rp_id_hash: &[u8], flags: &AuthenticatorDataFlags, signature_counter: u32, attested_credential_data: Option<&[u8]>, extensions: Option<&[u8]>) -> Vec<u8> {
-    let mut authenticator_data: Vec<u8> = Vec::new();
-    authenticator_data.extend(rp_id_hash);
-
-    authenticator_data.push(flags.bits());
-
-    authenticator_data.extend(signature_counter.to_be_bytes());
-
-    if let Some(attested_credential_data) = attested_credential_data {
-        authenticator_data.extend(attested_credential_data);
-    }
-
-    if extensions.is_some() {
-        todo!("Implement processed extensions");
-        // TODO: authenticator_data.append(processed_extensions.to_bytes());
-    }
-    authenticator_data
-}
-
-fn create_attestation_object(
-    authenticator_data: &[u8],
-    attestation_statement:&Ctap2AttestationStatement,
-    _enterprise_attestation_possible: bool,
-) -> Result<Vec<u8>> {
-    let mut attestation_object = Vec::new();
-    let mut cbor_writer = crate::cbor::CborWriter::new(&mut attestation_object);
-    cbor_writer.write_map_start(3).unwrap();
-    cbor_writer.write_text("fmt").unwrap();
-    match attestation_statement {
-        Ctap2AttestationStatement::PackedOrAndroid(att_stmt) => {
-            cbor_writer.write_text("packed").unwrap();
-            cbor_writer.write_text("attStmt").unwrap();
-            let len = if att_stmt.certificates.is_empty() { 2 } else { 3 };
-            cbor_writer.write_map_start(len).unwrap();
-            cbor_writer.write_text("alg").unwrap();
-            let alg = match att_stmt.algorithm {
-                Ctap2COSEAlgorithmIdentifier::ES256 => -7,
-                Ctap2COSEAlgorithmIdentifier::EDDSA => -8,
-                // TODO: What's this?
-                Ctap2COSEAlgorithmIdentifier::TOPT => return Err(zbus::Error::Failure(format!("Unknown public key algorithm type: {:?}", att_stmt.algorithm))),
-            };
-            cbor_writer.write_number(alg).unwrap();
-            cbor_writer.write_text("sig").unwrap();
-            cbor_writer.write_bytes(att_stmt.signature.as_ref()).unwrap();
-            if !att_stmt.certificates.is_empty() {
-                cbor_writer.write_text("x5c").unwrap();
-                cbor_writer.write_array_start(att_stmt.certificates.len()).unwrap();
-                for cert in att_stmt.certificates.iter() {
-                    cbor_writer.write_bytes(cert).unwrap();
-                }
-            }
-        },
-        Ctap2AttestationStatement::None(_) => {
-            cbor_writer.write_text("none").unwrap();
-            cbor_writer.write_text("attStmt").unwrap();
-            cbor_writer.write_map_start(0).unwrap();
-        }
-        _ => return Err(zbus::Error::Failure(format!("Unsupported attestation type: {:?}", attestation_statement))),
-    };
-
-    cbor_writer.write_text("authData").unwrap();
-    cbor_writer.write_bytes(authenticator_data).unwrap();
-
-    Ok(attestation_object)
 }

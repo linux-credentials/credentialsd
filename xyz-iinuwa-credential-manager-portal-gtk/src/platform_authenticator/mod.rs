@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use libwebauthn::{fido::AuthenticatorDataFlags, management::AuthenticatorConfig};
 use openssl::{pkey::PKey, rsa::Rsa};
 use ring::{
     digest::{self},
@@ -11,8 +12,8 @@ use ring::{
     },
 };
 
-use crate::webauthn::{self, AttestationStatementFormat, CreatePublicKeyCredentialResponse, CredentialDescriptor, CredentialSource, Error as WebAuthnError, GetPublicKeyCredentialResponse, MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType, RelyingParty, User};
-use crate::cose::{CoseKeyType, encode_public_key};
+use crate::webauthn::{self, AttestationStatement, AttestationStatementFormat, CreatePublicKeyCredentialResponse, CredentialDescriptor, CredentialSource, Error as WebAuthnError, GetPublicKeyCredentialResponse, MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType, RelyingParty, User};
+use crate::cose::{CoseKeyType, encode_pkcs8_key};
 
 static P256: &EcdsaSigningAlgorithm = &ECDSA_P256_SHA256_ASN1_SIGNING;
 // static RNG: &Box<dyn SecureRandom> = &Box::new(SystemRandom::new());
@@ -251,6 +252,12 @@ pub(crate) fn make_credential(
         // If the user does not consent or if user verification fails, return an error code equivalent to "NotAllowedError" and terminate the operation.
         return Err(WebAuthnError::NotAllowed);
     }
+    let mut flags = if require_user_verification {
+        AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED
+    }
+    else {
+        AuthenticatorDataFlags::USER_PRESENT
+    };
 
     // Once the authorization gesture has been completed and user consent has been obtained, generate a new credential object:
     // Let (publicKey, privateKey) be a new pair of cryptographic keys using the combination of PublicKeyCredentialType and cryptographic parameters represented by the first item in credTypesAndPubKeyAlgs that is supported by this authenticator.
@@ -321,13 +328,16 @@ pub(crate) fn make_credential(
 
     // Let attestedCredentialData be the attested credential data byte array including the credentialId and publicKey.
     let aaguid = vec![0_u8; 16];
-    let public_key = encode_public_key(key_type, &key_pair).map_err(|_| WebAuthnError::Unknown)?;
+    let public_key = encode_pkcs8_key(key_type, &key_pair).map_err(|_| WebAuthnError::Unknown)?;
     let attested_credential_data =
         webauthn::create_attested_credential_data(&credential_id, &public_key, &aaguid)?;
 
+    flags = flags | AuthenticatorDataFlags::ATTESTED_CREDENTIALS;
     // Let authenticatorData be the byte array specified in § 6.1 Authenticator Data, including attestedCredentialData as the attestedCredentialData and processedExtensions, if any, as the extensions.
+    let rp_id_hash = ring::digest::digest(&digest::SHA256, &credential_source.rp_id.as_bytes());
     let authenticator_data = webauthn::create_authenticator_data(
-        &credential_source,
+        rp_id_hash.as_ref(),
+        &flags,
         signature_counter,
         Some(&attested_credential_data),
         None,
@@ -341,10 +351,14 @@ pub(crate) fn make_credential(
         &key_pair,
         &key_type,
     )?;
+    let attestation_statment = AttestationStatement::Packed{
+        algorithm: key_type.algorithm(),
+        signature,
+        certificates: vec![],
+    };
     let attestation_object = webauthn::create_attestation_object(
-        key_type.algorithm(),
         &authenticator_data,
-        &signature,
+        &attestation_statment,
         enterprise_attestation_possible,
     )?;
 
@@ -421,6 +435,15 @@ fn get_credential(
         // If requireUserVerification is true, the authorization gesture MUST include user verification.
         // If requireUserPresence is true, the authorization gesture MUST include a test of user presence.
         // If the user does not consent, return an error code equivalent to "NotAllowedError" and terminate the operation.
+    if collect_authorization_gesture(require_user_presence, require_user_verification).is_err() {
+        return Err(WebAuthnError::NotAllowed);
+    }
+    let flags = if require_user_verification  {
+        AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED
+    } else {
+        AuthenticatorDataFlags::USER_VERIFIED
+    };
+
     // TODO: pass selected_credential to this method
     let selected_credential = credential_options[0];
     // Let processedExtensions be the result of authenticator extension processing for each supported extension identifier → authenticator extension input in extensions.
@@ -462,13 +485,20 @@ fn get_credential(
     let attestation_format = attestation_formats.iter().find(|f| supported_formats.contains(f)).unwrap_or(&preferred_format);
 
     let key_type = (&selected_credential.key_parameters).try_into().map_err(|_| WebAuthnError::Unknown)?;
-    let public_key = encode_public_key(key_type, &selected_credential.private_key).map_err(|_| WebAuthnError::Unknown)?;
+    let public_key = encode_pkcs8_key(key_type, &selected_credential.private_key).map_err(|_| WebAuthnError::Unknown)?;
 
     // TODO: Assign AAGUID?
     let aaguid = vec![0_u8; 16];
     let attested_credential_data = if *attestation_format != AttestationStatementFormat::None { webauthn::create_attested_credential_data(&selected_credential.id, &public_key, &aaguid).ok() } else { None };
     // Let authenticatorData be the byte array specified in § 6.1 Authenticator Data including processedExtensions, if any, as the extensions and excluding attestedCredentialData. This authenticatorData MUST include attested credential data if, and only if, attestationFormat is not none.
-    let authenticator_data = webauthn::create_authenticator_data(selected_credential, signature_counter, attested_credential_data.as_deref(), None);
+    let rp_id_hash = digest::digest(&digest::SHA256, selected_credential.rp_id.as_bytes());
+    let authenticator_data = webauthn::create_authenticator_data(
+        rp_id_hash.as_ref(),
+        &flags,
+        signature_counter,
+        attested_credential_data.as_deref(),
+        None
+    );
     // Let signature be the assertion signature of the concatenation authenticatorData || hash using the privateKey of selectedCredential as shown in Figure , below. A simple, undelimited concatenation is safe to use here because the authenticator data describes its own length. The hash of the serialized client data (which potentially has a variable length) is always the last element.
     let signature = sign_attestation(
         &authenticator_data,
@@ -476,13 +506,6 @@ fn get_credential(
         &selected_credential.private_key,
         &key_type,
     )?;
-
-    // The attestationFormat is not none then create an attestation object for the new credential using the procedure specified in § 6.5.5 Generating an Attestation Object, the attestation statement format attestationFormat, and the values authenticatorData and hash, as well as taking into account the value of enterpriseAttestationPossible. For more details on attestation, see § 6.5 Attestation.
-    let attestation_object = if *attestation_format != AttestationStatementFormat::None {
-        Some(webauthn::create_attestation_object(key_type.algorithm(), &authenticator_data, &signature, enterprise_attestation_possible)?)
-    } else {
-        None
-    };
 
     // If any error occurred then return an error code equivalent to "UnknownError" and terminate the operation.
     // Return to the user agent:
@@ -594,14 +617,13 @@ enum WebAuthnDeviceCounterType {
 #[cfg(test)]
 mod test {
     use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use libwebauthn::fido::AuthenticatorDataFlags;
     use ring::digest::{digest, SHA256};
 
-    use crate::cose::encode_public_key;
+    use crate::cose::encode_pkcs8_key;
 
     use crate::webauthn::{
-        create_attestation_object, create_attested_credential_data,
-        create_authenticator_data, CredentialSource,
-        PublicKeyCredentialParameters, PublicKeyCredentialType,
+        create_attestation_object, create_attested_credential_data, create_authenticator_data, AttestationStatement, CredentialSource, PublicKeyCredentialParameters, PublicKeyCredentialType
     };
 
     use super::sign_attestation;
@@ -615,7 +637,7 @@ mod test {
             cred_type: "public-key".to_string(),
         };
         let key_type = (&key_parameters).try_into().unwrap();
-        let public_key = encode_public_key(key_type, &key_file).unwrap();
+        let public_key = encode_pkcs8_key(key_type, &key_file).unwrap();
         let signature_counter = 1u32;
         let credential_id = [
             0x92, 0x11, 0xb7, 0x6d, 0x8b, 0x19, 0xf9, 0x50, 0x6c, 0x2d, 0x75, 0x2f, 0x09, 0xc4,
@@ -642,8 +664,10 @@ mod test {
             other_ui: None,
         };
 
+        let flags = AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED | AuthenticatorDataFlags::ATTESTED_CREDENTIALS;
         let authenticator_data = create_authenticator_data(
-            &credential_source,
+            &credential_source.rp_id_hash(),
+            &flags,
             signature_counter,
             Some(&attested_credential_data),
             None,
@@ -658,8 +682,13 @@ mod test {
             &key_type,
         )
         .unwrap();
+        let att_stmt = AttestationStatement::Packed {
+            algorithm: key_type.algorithm(),
+            signature,
+            certificates: vec![],
+        };
         let attestation_object =
-            create_attestation_object(key_type.algorithm(), &authenticator_data, &signature, false)
+            create_attestation_object(&authenticator_data, &att_stmt, false)
                 .unwrap();
         let expected = std::fs::read("output.bin").unwrap();
         assert_eq!(expected, attestation_object);

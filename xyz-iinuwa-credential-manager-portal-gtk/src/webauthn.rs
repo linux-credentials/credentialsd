@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use libwebauthn::proto::ctap2::{Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport};
+use libwebauthn::{fido::AuthenticatorDataFlags, proto::ctap2::{Ctap2AttestationStatement, Ctap2COSEAlgorithmIdentifier, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport}};
 use ring::{
     digest::{self, digest},
     signature::{
@@ -10,6 +10,7 @@ use ring::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use tracing::debug;
 use zbus::zvariant::{DeserializeDict, Type};
 
 use crate::cbor::CborWriter;
@@ -43,21 +44,18 @@ pub(crate) fn create_attested_credential_data(
     attested_credential_data.extend(public_key);
     Ok(attested_credential_data)
 }
+
 pub (crate) fn create_authenticator_data(
-    credential_source: &CredentialSource,
+    rp_id_hash: &[u8],
+    flags: &AuthenticatorDataFlags,
     signature_counter: u32,
     attested_credential_data: Option<&[u8]>,
-    processed_extensions: Option<()>,
+    processed_extensions: Option<&[u8]>,
 ) -> Vec<u8> {
     let mut authenticator_data: Vec<u8> = Vec::new();
-    let rp_id_hash = digest(&digest::SHA256, credential_source.rp_id.as_bytes());
-    authenticator_data.extend(rp_id_hash.as_ref());
+    authenticator_data.extend(rp_id_hash);
 
-    if attested_credential_data.is_some() {
-        authenticator_data.push(0b0100_0101); // UP, UV, AT
-    } else {
-        authenticator_data.push(0b0000_0101); // UP, UV
-    }
+    authenticator_data.push(flags.bits());
 
     authenticator_data.extend(signature_counter.to_be_bytes());
 
@@ -71,25 +69,40 @@ pub (crate) fn create_authenticator_data(
     }
     authenticator_data
 }
+
 pub(crate) fn create_attestation_object(
-    algorithm: CoseKeyAlgorithmIdentifier,
     authenticator_data: &[u8],
-    signature: &[u8],
+    attestation_statement:&AttestationStatement,
     _enterprise_attestation_possible: bool,
 ) -> Result<Vec<u8>, Error> {
     let mut attestation_object = Vec::new();
-    let mut cbor_writer = CborWriter::new(&mut attestation_object);
+    let mut cbor_writer = crate::cbor::CborWriter::new(&mut attestation_object);
     cbor_writer.write_map_start(3).unwrap();
-
     cbor_writer.write_text("fmt").unwrap();
-    cbor_writer.write_text("packed").unwrap();
-
-    cbor_writer.write_text("attStmt").unwrap();
-    cbor_writer.write_map_start(2).unwrap();
-    cbor_writer.write_text("alg").unwrap();
-    cbor_writer.write_number(algorithm.into()).unwrap();
-    cbor_writer.write_text("sig").unwrap();
-    cbor_writer.write_bytes(signature).unwrap();
+    match attestation_statement {
+        AttestationStatement::Packed { algorithm, signature, certificates }  => {
+            cbor_writer.write_text("packed").unwrap();
+            cbor_writer.write_text("attStmt").unwrap();
+            let len = if certificates.is_empty() { 2 } else { 3 };
+            cbor_writer.write_map_start(len).unwrap();
+            cbor_writer.write_text("alg").unwrap();
+            cbor_writer.write_number((*algorithm).into()).unwrap();
+            cbor_writer.write_text("sig").unwrap();
+            cbor_writer.write_bytes(signature).unwrap();
+            if !certificates.is_empty() {
+                cbor_writer.write_text("x5c").unwrap();
+                cbor_writer.write_array_start(certificates.len()).unwrap();
+                for cert in certificates.iter() {
+                    cbor_writer.write_bytes(cert).unwrap();
+                }
+            }
+        },
+        AttestationStatement::None => {
+            cbor_writer.write_text("none").unwrap();
+            cbor_writer.write_text("attStmt").unwrap();
+            cbor_writer.write_map_start(0).unwrap();
+        }
+    };
 
     cbor_writer.write_text("authData").unwrap();
     cbor_writer.write_bytes(authenticator_data).unwrap();
@@ -348,18 +361,56 @@ pub struct CredentialSource {
     pub other_ui: Option<String>,
 }
 
+impl CredentialSource {
+    pub(crate) fn rp_id_hash<'a> (&'a self) -> Vec<u8> {
+        let hash = digest::digest(&digest::SHA256, self.rp_id.as_bytes());
+        hash.as_ref().to_owned()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum PublicKeyCredentialType {
     PublicKey,
 }
 
-
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum AttestationStatementFormat {
     None,
     Packed,
 }
 
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum AttestationStatement {
+    None,
+    Packed {
+        algorithm: CoseKeyAlgorithmIdentifier,
+        signature: Vec<u8>,
+        certificates: Vec<Vec<u8>>,
+    },
+}
+
+impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
+    type Error = Error;
+
+    fn try_from(value: &Ctap2AttestationStatement) -> Result<Self, Self::Error> {
+        match value {
+            Ctap2AttestationStatement::None(_) => Ok(AttestationStatement::None),
+            Ctap2AttestationStatement::PackedOrAndroid(att_stmt) => {
+                let alg = att_stmt.algorithm.try_into().map_err(|_| Error::NotSupported)?;
+                Ok(Self::Packed {
+                    algorithm: alg,
+                    signature: att_stmt.signature.as_ref().to_vec(),
+                    certificates: att_stmt.certificates.iter().map(|c| c.as_ref().to_vec()).collect()
+                })
+            }
+            _ => {
+                debug!("Unsupported attestation type: {:?}", value);
+                return Err(Error::NotSupported);
+            }
+        }
+    }
+}
 pub struct CreatePublicKeyCredentialResponse {
     cred_type: String,
 

@@ -1,4 +1,5 @@
 
+use libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier;
 use ring::{
     agreement::PublicKey, digest::{self, digest}, rand::SystemRandom, signature::{
         EcdsaKeyPair, EcdsaSigningAlgorithm, EcdsaVerificationAlgorithm, Ed25519KeyPair, KeyPair,
@@ -6,6 +7,7 @@ use ring::{
         RSA_PKCS1_SHA256,
     }
 };
+use tracing::debug;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(i64)]
@@ -54,7 +56,7 @@ impl From<CoseKeyType> for CoseKeyParameters {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CoseKeyAlgorithmIdentifier {
     ES256,
     EdDSA,
@@ -77,6 +79,21 @@ impl From<CoseKeyAlgorithmIdentifier> for i128 {
             CoseKeyAlgorithmIdentifier::ES256 => -7,
             CoseKeyAlgorithmIdentifier::EdDSA => -8,
             CoseKeyAlgorithmIdentifier::RS256 => -257,
+        }
+    }
+}
+
+impl TryFrom<Ctap2COSEAlgorithmIdentifier> for CoseKeyAlgorithmIdentifier {
+    type Error = Error;
+
+    fn try_from(value: Ctap2COSEAlgorithmIdentifier) -> Result<Self, Self::Error> {
+        match value {
+            Ctap2COSEAlgorithmIdentifier::EDDSA => Ok(CoseKeyAlgorithmIdentifier::EdDSA),
+            Ctap2COSEAlgorithmIdentifier::ES256 => Ok(CoseKeyAlgorithmIdentifier::ES256),
+            Ctap2COSEAlgorithmIdentifier::TOPT => {
+                debug!("Unknown public key algorithm type: {:?}", value);
+                return Err(Error::Unsupported);
+            }
         }
     }
 }
@@ -107,8 +124,10 @@ impl From<CoseEllipticCurveIdentifier> for i64 {
 #[derive(Debug)]
 pub enum Error {
     InvalidKey,
+    Unsupported,
 }
-pub(super) fn encode_public_key(
+
+pub(super) fn encode_pkcs8_key(
     key_type: CoseKeyType,
     pkcs8_key: &[u8],
 ) -> Result<Vec<u8>, Error> {
@@ -138,7 +157,6 @@ pub(super) fn encode_public_key(
             Ok(cose_key)
         }
         CoseKeyType::EdDSA_Ed25519 => {
-            // TODO: Check this
             let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8_key).map_err(|_| Error::InvalidKey)?;
             let public_key = key_pair.public_key().as_ref();
             let mut cose_key: Vec<u8> = Vec::new();
@@ -171,5 +189,39 @@ pub(super) fn encode_public_key(
             Ok(cose_key)
         }
         _ => todo!(),
+    }
+}
+
+/// returns CTAP2-serialized public key and algorithm
+pub(crate) fn encode_cose_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>, Error> {
+    match public_key {
+            cosey::PublicKey::P256Key(p256_key) => {
+            let mut cose_key: Vec<u8> = Vec::new();
+            cose_key.push(0b101_00101); // map with 5 items
+            cose_key.extend([0b000_00001, 0b000_00010]); // kty (1): EC2 (2)
+            cose_key.extend([0b000_00011, 0b001_00110]); // alg (3): ECDSA-SHA256 (-7)
+            cose_key.extend([0b001_00000, 0b000_00001]); // crv (-1): P256 (1)
+            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
+            cose_key.extend(p256_key.x.clone());
+            cose_key.extend([0b001_00010, 0b010_11000, 0b0010_0000]); // y (-3): <32-byte string>
+            cose_key.extend(p256_key.y.clone());
+            Ok(cose_key)
+        },
+        cosey::PublicKey::Ed25519Key(ed25519_key) => {
+            // TODO: Check this
+            let mut cose_key: Vec<u8> = Vec::new();
+            cose_key.push(0b101_00100); // map with 4 items
+            cose_key.extend([0b000_00001, 0b000_00001]); // kty (1): OKP (1)
+            cose_key.extend([0b000_00011, 0b001_00111]); // alg (3): EdDSA (-8)
+            cose_key.extend([0b001_00000, 0b000_00110]); // crv (-1): ED25519 (6)
+            cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
+            cose_key.extend(ed25519_key.x.clone());
+            Ok(cose_key)
+        },
+
+        _ => {
+            debug!("Cannot serialize unknown key type {:?}", public_key);
+            Err(Error::Unsupported)
+        }
     }
 }
