@@ -3674,7 +3674,7 @@ dependencies = [
 [[package]]
 name = "xdg-credentials-portal"
 version = "0.1.1"
-source = "git+https://github.com/linux-credentials/libwebauthn?rev=1eda27d21a0b231ca032b77e9c394dc9babb9f64#1eda27d21a0b231ca032b77e9c394dc9babb9f64"
+source = "git+https://github.com/msirringhaus/xdg-credentials-portal?rev=c3e218db668a4cb9cb229555d770300971f73c5a#c3e218db668a4cb9cb229555d770300971f73c5a"
 dependencies = [
  "aes",
  "async-trait",

@@ -4,12 +4,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
-use libwebauthn::{self, ops::webauthn::{GetAssertionResponse, MakeCredentialResponse}, pin::{PinRequestReason, UvProvider}, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}};
+use libwebauthn::{self, ops::webauthn::{GetAssertionResponse, MakeCredentialResponse}, pin::PinRequestReason, transport::Device as _, webauthn::{Error as WebAuthnError, WebAuthn}, UxUpdate};
 
 use async_std::{channel::TryRecvError, sync::{Arc as AsyncArc, Mutex as AsyncMutex}, task};
 use tokio::runtime::Runtime;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{dbus::{CredentialRequest, CredentialResponse}, view_model::{Device, InternalPinState, Transport}};
 
@@ -88,24 +87,16 @@ impl CredentialService {
     }
 
     pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
-        let devices = libwebauthn::transport::hid::list_devices().await.unwrap();
-        if devices.is_empty() {
-            let state = UsbState::Waiting;
-            *self.usb_state.lock().await = state;
-            return Ok(state);
-        }
-
+        debug!("polling for USB status");
         let prev_usb_state = self.usb_state.lock().await.clone();
         let next_usb_state = match prev_usb_state {
-            UsbState::Idle => {
+            UsbState::Idle | UsbState::Waiting => {
+                let devices = libwebauthn::transport::hid::list_devices().await.unwrap();
                 if devices.is_empty() {
-                    Ok(UsbState::Waiting)
+                    let state = UsbState::Waiting;
+                    *self.usb_state.lock().await = state;
+                    return Ok(state);
                 }
-                else {
-                    Ok(UsbState::Connected)
-                }
-            },
-            UsbState::Waiting => {
                 if devices.is_empty() {
                     Ok(UsbState::Waiting)
                 }
@@ -114,25 +105,25 @@ impl CredentialService {
                 }
             },
             UsbState::Connected => {
-                if devices.is_empty() {
-                    Ok(UsbState::Waiting)
-                }
-                else {
                     // TODO: I'm not sure how we want to handle multiple usb devices
                     // just take the first one found for now.
                     // TODO: store this device reference, perhaps in the enum itself
                     let handler = self.usb_uv_handler.clone();
-                    let pin_provider: Box<dyn UvProvider> = Box::new(self.usb_uv_handler.clone());
                     let cred_request = self.cred_request.clone();
+                    let signal_tx = self.usb_uv_handler.signal_tx.clone();
+                    let pin_rx = self.usb_uv_handler.pin_rx.clone();
                     tokio().spawn( async move {
-                         match cred_request {
+                            match cred_request {
                             CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
                                 let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
                                 let device = devices.first_mut().unwrap();
-                                let mut channel = device.channel().await.unwrap();
+                                let (mut channel, state_rx) = device.channel().await.unwrap();
+                                tokio().spawn(async move {
+                                    handle_usb_updates(signal_tx, pin_rx, state_rx).await;
+                                });
                                 loop {
-                                     match channel
-                                        .webauthn_make_credential(&make_cred_request, &pin_provider)
+                                        match channel
+                                        .webauthn_make_credential(&make_cred_request)
                                         .await
                                     {
                                         Ok(response) => {
@@ -153,12 +144,13 @@ impl CredentialService {
                             CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => {
                                 let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
                                 let device = devices.first_mut().unwrap();
-                                let mut channel = device.channel().await.unwrap();
+                                let (mut channel, state_rx) = device.channel().await.unwrap();
+                                let handle = tokio().spawn(async move {
+                                    handle_usb_updates(signal_tx, pin_rx, state_rx).await;
+                                    debug!("Reached end of USB update task");
+                                });
                                 loop {
-                                     match channel
-                                        .webauthn_get_assertion(&get_cred_request, &pin_provider)
-                                        .await
-                                    {
+                                        match channel.webauthn_get_assertion(&get_cred_request).await {
                                         Ok(response) => {
                                             handler.notify_ceremony_completed(AuthenticatorResponse::CredentialsAsserted(response)).await;
                                             break
@@ -173,6 +165,7 @@ impl CredentialService {
                                         }
                                     };
                                 };
+                                handle.abort();
 
                             }
                         };
@@ -211,7 +204,6 @@ impl CredentialService {
                         },
                         Err(err) => Err(err),
 
-                    }
                 }
             }
             UsbState::NeedsPin{ attempts_left: Some(attempts_left) } if attempts_left <= 1 => {
@@ -508,6 +500,35 @@ impl UsbUvHandler {
     }
 }
 
+async fn handle_usb_updates(signal_tx: async_std::channel::Sender<Result<UsbUvMessage, String>>, pin_rx: async_std::channel::Receiver<String>, mut state_rx: tokio::sync::mpsc::Receiver<UxUpdate>) {
+    while let Some(msg) = state_rx.recv().await {
+        match msg {
+            UxUpdate::UvRetry { attempts_left } => {
+                signal_tx.send(Ok(UsbUvMessage::NeedsUserVerification { attempts_left })).await.unwrap();
+            }
+            UxUpdate::PinRequired(pin_update) => {
+                if pin_update.attempts_left.map_or(false, |num| num <= 1) {
+                    // TODO: cancel authenticator operation
+                    signal_tx.send(Err("No more PIN attempts allowed. Select a different authenticator or try again later.".to_string())).await.unwrap();
+                    continue;
+                }
+                signal_tx.send(Ok(UsbUvMessage::NeedsPin { attempts_left: pin_update.attempts_left })).await.unwrap();
+                if let Ok(pin) = pin_rx.recv().await {
+                    pin_update.send_pin(&pin).unwrap();
+                } else {
+                    debug!("PIN channel closed.");
+                }
+
+            },
+            UxUpdate::PresenceRequired => {
+                signal_tx.send(Ok(UsbUvMessage::NeedsUserPresence)).await.unwrap();
+            }
+        }
+    };
+    debug!("USB update channel closed.");
+}
+
+/*
 #[async_trait]
 impl UvProvider for UsbUvHandler {
     async fn provide_pin(&self, attempts_left:Option<u32>, request_reason: PinRequestReason) -> Option<String> {
@@ -524,6 +545,7 @@ impl UvProvider for UsbUvHandler {
         todo!("UV retry not implemented");
     }
 }
+*/
 
 enum UsbUvMessage {
     NeedsPin { attempts_left: Option<u32> },
