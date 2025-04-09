@@ -151,6 +151,8 @@ pub(crate) struct AssertionOptions {
 #[derive(Deserialize)]
 pub(crate) struct MakeCredentialOptions {
     /// Timeout in milliseconds
+    #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
+    #[serde(default)]
     pub timeout: Option<Duration>,
     #[serde(rename = "excludedCredentials")]
     pub excluded_credentials: Option<Vec<CredentialDescriptor>>,
