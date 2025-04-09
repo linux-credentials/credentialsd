@@ -28,7 +28,8 @@ COSE_EC2_X = -2
 COSE_EC2_Y = -3
 
 def verify_create_response(response, create_request, expected_origin):
-    client_data = json.loads(response['response']['clientDataJSON'])
+    client_data_bytes = util.b64_decode(response['response']['clientDataJSON'])
+    client_data = json.loads(client_data_bytes.decode("utf-8"))
     if client_data['type'] != "webauthn.create":
         raise Exception(f"Invalid operation type received: {client_data['type']}")
 
@@ -40,7 +41,7 @@ def verify_create_response(response, create_request, expected_origin):
     if origin != expected_origin:
         raise Exception(f"Origin does not match original request. Rejecting.")
 
-    client_data_hash = hashlib.sha256(response['response']['clientDataJSON'].encode('utf-8')).digest()
+    client_data_hash = hashlib.sha256(client_data_bytes).digest()
     # Verify that the rpIdHash in authData is the SHA-256 hash of the RP ID expected by the Relying Party.
 
     attestation = cbor.loads(util.b64_decode(response['response']['attestationObject']))
@@ -205,7 +206,7 @@ def verify_get_response(credential, options, expected_origin, identified_user, u
 
     # Let cData, authData and sig denote the value of response’s clientDataJSON,
     # authenticatorData, and signature respectively.
-    client_data_json = response['clientDataJSON']
+    client_data_json = util.b64_decode(response['clientDataJSON']).decode("utf-8")
     auth_data_bytes = util.b64_decode(response['authenticatorData'])
     auth_data = _parse_authenticator_data(auth_data_bytes)
     sig_bytes = util.b64_decode(response['signature'])

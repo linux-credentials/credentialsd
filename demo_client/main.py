@@ -17,7 +17,7 @@ import webauthn
 async def run(cmd):
     bus = await MessageBus().connect()
 
-    with open('xyz.iinuwa.credentials.CredentialManager.xml', 'r') as f:
+    with open('../contrib/xyz.iinuwa.credentials.CredentialManager.xml', 'r') as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object('xyz.iinuwa.credentials.CredentialManagerUi',
@@ -29,12 +29,12 @@ async def run(cmd):
 
     rp_id = "example.com"
     origin = "https://example.com"
-    is_same_origin = False
+    top_origin = "https://example.com"
     user_handle = b"123abdsacddw"
     username = "user@example.com"
 
     if cmd == 'create':
-        auth_data = await create_passkey(interface, origin, is_same_origin, rp_id, user_handle, username)
+        auth_data = await create_passkey(interface, origin, top_origin, rp_id, user_handle, username)
         user_data = {
             "id": 1,
             "name": username,
@@ -96,7 +96,8 @@ async def get_password(interface):
     return None
 
 
-async def create_passkey(interface, origin, is_same_origin, rp_id, user_handle, username):
+async def create_passkey(interface, origin, top_origin, rp_id, user_handle, username):
+    is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
         "rp": {

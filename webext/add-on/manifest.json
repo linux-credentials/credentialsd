@@ -1,0 +1,35 @@
+{
+
+  "description": "Linux WebAuthn Desktop Portal Shim",
+  "manifest_version": 3,
+  "name": "WebAuthn Portal",
+  "version": "1.0",
+  "icons": {
+    "48": "icons/message.svg"
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "credential_manager_shim@iinuwa.xyz",
+      "strict_min_version": "50.0"
+    }
+  },
+
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+        "matches": ["https://webauthn.io/*"],
+        "js": ["content.js"],
+        "run_at": "document_start"
+    }
+  ],
+
+  "action": {
+    "default_icon": "icons/message.svg"
+  },
+
+  "permissions": ["nativeMessaging"]
+
+}
