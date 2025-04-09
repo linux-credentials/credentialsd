@@ -471,7 +471,7 @@ impl CreatePublicKeyCredentialResponse {
 
     pub fn to_json(&self) -> String {
         let response = json!({
-            "clientDataJSON": self.response.client_data_json,
+            "clientDataJSON": URL_SAFE_NO_PAD.encode(&self.response.client_data_json.as_bytes()),
             "attestationObject": URL_SAFE_NO_PAD.encode(&self.response.attestation_object),
             "transports": self.response.transports,
         });
@@ -527,7 +527,7 @@ impl GetPublicKeyCredentialResponse {
     }
     pub fn to_json(&self) -> String {
         let response = json!({
-            "clientDataJSON": self.client_data_json,
+            "clientDataJSON": URL_SAFE_NO_PAD.encode(&self.client_data_json.as_bytes()),
             "authenticatorData": URL_SAFE_NO_PAD.encode(&self.authenticator_data),
             "signature": URL_SAFE_NO_PAD.encode(&self.signature),
             "userHandle": self.user_handle.as_ref().map(|h| URL_SAFE_NO_PAD.encode(h))
