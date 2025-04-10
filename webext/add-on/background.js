@@ -60,15 +60,17 @@ function deserializeBytes(base64str) {
 function serializeRequest(options) {
   // Serialize ArrayBuffers
   const clone = structuredClone(options)
-  clone.publicKey.challenge = serializeBytes(options.publicKey.challenge)
-  clone.publicKey.user.id = serializeBytes(options.publicKey.user.id)
+  clone.publicKey.challenge = serializeBytes(clone.publicKey.challenge)
+  if (clone.publicKey.user) {
+    clone.publicKey.user.id = serializeBytes(clone.publicKey.user.id)
+  }
   if (clone.publicKey.excludedCredentials) {
     for (const cred in clone.publicKey.excludedCredentials) {
       cred.id = serializeBytes(cred.id)
     }
   }
   if (clone.publicKey.allowCredentials) {
-    for (const cred of clone.allowCredentials) {
+    for (const cred of clone.publicKey.allowCredentials) {
       cred.id = serializeBytes(cred.id);
     }
   }
