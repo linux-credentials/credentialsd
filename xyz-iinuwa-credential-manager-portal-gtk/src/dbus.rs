@@ -372,20 +372,21 @@ pub struct CreatePublicKeyCredentialRequest {
 }
 
 impl CreatePublicKeyCredentialResponse {
-    fn try_from_ctap2_response(response: &Ctap2MakeCredentialResponse, client_data_json: String) -> std::result::Result<Self, fdo::Error> {
+    fn try_from_ctap2_response(response: &MakeCredentialResponse, client_data_json: String) -> std::result::Result<Self, fdo::Error> {
         let auth_data = &response.authenticator_data;
         let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| fdo::Error::Failed("Invalid credential received from authenticator".to_string()))?;
         let public_key = cose::encode_cose_key(&attested_credential.credential_public_key).map_err(|_| fdo::Error::Failed(format!("Unable to serialize public key type: {:?}", &attested_credential.credential_public_key)))?;
         let attested_credential_data =
             webauthn::create_attested_credential_data(&attested_credential.credential_id, &public_key, &attested_credential.aaguid).unwrap();
 
+        // TODO: what's the format for extensions... JSON?
+        // let extensions = &auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref();
         let authenticator_data_blob = webauthn::create_authenticator_data(
             &auth_data.rp_id_hash,
             &auth_data.flags,
             (&auth_data).signature_count,
             Some(&attested_credential_data),
-            // TODO: what's the format for extensions... JSON?
-            auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref(),
+            None
         );
         let attestation_statement = (&response.attestation_statement).try_into().map_err(|_| fdo::Error::Failed("Could not serialize attestation statement".to_string()))?;
         let attestation_object = webauthn::create_attestation_object(
