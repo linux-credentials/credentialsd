@@ -113,19 +113,16 @@ impl CredentialService {
                     let signal_tx = self.usb_uv_handler.signal_tx.clone();
                     let pin_rx = self.usb_uv_handler.pin_rx.clone();
                     tokio().spawn( async move {
+                            let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
+                            let device = devices.first_mut().unwrap();
+                            let (mut channel, state_rx) = device.channel().await.unwrap();
+                            tokio().spawn(async move {
+                                handle_usb_updates(signal_tx, pin_rx, state_rx).await;
+                                debug!("Reached end of USB update task");
+                            });
                             match cred_request {
-                            CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
-                                let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
-                                let device = devices.first_mut().unwrap();
-                                let (mut channel, state_rx) = device.channel().await.unwrap();
-                                tokio().spawn(async move {
-                                    handle_usb_updates(signal_tx, pin_rx, state_rx).await;
-                                });
-                                loop {
-                                        match channel
-                                        .webauthn_make_credential(&make_cred_request)
-                                        .await
-                                    {
+                                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => loop {
+                                    match channel.webauthn_make_credential(&make_cred_request).await {
                                         Ok(response) => {
                                             handler.notify_ceremony_completed(AuthenticatorResponse::CredentialCreated(response)).await;
                                             break
@@ -139,24 +136,15 @@ impl CredentialService {
                                             break;
                                         }
                                     };
-                                };
-                            },
-                            CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => {
-                                let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
-                                let device = devices.first_mut().unwrap();
-                                let (mut channel, state_rx) = device.channel().await.unwrap();
-                                let handle = tokio().spawn(async move {
-                                    handle_usb_updates(signal_tx, pin_rx, state_rx).await;
-                                    debug!("Reached end of USB update task");
-                                });
-                                loop {
-                                        match channel.webauthn_get_assertion(&get_cred_request).await {
+                                },
+                                CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => loop {
+                                    match channel.webauthn_get_assertion(&get_cred_request).await {
                                         Ok(response) => {
                                             handler.notify_ceremony_completed(AuthenticatorResponse::CredentialsAsserted(response)).await;
                                             break
                                         },
                                         Err(WebAuthnError::Ctap(ctap_error)) if ctap_error.is_retryable_user_error() => {
-                                            warn!("Retrying WebAuthn make credential operation");
+                                            warn!("Retrying WebAuthn get credential operation");
                                             continue;
                                         },
                                         Err(err) => {
@@ -164,11 +152,9 @@ impl CredentialService {
                                             break;
                                         }
                                     };
-                                };
-                                handle.abort();
+                                }
 
-                            }
-                        };
+                            };
                     });
                     match self.usb_uv_handler.wait_for_notification().await {
                         Ok(UsbUvMessage::NeedsPin { attempts_left }) => {
