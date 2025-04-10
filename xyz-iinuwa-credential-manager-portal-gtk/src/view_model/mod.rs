@@ -218,23 +218,30 @@ impl ViewModel {
                 async_std::task::spawn(async move {
                     // TODO: add cancellation
                     let mut prev_state = UsbState::default();
-                    while let Ok(usb_state) =
-                        cred_service.lock().await.poll_device_discovery_usb().await
-                    {
-                        let state = usb_state.into();
-                        if prev_state != state {
-                            println!("{:?}", state);
-                            tx.send(BackgroundEvent::UsbStateChanged(state.clone()))
-                                .await
-                                .unwrap();
-                        }
-                        prev_state = state;
-                        match prev_state {
-                            UsbState::Completed => break,
-                            UsbState::UserCancelled => break,
-                            _ => {},
+                    loop {
+                        match cred_service.lock().await.poll_device_discovery_usb().await {
+                            Ok(usb_state) => {
+                                let state = usb_state.into();
+                                if prev_state != state {
+                                    println!("{:?}", state);
+                                    tx.send(BackgroundEvent::UsbStateChanged(state.clone()))
+                                        .await
+                                        .unwrap();
+                                }
+                                prev_state = state;
+                                match prev_state {
+                                    UsbState::Completed => break,
+                                    UsbState::UserCancelled => break,
+                                    _ => {},
+                                };
+                                async_std::task::sleep(Duration::from_millis(50)).await;
+                            },
+                            Err(err) => {
+                                // TODO: move to error page
+                                tracing::error!("There was an error trying to get credentials from USB: {}", err);
+                                break;
+                            }
                         };
-                        async_std::task::sleep(Duration::from_millis(50)).await;
                     }
                 });
             }
