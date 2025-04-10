@@ -52,7 +52,7 @@ def sendMessage(encodedMessage):
     sys.stdout.buffer.write(encodedMessage['length'])
     sys.stdout.buffer.write(encodedMessage['content'])
     sys.stdout.buffer.flush()
-    logging.debug("sent message")
+    logging.debug(f"sent message: {encodedMessage}")
 
 
 def b64_encode(data: bytes) -> str:
@@ -306,8 +306,27 @@ async def create_passkey(interface, options, origin, top_origin):
     return response_json
 
 
-async def get_passkey(interface, origin, is_same_origin, rp_id, cred_id, user: Optional[dict]):
-    pass
+async def get_passkey(interface, options, origin, top_origin):
+    logging.debug("Authenticating with passkey")
+    is_same_origin = origin == top_origin
+    req_json = json.dumps(options)
+    logging.debug(req_json)
+    req = {
+        "type": Variant('s', "publicKey"),
+        "origin": Variant('s', origin),
+        "is_same_origin": Variant('b', is_same_origin),
+        "publicKey": Variant('a{sv}', {
+            "request_json": Variant('s', req_json)
+        })
+    }
+
+    logging.debug("Sending request to D-Bus API")
+    rsp = await interface.call_get_credential(req)
+    if rsp['type'].value != 'public-key':
+        raise Exception(f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}")
+
+    response_json = json.loads(rsp['public_key'].value['authentication_response_json'].value)
+    return response_json
 
 
 async def run(cmd, options, origin, top_origin):
