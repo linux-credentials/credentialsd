@@ -554,7 +554,7 @@ impl GetPublicKeyCredentialResponse {
             extensions,
         );
 
-        let registration_response_json = webauthn::GetPublicKeyCredentialResponse::new(
+        let authentication_response_json = webauthn::GetPublicKeyCredentialResponse::new(
             client_data_json,
             response.credential_id.as_ref().map(|c| c.id.clone().into_vec()),
             authenticator_data_blob,
@@ -562,7 +562,7 @@ impl GetPublicKeyCredentialResponse {
             response.user.as_ref().map(|u| u.id.clone().into_vec()),
         ).to_json();
         let response = GetPublicKeyCredentialResponse {
-            registration_response_json,
+            authentication_response_json,
         };
         Ok(response.into())
     }
@@ -594,7 +594,7 @@ impl From<GetPasswordCredentialResponse> for GetCredentialResponse {
 #[derive(SerializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct GetPublicKeyCredentialResponse {
-    registration_response_json: String,
+    authentication_response_json: String,
 }
 
 impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {

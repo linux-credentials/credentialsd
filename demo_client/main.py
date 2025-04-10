@@ -169,7 +169,7 @@ async def get_passkey(interface, origin, is_same_origin, rp_id, cred_id, user: O
     if rsp['type'].value != 'public-key':
         raise Exception(f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}")
 
-    response_json = json.loads(rsp['public_key'].value['registration_response_json'].value)
+    response_json = json.loads(rsp['public_key'].value['authentication_response_json'].value)
     print(user)
     return webauthn.verify_get_response(response_json, options, origin, user, None)
 
