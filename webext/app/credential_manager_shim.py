@@ -2,13 +2,11 @@
 
 import asyncio
 import base64
-import base64
 import codecs
 from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
-import struct
 import struct
 import sys
 from typing import Optional
@@ -28,8 +26,8 @@ def getMessage():
         logging.debug(f"unpacking struct: {rawLength}")
         messageLength = struct.unpack('@I', rawLength)[0]
         logging.debug(f"reading {messageLength} bytes")
-    except:
-        logging.error("Failed to convert rawLength to integer")
+    except Exception as e:
+        logging.error("Failed to convert rawLength to integer", exc_info=e)
     try:
         raw_msg = sys.stdin.buffer.read(messageLength)
         logging.debug(f"received bytes: {raw_msg}")
