@@ -24,7 +24,7 @@ use ring::digest;
 
 pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Connection> {
     let (gui_tx, gui_rx) = async_std::channel::bounded(1);
-    let lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<CredentialResponse>)>>> = Arc::new(AsyncMutex::new(gui_tx));
+    let lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<Option<CredentialResponse>>)>>> = Arc::new(AsyncMutex::new(gui_tx));
     start_gui_thread(gui_rx);
     connection::Builder::session()?
         .name(service_name)?
@@ -33,7 +33,7 @@ pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Conn
         .await
 }
 
-fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<CredentialResponse>)>) {
+fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<Option<CredentialResponse>>)>) {
     thread::Builder::new()
         .name("gui".into())
         .spawn(move || {
@@ -60,7 +60,7 @@ fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<CredentialResponse>)
 
                 async_std::task::block_on(event_loop.cancel());
                 let lock = data.lock().unwrap();
-                let response = lock.as_ref().unwrap().clone();
+                let response = lock.as_ref().cloned();
                 response_tx.send_blocking(response).unwrap();
             }
         })
@@ -84,7 +84,7 @@ fn start_gtk_app(tx_event: Sender<ViewEvent>, rx_update: Receiver<ViewUpdate>) {
 }
 
 struct CredentialManager {
-    app_lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<CredentialResponse>)>>>,
+    app_lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<Option<CredentialResponse>>)>>>,
 }
 
 #[interface(name = "xyz.iinuwa.credentials.CredentialManagerUi1")]
@@ -115,7 +115,7 @@ impl CredentialManager {
                     let (data_tx, data_rx) = async_std::channel::bounded(1);
                     tx.send((request, data_tx)).await.unwrap();
                     let data_rx = Arc::new(data_rx);
-                    if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = data_rx.recv().await.unwrap() {
+                    if let Some(CredentialResponse::CreatePublicKeyCredentialResponse(cred_response)) = data_rx.recv().await.unwrap() {
                         let public_key_response = CreatePublicKeyCredentialResponse::try_from_ctap2_response(&cred_response, client_data_json)?;
                         Ok(public_key_response.into())
                     }
@@ -169,7 +169,7 @@ impl CredentialManager {
                     tx.send((request, data_tx)).await.unwrap();
                     let data_rx = Arc::new(data_rx);
                     match data_rx.recv().await {
-                        Ok(CredentialResponse::GetPublicKeyCredentialResponse(cred_response)) => {
+                        Ok(Some(CredentialResponse::GetPublicKeyCredentialResponse(cred_response))) => {
                             let public_key_response = GetPublicKeyCredentialResponse::try_from_ctap2_response(&cred_response, client_data_json)?;
                             Ok(public_key_response.into())
                         },
