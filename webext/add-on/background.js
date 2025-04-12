@@ -13,6 +13,10 @@ function connected(port) {
 
   // Initialize native port
   nativePort = browser.runtime.connectNative("credential_manager_shim");
+  if (nativePort.error) {
+    console.error(nativePort.error)
+    throw nativePort.error
+  }
   console.log(`connected to native app`)
   console.log(nativePort)
 
