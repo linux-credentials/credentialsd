@@ -8,7 +8,7 @@ use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
 use libwebauthn::ops::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse, UserVerificationRequirement};
-use libwebauthn::proto::ctap2::{Ctap2MakeCredentialResponse, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
+use libwebauthn::proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::{fdo, interface, connection::{self, Connection}, Result};
 
@@ -471,12 +471,18 @@ impl GetCredentialRequest {
         let options = self.public_key.as_ref().unwrap();
         let request: webauthn::GetCredentialOptions = serde_json::from_str(&options.request_json)
             .map_err(|e| webauthn::Error::Internal(format!("Invalid request JSON: {:?}", e)))?;
-        let allow = request.allow_credentials.iter()
+        let mut allow: Vec<Ctap2PublicKeyCredentialDescriptor> = request.allow_credentials.iter()
             .filter_map(|cred| {
-                if cred.cred_type != "public-key" { None }
-                else { cred.try_into().ok() }
+                if cred.cred_type == "public-key" { cred.try_into().ok() }
+                else { None }
             })
             .collect();
+        // TODO: The allow is returning an empty list instead of either None or a list of transports.
+        // This should be investigated, but this is just a UI hint and isn't necessary to pass to the authenticator.
+        // Just removing it for now.
+        for c in allow.iter_mut() {
+            c.transports = None;
+        }
         let (origin, is_cross_origin) = match (self.origin.as_ref(), self.is_same_origin.as_ref()) {
             (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
             (Some(origin), None) => (origin.to_string(), true),
