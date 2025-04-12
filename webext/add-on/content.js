@@ -70,10 +70,15 @@ async function cloneCredentialResponse(credential) {
             response.clientDataJSON = Uint8Array.fromBase64(clientDataJSON, options)
             const authenticatorData = Uint8Array.fromBase64(credential.response.authenticatorData, options)
             response.authenticatorData = cloneInto(authenticatorData, response)
-            const signature = Uint8Array.fromBase64(credential.response.signature)
+            const signature = Uint8Array.fromBase64(credential.response.signature, options)
             response.signature = cloneInto(signature, response)
-            const userHandle = Uint8Array.fromBase64(credential.response.userHandle)
-            response.userHandle = cloneInto(userHandle, response)
+            if (credential.response.userHandle) {
+                const userHandle = Uint8Array.fromBase64(credential.response.userHandle, options)
+                response.userHandle = cloneInto(userHandle, response)
+            }
+            else {
+                response.userHandle = null
+            }
         }
         else {
             throw cloneInto(new Error("Unknown credential response type received"), window)
