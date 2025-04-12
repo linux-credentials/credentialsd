@@ -5,7 +5,7 @@ Currently, this is written only for Firefox; there will be some slight API tweak
 
 This requires some setup to make it work:
 
-1. Copy `app/credential_manager_shim.json` to `~/.mozilla/native-messaging/credential_manager_shim.json`.
+1. Copy `app/credential_manager_shim.json` to `~/.mozilla/native-messaging-hosts/credential_manager_shim.json`.
 2. In the copied file, replace the `path` key with the absolute path to `app/credential_manager_shim.py`
 3. Open Firefox and go to `about:debugging`
 4. Click "This Firefox" > Load Temporary Extension. Select `add-on/manifest.json`
