@@ -2,6 +2,64 @@
 
 # Linux Credential Manager API
 
+## How to run
+
+### Build Requirements
+
+This project uses Meson and Ninja.
+
+Package requirements:
+ - GTK4
+ - gettext
+ - libdbus-1
+ - libssl/openssl
+ - libudev
+ - desktop-file-utils
+
+For example, on Ubuntu:
+```shell
+sudo apt update && sudo apt install \
+  # Build dependencies
+  curl git build-essential \
+  # Meson/Ninja dependencies
+  python3 python3-pip python3-setuptools python3-wheel ninja-build \
+  # project dependencies
+  libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
+  # packaging dependencies
+  desktop-file-utils \
+```
+
+### Compiling
+
+```shell
+git clone https://github.com/linux-credentials/linux-webauthn-platform-api
+cd linux-webauthn-platform-api
+meson setup build -Dprofile=development
+ninja -C build
+```
+
+### Running the server
+
+```shell
+# Run the server, with debug logging enabled
+export GSETTINGS_SCHEMA_DIR=build/xyz-iinuwa-credential-manager-portal-gtk/data
+export RUST_LOG=xyz_iinuwa_credential_manager_portal_gtk=debug
+./build/xyz-iinuwa-credential-manager-gtk/src/xyz-iinuwa-credential-manager-portal-gtk
+```
+
+### Clients
+
+There is a demo client in the `demo_client`. It mimics an RP, saving the created public keys to a local file and verifying assertions against it.
+
+```shell
+cd demo_client/
+./main.py create
+./main.py get
+```
+
+There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [webext/README.md]().
+
+
 ## Goals
 
 The goal of this repository is to define a spec for clients (apps, browsers,
@@ -44,6 +102,8 @@ works for BSDs.
 
 ## Current Work
 
+- April 2025: Added web extension for testing in Firefox.
+- March 2025: Integrated libwebauthn to support USB authenticators.
 - May 2024: Met with developers in GNOME and systemd to design internals for
   securely storing device credentials.
 - Jan 2024: I've defined the [scenarios](doc/scenarios.md) that I expect this
