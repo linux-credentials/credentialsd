@@ -378,6 +378,7 @@ pub(crate) fn make_credential(
         client_data_json,
         None,
         None,
+        String::from("platform"),
     );
     Ok((response, credential_source))
 }
@@ -548,6 +549,7 @@ fn get_credential(
         // selectedCredential.userHandle
         // Note: In cases where allowCredentialDescriptorList was supplied the returned userHandle value may be null, see: userHandleResult.
         user_handle: selected_credential.user_handle.clone(),
+        attachment_modality: String::from("platform"),
     };
     Ok(response)
     // If the authenticator cannot find any credential corresponding to the specified Relying Party that matches the specified criteria, it terminates the operation and returns an error.

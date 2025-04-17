@@ -291,20 +291,41 @@ pub(crate) enum CredentialRequest {
 #[derive(Clone, Debug)]
 pub(crate) enum CredentialResponse {
     CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
-    GetPublicKeyCredentialResponse(Assertion),
+    GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct MakeCredentialResponseInternal {
     ctap: MakeCredentialResponse,
     transport: Vec<String>,
+    attachment_modality: String,
 }
 
 impl MakeCredentialResponseInternal {
-    pub(crate) fn new(response: MakeCredentialResponse, transport: Vec<String>) -> Self {
+    pub(crate) fn new(
+        response: MakeCredentialResponse,
+        transport: Vec<String>,
+        attachment_modality: String,
+    ) -> Self {
         Self {
             ctap: response,
             transport,
+            attachment_modality,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GetAssertionResponseInternal {
+    ctap: Assertion,
+    attachment_modality: String,
+}
+
+impl GetAssertionResponseInternal {
+    pub(crate) fn new(ctap: Assertion, attachment_modality: String) -> Self {
+        Self {
+            ctap,
+            attachment_modality,
         }
     }
 }
@@ -516,6 +537,7 @@ impl CreatePublicKeyCredentialResponse {
             client_data_json,
             Some(response.transport.clone()),
             None,
+            response.attachment_modality.clone(),
         )
         .to_json();
         let response = CreatePublicKeyCredentialResponse {
@@ -678,10 +700,10 @@ pub struct GetPublicKeyCredentialRequest {
 
 impl GetPublicKeyCredentialResponse {
     fn try_from_ctap2_response(
-        response: &Assertion,
+        response: &GetAssertionResponseInternal,
         client_data_json: String,
     ) -> std::result::Result<Self, fdo::Error> {
-        let auth_data = &response.authenticator_data;
+        let auth_data = &response.ctap.authenticator_data;
         let attested_credential_data = match &auth_data.attested_credential {
             None => None,
             Some(att) => {
@@ -719,12 +741,14 @@ impl GetPublicKeyCredentialResponse {
         let authentication_response_json = webauthn::GetPublicKeyCredentialResponse::new(
             client_data_json,
             response
+                .ctap
                 .credential_id
                 .as_ref()
                 .map(|c| c.id.clone().into_vec()),
             authenticator_data_blob,
-            response.signature.clone(),
-            response.user.as_ref().map(|u| u.id.clone().into_vec()),
+            response.ctap.signature.clone(),
+            response.ctap.user.as_ref().map(|u| u.id.clone().into_vec()),
+            response.attachment_modality.clone(),
         )
         .to_json();
         let response = GetPublicKeyCredentialResponse {

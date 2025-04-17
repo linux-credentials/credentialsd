@@ -22,7 +22,10 @@ use tokio::runtime::Runtime;
 use tracing::{debug, warn};
 
 use crate::{
-    dbus::{CredentialRequest, CredentialResponse, MakeCredentialResponseInternal},
+    dbus::{
+        CredentialRequest, CredentialResponse, GetAssertionResponseInternal,
+        MakeCredentialResponseInternal,
+    },
     view_model::{Device, InternalPinState, Transport},
 };
 
@@ -203,7 +206,8 @@ impl CredentialService {
                                     CredentialResponse::CreatePublicKeyCredentialResponse(
                                         MakeCredentialResponseInternal::new(
                                             r,
-                                            vec![String::from("usb"), String::from("usb")],
+                                            vec![String::from("usb")],
+                                            String::from("cross-platform"),
                                         ),
                                     ),
                                 );
@@ -216,7 +220,10 @@ impl CredentialService {
                                     let mut cred_response = self.cred_response.lock().unwrap();
                                     cred_response.replace(
                                         CredentialResponse::GetPublicKeyCredentialResponse(
-                                            r.assertions[0].clone(),
+                                            GetAssertionResponseInternal::new(
+                                                r.assertions[0].clone(),
+                                                String::from("cross-platform"),
+                                            ),
                                         ),
                                     );
                                     Ok(UsbState::Completed)
@@ -257,6 +264,7 @@ impl CredentialService {
                                         MakeCredentialResponseInternal::new(
                                             r,
                                             vec![String::from("usb")],
+                                            String::from("cross-platform"),
                                         ),
                                     ),
                                 );
@@ -269,7 +277,10 @@ impl CredentialService {
                                     let mut cred_response = self.cred_response.lock().unwrap();
                                     cred_response.replace(
                                         CredentialResponse::GetPublicKeyCredentialResponse(
-                                            r.assertions[0].clone(),
+                                            GetAssertionResponseInternal::new(
+                                                r.assertions[0].clone(),
+                                                String::from("cross-platform"),
+                                            ),
                                         ),
                                     );
                                     Ok(UsbState::Completed)

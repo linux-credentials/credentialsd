@@ -438,6 +438,9 @@ pub struct CreatePublicKeyCredentialResponse {
 
     /// JSON string of extension output
     extensions: Option<String>,
+
+    /// If the device used is builtin ("platform") or removable ("cross-platform", aka "roaming")
+    attachment_modality: String,
 }
 
 /// Returned from a creation of a new public key credential.
@@ -473,6 +476,7 @@ impl CreatePublicKeyCredentialResponse {
         client_data_json: String,
         transports: Option<Vec<String>>,
         extension_output_json: Option<String>,
+        attachment_modality: String,
     ) -> Self {
         Self {
             cred_type: "public-key".to_string(),
@@ -484,6 +488,7 @@ impl CreatePublicKeyCredentialResponse {
                 authenticator_data,
             },
             extensions: extension_output_json,
+            attachment_modality,
         }
     }
 
@@ -500,7 +505,8 @@ impl CreatePublicKeyCredentialResponse {
         let mut output = json!({
             "id": self.get_id(),
             "rawId": self.get_id(),
-            "response": response
+            "response": response,
+            "authenticatorAttachment": self.attachment_modality,
         });
         if let Some(extensions) = &self.extensions {
             let extension_value =
@@ -534,10 +540,21 @@ pub struct GetPublicKeyCredentialResponse {
     /// created. This item is nullable, however user handle MUST always be
     /// populated for discoverable credentials.
     pub(crate) user_handle: Option<Vec<u8>>,
+
+    /// Whether the used device is "cross-platform" (aka "roaming", i.e.: can be
+    /// removed from the platform) or is built-in ("platform").
+    pub(crate) attachment_modality: String,
 }
 
 impl GetPublicKeyCredentialResponse {
-    pub(crate) fn new(client_data_json: String, id: Option<Vec<u8>>, authenticator_data: Vec<u8>, signature: Vec<u8>, user_handle: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(
+        client_data_json: String,
+        id: Option<Vec<u8>>,
+        authenticator_data: Vec<u8>,
+        signature: Vec<u8>,
+        user_handle: Option<Vec<u8>>,
+        attachment_modality: String,
+    ) -> Self {
         Self {
             cred_type: "public-key".to_string(),
             client_data_json,
@@ -545,6 +562,7 @@ impl GetPublicKeyCredentialResponse {
             authenticator_data,
             signature,
             user_handle,
+            attachment_modality,
         }
     }
     pub fn to_json(&self) -> String {
@@ -560,12 +578,10 @@ impl GetPublicKeyCredentialResponse {
         // This means we'll have to remember the ID on the request if the allow-list has exactly one
         // credential descriptor, then we'll need. This should probably be done in libwebauthn.
         let id = self.raw_id.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id));
-        // TODO: Fix for platorm authenticator
-        let attachment = "cross-platform";
         let output = json!({
             "id": id,
             "rawId": id,
-            "authenticatorAttachment": attachment,
+            "authenticatorAttachment": self.attachment_modality,
             "response": response
         });
         // TODO: support client extensions

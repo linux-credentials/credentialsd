@@ -35,8 +35,7 @@ async function cloneCredentialResponse(credential) {
         const obj = {}
         obj.id = credential.id;
         obj.rawId = cloneInto(Uint8Array.fromBase64(credential.rawId, options), obj)
-        // TODO: get authenticator attachment
-        obj.authenticatorAttachment = undefined
+        obj.authenticatorAttachment = credential.authenticatorAttachment;
         const response = {}
         // credential registration response
         if (credential.response.attestationObject) {
