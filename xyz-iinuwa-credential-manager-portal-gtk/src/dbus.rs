@@ -290,8 +290,23 @@ pub(crate) enum CredentialRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum CredentialResponse {
-    CreatePublicKeyCredentialResponse(MakeCredentialResponse),
+    CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
     GetPublicKeyCredentialResponse(Assertion),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MakeCredentialResponseInternal {
+    ctap: MakeCredentialResponse,
+    transport: Vec<String>,
+}
+
+impl MakeCredentialResponseInternal {
+    pub(crate) fn new(response: MakeCredentialResponse, transport: Vec<String>) -> Self {
+        Self {
+            ctap: response,
+            transport,
+        }
+    }
 }
 
 // D-Bus <-> Client types
@@ -451,10 +466,10 @@ pub struct CreatePublicKeyCredentialRequest {
 
 impl CreatePublicKeyCredentialResponse {
     fn try_from_ctap2_response(
-        response: &MakeCredentialResponse,
+        response: &MakeCredentialResponseInternal,
         client_data_json: String,
     ) -> std::result::Result<Self, fdo::Error> {
-        let auth_data = &response.authenticator_data;
+        let auth_data = &response.ctap.authenticator_data;
         let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| {
             fdo::Error::Failed("Invalid credential received from authenticator".to_string())
         })?;
@@ -481,13 +496,16 @@ impl CreatePublicKeyCredentialResponse {
             Some(&attested_credential_data),
             None,
         );
-        let attestation_statement = (&response.attestation_statement).try_into().map_err(|_| {
-            fdo::Error::Failed("Could not serialize attestation statement".to_string())
-        })?;
+        let attestation_statement =
+            (&response.ctap.attestation_statement)
+                .try_into()
+                .map_err(|_| {
+                    fdo::Error::Failed("Could not serialize attestation statement".to_string())
+                })?;
         let attestation_object = webauthn::create_attestation_object(
             &authenticator_data_blob,
             &attestation_statement,
-            response.enterprise_attestation.unwrap_or(false),
+            response.ctap.enterprise_attestation.unwrap_or(false),
         )
         .map_err(|_| zbus::Error::Failure("Failed to create attestation object".to_string()))?;
         // do we need to check that the client_data_hash is the same?
@@ -496,7 +514,7 @@ impl CreatePublicKeyCredentialResponse {
             attestation_object,
             authenticator_data_blob,
             client_data_json,
-            Some(vec!["usb".to_string()]),
+            Some(response.transport.clone()),
             None,
         )
         .to_json();

@@ -22,7 +22,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, warn};
 
 use crate::{
-    dbus::{CredentialRequest, CredentialResponse},
+    dbus::{CredentialRequest, CredentialResponse, MakeCredentialResponseInternal},
     view_model::{Device, InternalPinState, Transport},
 };
 
@@ -200,7 +200,12 @@ impl CredentialService {
                             AuthenticatorResponse::CredentialCreated(r) => {
                                 let mut cred_response = self.cred_response.lock().unwrap();
                                 cred_response.replace(
-                                    CredentialResponse::CreatePublicKeyCredentialResponse(r),
+                                    CredentialResponse::CreatePublicKeyCredentialResponse(
+                                        MakeCredentialResponseInternal::new(
+                                            r,
+                                            vec![String::from("usb"), String::from("usb")],
+                                        ),
+                                    ),
                                 );
                                 Ok(UsbState::Completed)
                             }
@@ -248,7 +253,12 @@ impl CredentialService {
                             AuthenticatorResponse::CredentialCreated(r) => {
                                 let mut cred_response = self.cred_response.lock().unwrap();
                                 cred_response.replace(
-                                    CredentialResponse::CreatePublicKeyCredentialResponse(r),
+                                    CredentialResponse::CreatePublicKeyCredentialResponse(
+                                        MakeCredentialResponseInternal::new(
+                                            r,
+                                            vec![String::from("usb")],
+                                        ),
+                                    ),
                                 );
                                 Ok(UsbState::Completed)
                             }
