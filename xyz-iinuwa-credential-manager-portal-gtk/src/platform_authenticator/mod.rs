@@ -14,8 +14,13 @@ use ring::{
     },
 };
 
-use crate::webauthn::{self, AttestationStatement, AttestationStatementFormat, CreatePublicKeyCredentialResponse, CredentialDescriptor, CredentialSource, Error as WebAuthnError, GetPublicKeyCredentialResponse, MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType, RelyingParty, User};
-use crate::cose::{CoseKeyType, encode_pkcs8_key};
+use crate::cose::{encode_pkcs8_key, CoseKeyType};
+use crate::webauthn::{
+    self, AttestationStatement, AttestationStatementFormat, CreatePublicKeyCredentialResponse,
+    CredentialDescriptor, CredentialSource, Error as WebAuthnError, GetPublicKeyCredentialResponse,
+    MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType, RelyingParty,
+    User,
+};
 
 static P256: &EcdsaSigningAlgorithm = &ECDSA_P256_SHA256_ASN1_SIGNING;
 // static RNG: &Box<dyn SecureRandom> = &Box::new(SystemRandom::new());
@@ -90,7 +95,9 @@ pub(crate) fn create_credential(
         .ok_or_else(|| WebAuthnError::Internal("JSON missing `rp` field".to_string()))?;
     let user = json
         .get("user")
-        .ok_or(WebAuthnError::Internal("JSON missing `user` field".to_string()))
+        .ok_or(WebAuthnError::Internal(
+            "JSON missing `user` field".to_string(),
+        ))
         .and_then(|val| {
             serde_json::from_str::<User>(&val.to_string()).map_err(|e| {
                 let msg = format!("JSON missing `user` field: {e}");
@@ -124,7 +131,9 @@ pub(crate) fn create_credential(
         .clone()
         .get("pubKeyCredParams")
         .ok_or_else(|| {
-            WebAuthnError::Internal("Request JSON missing or invalid `pubKeyCredParams` key".to_string())
+            WebAuthnError::Internal(
+                "Request JSON missing or invalid `pubKeyCredParams` key".to_string(),
+            )
         })
         .and_then(|val| {
             serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string()).map_err(
@@ -197,12 +206,13 @@ pub(crate) fn make_credential(
     let cred_pub_key_parameters = match cred_pub_key_algs
         .iter()
         .filter(|p| p.cred_type == "public-key")
-        .find(|p| if let Ok(ref key_type) = (*p).try_into() {
-            supported_algorithms.contains(key_type)
-         } else {
-            false
-         })
-    {
+        .find(|p| {
+            if let Ok(ref key_type) = (*p).try_into() {
+                supported_algorithms.contains(key_type)
+            } else {
+                false
+            }
+        }) {
         Some(cred_pub_key_parameters) => cred_pub_key_parameters,
         None => return Err(WebAuthnError::NotSupported),
     };
@@ -256,14 +266,15 @@ pub(crate) fn make_credential(
     }
     let mut flags = if require_user_verification {
         AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED
-    }
-    else {
+    } else {
         AuthenticatorDataFlags::USER_PRESENT
     };
 
     // Once the authorization gesture has been completed and user consent has been obtained, generate a new credential object:
     // Let (publicKey, privateKey) be a new pair of cryptographic keys using the combination of PublicKeyCredentialType and cryptographic parameters represented by the first item in credTypesAndPubKeyAlgs that is supported by this authenticator.
-    let key_type = cred_pub_key_parameters.try_into().map_err(|_| WebAuthnError::Unknown)?;
+    let key_type = cred_pub_key_parameters
+        .try_into()
+        .map_err(|_| WebAuthnError::Unknown)?;
     let key_pair = create_key_pair(key_type)?;
     // Let userHandle be userEntity.id.
     let user_handle = URL_SAFE_NO_PAD
@@ -347,13 +358,8 @@ pub(crate) fn make_credential(
 
     // Create an attestation object for the new credential using the procedure specified in § 6.5.4 Generating an Attestation Object, using an authenticator-chosen attestation statement format, authenticatorData, and hash, as well as taking into account the value of enterpriseAttestationPossible. For more details on attestation, see § 6.5 Attestation.
     // TODO: attestation not supported for now
-    let signature = sign_attestation(
-        &authenticator_data,
-        &client_data_hash,
-        &key_pair,
-        &key_type,
-    )?;
-    let attestation_statment = AttestationStatement::Packed{
+    let signature = sign_attestation(&authenticator_data, &client_data_hash, &key_pair, &key_type)?;
+    let attestation_statment = AttestationStatement::Packed {
         algorithm: key_type.algorithm(),
         signature,
         certificates: vec![],
@@ -377,7 +383,6 @@ pub(crate) fn make_credential(
 }
 
 fn get_credential(
-
     rp_entity: RelyingParty,
 
     challenge: String,
@@ -409,38 +414,38 @@ fn get_credential(
 
     // Let credentialOptions be a new empty set of public key credential sources.
     // If allowCredentialDescriptorList was supplied, then for each descriptor of allowCredentialDescriptorList:
-    let credential_options: Vec<&CredentialSource> = if let Some(ref allowed_credentials) = allow_credential_descriptor_list {
-        // Let credSource be the result of looking up descriptor.id in this authenticator.
-        // If credSource is not null, append it to credentialOptions.
-        allowed_credentials.iter()
-            .filter_map(|cred| stored_credentials.get(&cred.id))
-            // Remove any items from credentialOptions whose rpId is not equal to rpId.
-            .filter(|cred_source| cred_source.rp_id == rp_entity.id)
-            .collect()
-    }
-    else {
-        // Otherwise (allowCredentialDescriptorList was not supplied), for each key → credSource of this authenticator’s credentials map, append credSource to credentialOptions.
-        stored_credentials
-            .values()
-            // Remove any items from credentialOptions whose rpId is not equal to rpId.
-            .filter(|cred_source| cred_source.rp_id == rp_entity.id)
-            .collect()
-    };
-
+    let credential_options: Vec<&CredentialSource> =
+        if let Some(ref allowed_credentials) = allow_credential_descriptor_list {
+            // Let credSource be the result of looking up descriptor.id in this authenticator.
+            // If credSource is not null, append it to credentialOptions.
+            allowed_credentials
+                .iter()
+                .filter_map(|cred| stored_credentials.get(&cred.id))
+                // Remove any items from credentialOptions whose rpId is not equal to rpId.
+                .filter(|cred_source| cred_source.rp_id == rp_entity.id)
+                .collect()
+        } else {
+            // Otherwise (allowCredentialDescriptorList was not supplied), for each key → credSource of this authenticator’s credentials map, append credSource to credentialOptions.
+            stored_credentials
+                .values()
+                // Remove any items from credentialOptions whose rpId is not equal to rpId.
+                .filter(|cred_source| cred_source.rp_id == rp_entity.id)
+                .collect()
+        };
 
     // If credentialOptions is now empty, return an error code equivalent to "NotAllowedError" and terminate the operation.
     if credential_options.is_empty() {
         return Err(WebAuthnError::NotAllowed);
     }
     // Prompt the user to select a public key credential source selectedCredential from credentialOptions. Collect an authorization gesture confirming user consent for using selectedCredential. The prompt for the authorization gesture may be shown by the authenticator if it has its own output capability, or by the user agent otherwise.
-        // TODO, already done? Move up to D-Bus call
-        // If requireUserVerification is true, the authorization gesture MUST include user verification.
-        // If requireUserPresence is true, the authorization gesture MUST include a test of user presence.
-        // If the user does not consent, return an error code equivalent to "NotAllowedError" and terminate the operation.
+    // TODO, already done? Move up to D-Bus call
+    // If requireUserVerification is true, the authorization gesture MUST include user verification.
+    // If requireUserPresence is true, the authorization gesture MUST include a test of user presence.
+    // If the user does not consent, return an error code equivalent to "NotAllowedError" and terminate the operation.
     if collect_authorization_gesture(require_user_presence, require_user_verification).is_err() {
         return Err(WebAuthnError::NotAllowed);
     }
-    let flags = if require_user_verification  {
+    let flags = if require_user_verification {
         AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED
     } else {
         AuthenticatorDataFlags::USER_VERIFIED
@@ -484,14 +489,25 @@ fn get_credential(
     //     let attestationFormat be the attestation statement format most preferred by this authenticator. If it does not support attestation during assertion then let this be none.
     let supported_formats = [AttestationStatementFormat::Packed];
     let preferred_format = AttestationStatementFormat::None;
-    let attestation_format = attestation_formats.iter().find(|f| supported_formats.contains(f)).unwrap_or(&preferred_format);
+    let attestation_format = attestation_formats
+        .iter()
+        .find(|f| supported_formats.contains(f))
+        .unwrap_or(&preferred_format);
 
-    let key_type = (&selected_credential.key_parameters).try_into().map_err(|_| WebAuthnError::Unknown)?;
-    let public_key = encode_pkcs8_key(key_type, &selected_credential.private_key).map_err(|_| WebAuthnError::Unknown)?;
+    let key_type = (&selected_credential.key_parameters)
+        .try_into()
+        .map_err(|_| WebAuthnError::Unknown)?;
+    let public_key = encode_pkcs8_key(key_type, &selected_credential.private_key)
+        .map_err(|_| WebAuthnError::Unknown)?;
 
     // TODO: Assign AAGUID?
     let aaguid = vec![0_u8; 16];
-    let attested_credential_data = if *attestation_format != AttestationStatementFormat::None { webauthn::create_attested_credential_data(&selected_credential.id, &public_key, &aaguid).ok() } else { None };
+    let attested_credential_data = if *attestation_format != AttestationStatementFormat::None {
+        webauthn::create_attested_credential_data(&selected_credential.id, &public_key, &aaguid)
+            .ok()
+    } else {
+        None
+    };
     // Let authenticatorData be the byte array specified in § 6.1 Authenticator Data including processedExtensions, if any, as the extensions and excluding attestedCredentialData. This authenticatorData MUST include attested credential data if, and only if, attestationFormat is not none.
     let rp_id_hash = digest::digest(&digest::SHA256, selected_credential.rp_id.as_bytes());
     let authenticator_data = webauthn::create_authenticator_data(
@@ -499,7 +515,7 @@ fn get_credential(
         &flags,
         signature_counter,
         attested_credential_data.as_deref(),
-        None
+        None,
     );
     // Let signature be the assertion signature of the concatenation authenticatorData || hash using the privateKey of selectedCredential as shown in Figure , below. A simple, undelimited concatenation is safe to use here because the authenticator data describes its own length. The hash of the serialized client data (which potentially has a variable length) is always the last element.
     let signature = sign_attestation(
@@ -517,7 +533,7 @@ fn get_credential(
 
         // selectedCredential.id, if either a list of credentials (i.e., allowCredentialDescriptorList) of length 2 or greater was supplied by the client, or no such list was supplied.
         // Note: If, within allowCredentialDescriptorList, the client supplied exactly one credential and it was successfully employed, then its credential ID is not returned since the client already knows it. This saves transmitting these bytes over what may be a constrained connection in what is likely a common case.
-        raw_id: if allow_credential_descriptor_list.map_or(true,  |l| l.len() > 1) {
+        raw_id: if allow_credential_descriptor_list.map_or(true, |l| l.len() > 1) {
             Some(selected_credential.id.clone())
         } else {
             None
@@ -540,8 +556,12 @@ fn get_credential(
 fn create_key_pair(parameters: CoseKeyType) -> Result<Vec<u8>, WebAuthnError> {
     let rng = &SystemRandom::new();
     let key_pair = match parameters {
-        CoseKeyType::ES256_P256 => EcdsaKeyPair::generate_pkcs8(P256, rng).map(|d| d.as_ref().to_vec()),
-        CoseKeyType::EDDSA_ED25519 => Ed25519KeyPair::generate_pkcs8(rng).map(|d| d.as_ref().to_vec()),
+        CoseKeyType::ES256_P256 => {
+            EcdsaKeyPair::generate_pkcs8(P256, rng).map(|d| d.as_ref().to_vec())
+        }
+        CoseKeyType::EDDSA_ED25519 => {
+            Ed25519KeyPair::generate_pkcs8(rng).map(|d| d.as_ref().to_vec())
+        }
         CoseKeyType::RS256 => {
             let rsa_key = Rsa::generate(2048).unwrap();
             let private_key = PKey::from_rsa(rsa_key).unwrap();
@@ -587,7 +607,12 @@ fn sign_attestation(
     let rng = &SystemRandom::new();
     match key_type {
         CoseKeyType::ES256_P256 => {
-            let ecdsa = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, key_pair, &SystemRandom::new()).unwrap();
+            let ecdsa = EcdsaKeyPair::from_pkcs8(
+                &ECDSA_P256_SHA256_ASN1_SIGNING,
+                key_pair,
+                &SystemRandom::new(),
+            )
+            .unwrap();
             Ok(ecdsa.sign(rng, &signed_data).unwrap().as_ref().to_vec())
         }
         CoseKeyType::EDDSA_ED25519 => {
@@ -625,7 +650,9 @@ mod test {
     use crate::cose::encode_pkcs8_key;
 
     use crate::webauthn::{
-        create_attestation_object, create_attested_credential_data, create_authenticator_data, AttestationStatement, CredentialSource, PublicKeyCredentialParameters, PublicKeyCredentialType
+        create_attestation_object, create_attested_credential_data, create_authenticator_data,
+        AttestationStatement, CredentialSource, PublicKeyCredentialParameters,
+        PublicKeyCredentialType,
     };
 
     use super::sign_attestation;
@@ -666,7 +693,9 @@ mod test {
             other_ui: None,
         };
 
-        let flags = AuthenticatorDataFlags::USER_PRESENT | AuthenticatorDataFlags::USER_VERIFIED | AuthenticatorDataFlags::ATTESTED_CREDENTIALS;
+        let flags = AuthenticatorDataFlags::USER_PRESENT
+            | AuthenticatorDataFlags::USER_VERIFIED
+            | AuthenticatorDataFlags::ATTESTED_CREDENTIALS;
         let authenticator_data = create_authenticator_data(
             &credential_source.rp_id_hash(),
             &flags,
@@ -677,21 +706,15 @@ mod test {
         let client_data_encoded = "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWWlReFY0VWhjZk9pUmZBdkF4bWpEakdhaUVXbkYtZ0ZFcWxndmdEaWsyakZiSGhoaVlxUGJqc0F5Q0FrbDlMUGQwRGRQaHNNb2luY0cxckV5cFlXUVEiLCJvcmlnaW4iOiJodHRwczovL3dlYmF1dGhuLmlvIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ";
         let client_data = URL_SAFE_NO_PAD.decode(client_data_encoded).unwrap();
         let client_data_hash = digest(&SHA256, &client_data).as_ref().to_vec();
-        let signature = sign_attestation(
-            &authenticator_data,
-            &client_data_hash,
-            &key_file,
-            &key_type,
-        )
-        .unwrap();
+        let signature =
+            sign_attestation(&authenticator_data, &client_data_hash, &key_file, &key_type).unwrap();
         let att_stmt = AttestationStatement::Packed {
             algorithm: key_type.algorithm(),
             signature,
             certificates: vec![],
         };
         let attestation_object =
-            create_attestation_object(&authenticator_data, &att_stmt, false)
-                .unwrap();
+            create_attestation_object(&authenticator_data, &att_stmt, false).unwrap();
         let expected = std::fs::read("output.bin").unwrap();
         assert_eq!(expected, attestation_object);
     }
