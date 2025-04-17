@@ -8,19 +8,19 @@ edition = "2021"
 lto = true
 
 [dependencies]
-async-std = { version = "1.13.0", features = ["unstable"] }
+async-std = { version = "1.13.1", features = ["unstable"] }
 base64 = "0.22.1"
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
-gtk = { version = "0.9.5", package = "gtk4", features = ["v4_6"] }
-openssl = "0.10.70"
-ring = "0.17.8"
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.138"
+gtk = { version = "0.9.6", package = "gtk4", features = ["v4_6"] }
+openssl = "0.10.72"
+ring = "0.17.14"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
 zbus = "5.5.0"
 libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn", rev = "24eb47113e2282ff31c53de3029928e914349559" }
-async-trait = "0.1.86"
+async-trait = "0.1.88"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 # this is temporary until we move COSE -> Vec<u8> serialization methods into libwebauthn
