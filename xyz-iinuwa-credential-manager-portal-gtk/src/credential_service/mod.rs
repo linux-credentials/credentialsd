@@ -7,7 +7,6 @@ use std::{
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
-    pin::PinRequestReason,
     transport::Device as _,
     webauthn::{Error as WebAuthnError, WebAuthn},
     UxUpdate,
@@ -49,7 +48,7 @@ pub struct CredentialService {
 impl CredentialService {
     pub fn new(
         cred_request: CredentialRequest,
-        cred_response: Arc<Mutex<Option<(CredentialResponse)>>>,
+        cred_response: Arc<Mutex<Option<CredentialResponse>>>,
     ) -> Self {
         let devices = vec![
             Device {
@@ -94,14 +93,6 @@ impl CredentialService {
 
     pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         Ok(self.devices.to_owned())
-    }
-
-    pub(crate) async fn start_device_discovery_usb(&mut self) -> Result<(), String> {
-        println!("frontend: Start USB flow");
-        if *self.usb_state.lock().await != UsbState::Idle {
-            return Err("Ongoing USB request already happening.".to_owned());
-        }
-        Ok(())
     }
 
     pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
@@ -411,13 +402,6 @@ impl CredentialService {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct UsbPollResponse {
-    pub state: UsbState,
-    poll_count: i32,
-    needs_pin: bool,
-    pin_entered: bool,
-}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum UsbState {
@@ -468,18 +452,6 @@ pub enum InternalDeviceState {
 
     // This isn't actually sent from the server.
     UserCancelled,
-}
-
-pub enum PinResponse {
-    Correct,
-    /// Incorrect PIN given, contains time (in seconds since Unix epoch) when
-    /// the user can retry.
-    // TODO: Should we show how many retries are left?
-    Incorrect(usize),
-
-    /// PIN locked out, contains time (in seconds since Unix epoch) when
-    /// the user can retry.
-    Locked(Duration),
 }
 
 #[derive(Debug)]
@@ -590,25 +562,6 @@ async fn handle_usb_updates(
     }
     debug!("USB update channel closed.");
 }
-
-/*
-#[async_trait]
-impl UvProvider for UsbUvHandler {
-    async fn provide_pin(&self, attempts_left:Option<u32>, request_reason: PinRequestReason) -> Option<String> {
-        let _ = self.signal_tx.send(Ok(UsbUvMessage::NeedsPin { attempts_left })).await;
-        if attempts_left.map_or(false, |num| num <= 1) {
-            return None;
-        }
-        if let Ok(pin) = self.pin_rx.recv().await {
-            Some(pin)
-        } else { None }
-    }
-
-    async fn prompt_uv_retry(&self, attempts_left: Option<u32>) {
-        todo!("UV retry not implemented");
-    }
-}
-*/
 
 enum UsbUvMessage {
     NeedsPin { attempts_left: Option<u32> },
