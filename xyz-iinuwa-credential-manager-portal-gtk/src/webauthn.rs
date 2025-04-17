@@ -1,7 +1,13 @@
 use std::time::Duration;
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use libwebauthn::{fido::AuthenticatorDataFlags, proto::ctap2::{Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialType, Ctap2Transport}};
+use libwebauthn::{
+    fido::AuthenticatorDataFlags,
+    proto::ctap2::{
+        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor,
+        Ctap2PublicKeyCredentialType, Ctap2Transport,
+    },
+};
 use ring::digest;
 use serde::Deserialize;
 use serde_json::json;
@@ -19,7 +25,6 @@ pub enum Error {
     Constraint,
     Internal(String),
 }
-
 
 pub(crate) fn create_attested_credential_data(
     credential_id: &[u8],
@@ -39,7 +44,7 @@ pub(crate) fn create_attested_credential_data(
     Ok(attested_credential_data)
 }
 
-pub (crate) fn create_authenticator_data(
+pub(crate) fn create_authenticator_data(
     rp_id_hash: &[u8],
     flags: &AuthenticatorDataFlags,
     signature_counter: u32,
@@ -66,7 +71,7 @@ pub (crate) fn create_authenticator_data(
 
 pub(crate) fn create_attestation_object(
     authenticator_data: &[u8],
-    attestation_statement:&AttestationStatement,
+    attestation_statement: &AttestationStatement,
     _enterprise_attestation_possible: bool,
 ) -> Result<Vec<u8>, Error> {
     let mut attestation_object = Vec::new();
@@ -74,7 +79,11 @@ pub(crate) fn create_attestation_object(
     cbor_writer.write_map_start(3).unwrap();
     cbor_writer.write_text("fmt").unwrap();
     match attestation_statement {
-        AttestationStatement::Packed { algorithm, signature, certificates }  => {
+        AttestationStatement::Packed {
+            algorithm,
+            signature,
+            certificates,
+        } => {
             cbor_writer.write_text("packed").unwrap();
             cbor_writer.write_text("attStmt").unwrap();
             let len = if certificates.is_empty() { 2 } else { 3 };
@@ -90,7 +99,7 @@ pub(crate) fn create_attestation_object(
                     cbor_writer.write_bytes(cert).unwrap();
                 }
             }
-        },
+        }
         AttestationStatement::None => {
             cbor_writer.write_text("none").unwrap();
             cbor_writer.write_text("attStmt").unwrap();
@@ -103,7 +112,6 @@ pub(crate) fn create_attestation_object(
 
     Ok(attestation_object)
 }
-
 
 #[derive(Deserialize)]
 pub(crate) struct RelyingParty {
@@ -197,9 +205,7 @@ pub(crate) struct GetCredentialOptions {
     extensions: Option<()>,
 }
 
-
 // pub(crate) struct CredentialList(Vec<CredentialDescriptor>);
-
 
 #[derive(Deserialize, Type)]
 #[zvariant(signature = "dict")]
@@ -222,7 +228,7 @@ impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
     type Error = Error;
     fn try_from(value: &CredentialDescriptor) -> Result<Self, Self::Error> {
         let transports = value.transports.as_ref().filter(|t| !t.is_empty());
-        let transports =  match transports {
+        let transports = match transports {
             Some(transports) => {
                 let mut transport_list = transports.iter().map(|t| match t.as_ref() {
                     "ble" => Some(Ctap2Transport::BLE),
@@ -232,10 +238,12 @@ impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
                     _ => None,
                 });
                 if transport_list.any(|t| t.is_none()) {
-                    return Err(Error::Internal("Invalid transport type specified".to_owned()));
+                    return Err(Error::Internal(
+                        "Invalid transport type specified".to_owned(),
+                    ));
                 }
                 transport_list.collect()
-            },
+            }
             None => None,
         };
         Ok(Self {
@@ -283,7 +291,10 @@ pub(crate) struct PublicKeyCredentialParameters {
 
 impl PublicKeyCredentialParameters {
     pub(crate) fn new(alg: i64) -> Self {
-        Self { cred_type: "public-key".to_string(), alg }
+        Self {
+            cred_type: "public-key".to_string(),
+            alg,
+        }
     }
 }
 
@@ -295,7 +306,11 @@ impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
             -7 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::ES256,
             -8 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::EDDSA,
             // TODO: we should still pass on the raw value to the authenticator and let it decide whether it's supported.
-            _ => return Err(Error::Internal("Invalid algorithm passed for new credential".to_owned())),
+            _ => {
+                return Err(Error::Internal(
+                    "Invalid algorithm passed for new credential".to_owned(),
+                ))
+            }
         };
         Ok(Self {
             public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
@@ -358,7 +373,7 @@ pub struct CredentialSource {
 }
 
 impl CredentialSource {
-    pub(crate) fn rp_id_hash<'a> (&'a self) -> Vec<u8> {
+    pub(crate) fn rp_id_hash<'a>(&'a self) -> Vec<u8> {
         let hash = digest::digest(&digest::SHA256, self.rp_id.as_bytes());
         hash.as_ref().to_owned()
     }
@@ -374,7 +389,6 @@ pub(crate) enum AttestationStatementFormat {
     None,
     Packed,
 }
-
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum AttestationStatement {
@@ -393,11 +407,18 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
         match value {
             Ctap2AttestationStatement::None(_) => Ok(AttestationStatement::None),
             Ctap2AttestationStatement::PackedOrAndroid(att_stmt) => {
-                let alg = att_stmt.algorithm.try_into().map_err(|_| Error::NotSupported)?;
+                let alg = att_stmt
+                    .algorithm
+                    .try_into()
+                    .map_err(|_| Error::NotSupported)?;
                 Ok(Self::Packed {
                     algorithm: alg,
                     signature: att_stmt.signature.as_ref().to_vec(),
-                    certificates: att_stmt.certificates.iter().map(|c| c.as_ref().to_vec()).collect()
+                    certificates: att_stmt
+                        .certificates
+                        .iter()
+                        .map(|c| c.as_ref().to_vec())
+                        .collect(),
                 })
             }
             _ => {
@@ -417,8 +438,10 @@ pub struct CreatePublicKeyCredentialResponse {
 
     /// JSON string of extension output
     extensions: Option<String>,
-}
 
+    /// If the device used is builtin ("platform") or removable ("cross-platform", aka "roaming")
+    attachment_modality: String,
+}
 
 /// Returned from a creation of a new public key credential.
 pub struct AttestationResponse {
@@ -453,6 +476,7 @@ impl CreatePublicKeyCredentialResponse {
         client_data_json: String,
         transports: Option<Vec<String>>,
         extension_output_json: Option<String>,
+        attachment_modality: String,
     ) -> Self {
         Self {
             cred_type: "public-key".to_string(),
@@ -464,6 +488,7 @@ impl CreatePublicKeyCredentialResponse {
                 authenticator_data,
             },
             extensions: extension_output_json,
+            attachment_modality,
         }
     }
 
@@ -480,7 +505,8 @@ impl CreatePublicKeyCredentialResponse {
         let mut output = json!({
             "id": self.get_id(),
             "rawId": self.get_id(),
-            "response": response
+            "response": response,
+            "authenticatorAttachment": self.attachment_modality,
         });
         if let Some(extensions) = &self.extensions {
             let extension_value =
@@ -514,10 +540,21 @@ pub struct GetPublicKeyCredentialResponse {
     /// created. This item is nullable, however user handle MUST always be
     /// populated for discoverable credentials.
     pub(crate) user_handle: Option<Vec<u8>>,
+
+    /// Whether the used device is "cross-platform" (aka "roaming", i.e.: can be
+    /// removed from the platform) or is built-in ("platform").
+    pub(crate) attachment_modality: String,
 }
 
 impl GetPublicKeyCredentialResponse {
-    pub(crate) fn new(client_data_json: String, id: Option<Vec<u8>>, authenticator_data: Vec<u8>, signature: Vec<u8>, user_handle: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(
+        client_data_json: String,
+        id: Option<Vec<u8>>,
+        authenticator_data: Vec<u8>,
+        signature: Vec<u8>,
+        user_handle: Option<Vec<u8>>,
+        attachment_modality: String,
+    ) -> Self {
         Self {
             cred_type: "public-key".to_string(),
             client_data_json,
@@ -525,6 +562,7 @@ impl GetPublicKeyCredentialResponse {
             authenticator_data,
             signature,
             user_handle,
+            attachment_modality,
         }
     }
     pub fn to_json(&self) -> String {
@@ -540,12 +578,10 @@ impl GetPublicKeyCredentialResponse {
         // This means we'll have to remember the ID on the request if the allow-list has exactly one
         // credential descriptor, then we'll need. This should probably be done in libwebauthn.
         let id = self.raw_id.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id));
-        // TODO: Fix for platorm authenticator
-        let attachment = "cross-platform";
         let output = json!({
             "id": id,
             "rawId": id,
-            "authenticatorAttachment": attachment,
+            "authenticatorAttachment": self.attachment_modality,
             "response": response
         });
         // TODO: support client extensions
