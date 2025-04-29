@@ -29,6 +29,7 @@ function endRequest(requestId, data, error) {
         request.resolve(data)
     }
 }
+
 async function cloneCredentialResponse(credential) {
     try {
         const options = { alphabet: "base64url" }
@@ -82,13 +83,44 @@ async function cloneCredentialResponse(credential) {
         else {
             throw cloneInto(new Error("Unknown credential response type received"), window)
         }
+
+        // Unlike CreatePublicKey, for GetPublicKey, we have a lot of Byte arrays,
+        // so we need a lot of deconstructions. So no: obj.clientExtensionResults = cloneInto(credential.clientExtensionResults, obj);
+        const extensions = {}
+        if (credential.clientExtensionResults) {
+            if (credential.clientExtensionResults.hmac_get_secret) {
+                extensions.hmac_get_secret = {}
+                extensions.hmac_get_secret.output1 = Uint8Array.fromBase64(credential.clientExtensionResults.hmac_get_secret.output1, options);
+                if (credential.clientExtensionResults.hmac_get_secret.output2) {
+                    extensions.hmac_get_secret.output2 = Uint8Array.fromBase64(credential.clientExtensionResults.hmac_get_secret.output2, options);
+                }
+            }
+
+            if (credential.clientExtensionResults.prf) {
+                extensions.prf = {}
+                if (credential.clientExtensionResults.prf.results) {
+                    extensions.prf.results = {}
+                    extensions.prf.results.first = Uint8Array.fromBase64(credential.clientExtensionResults.prf.results.first, options);
+                    if (credential.clientExtensionResults.prf.results.second) {
+                        extensions.prf.results.second = Uint8Array.fromBase64(credential.clientExtensionResults.prf.results.second, options);
+                    }
+                }
+            }
+
+            if (credential.clientExtensionResults.large_blob) {
+                extensions.large_blob = {}
+                if (credential.clientExtensionResults.large_blob.blob) {
+                    extensions.large_blob.blob = Uint8Array.fromBase64(credential.clientExtensionResults.large_blob.blob, options);
+                }
+            }
+        }
         obj.response = cloneInto(response, obj, { cloneFunctions: true })
-        obj.clientExtensionResults = new window.Object();
+        obj.clientExtensionResults = extensions;
         obj.getClientExtensionResults = function() {
-            // TODO
-            return this.clientExtensionResults
+            return this.clientExtensionResults;
         }
         obj.type = "public-key"
+
         obj.toJSON = function() {
             json = new window.Object();
             json.id = this.id
@@ -115,8 +147,8 @@ async function cloneCredentialResponse(credential) {
                 throw cloneInto(new Error("Unknown credential type received"), window)
             }
 
-            json.authenticatorAttachment = this.authenticatorAttachment
-            json.clientExtensionResults = this.clientExtensionResults
+            json.authenticatorAttachment = this.authenticatorAttachment;
+            json.clientExtensionResults = this.clientExtensionResults;
             json.type = this.type
             return json
         }

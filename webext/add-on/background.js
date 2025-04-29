@@ -78,6 +78,39 @@ function serializeRequest(options) {
       cred.id = serializeBytes(cred.id);
     }
   }
+  if (clone.publicKey.extensions && clone.publicKey.extensions.prf) {
+    if (clone.publicKey.extensions.prf.eval) {
+      clone.publicKey.extensions.prf.eval.first = serializeBytes(clone.publicKey.extensions.prf.eval.first);
+      if (clone.publicKey.extensions.prf.eval.second) {
+        clone.publicKey.extensions.prf.eval.second = serializeBytes(clone.publicKey.extensions.prf.eval.second);
+      }
+    }
+    if (clone.publicKey.extensions.prf.evalByCredential) {
+      const evalByCredential = clone.publicKey.extensions.prf.evalByCredential;
+
+      // Iterate over all credentialIDs, serialize the first/second bytebuffer and replace the original evalByCredential map
+      const result = {};
+      for (const credId in evalByCredentialData) {
+        const prfValue = evalByCredentialData[credId];
+
+        if (prfValue && prfValue.first) {
+          const newPrfValue = {
+              first: serializeBytes(prfValue.first)
+          };
+
+          if (prfValue.second) {
+              newPrfValue.second = serializeBytes(prfValue.second);
+          }
+          result[credId] = newPrfValue;
+        };
+      }
+      clone.publicKey.extensions.prf.evalByCredential = result;
+    }
+
+    if (clone.publicKey.extensions && clone.publicKey.extensions.credBlob) {
+      clone.publicKey.extensions.credBlob = serializeBytes(clone.publicKey.extensions.credBlob);
+    }
+  }
   return clone
 }
 

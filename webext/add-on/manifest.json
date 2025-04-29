@@ -1,5 +1,4 @@
 {
-
   "description": "Linux WebAuthn Desktop Portal Shim",
   "manifest_version": 3,
   "name": "WebAuthn Portal",
@@ -20,7 +19,7 @@
   },
   "content_scripts": [
     {
-        "matches": ["https://webauthn.io/*"],
+        "matches": ["https://webauthn.io/*", "https://demo.yubico.com/*"],
         "js": ["content.js"],
         "run_at": "document_start"
     }
@@ -31,5 +30,4 @@
   },
 
   "permissions": ["nativeMessaging"]
-
 }
