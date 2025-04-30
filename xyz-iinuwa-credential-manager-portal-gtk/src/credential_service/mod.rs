@@ -7,7 +7,7 @@ use std::{
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
-    transport::Device as _,
+    transport::{hid::HidDevice, Device as _},
     webauthn::{Error as WebAuthnError, WebAuthn},
     UxUpdate,
 };
@@ -35,6 +35,8 @@ pub struct CredentialService {
     usb_state: AsyncArc<AsyncMutex<UsbState>>,
     usb_uv_handler: UsbUvHandler,
 
+    internal_hid_devices: Vec<HidDevice>,
+    chosen_hid_device: Option<HidDevice>,
     internal_device_credentials: Vec<CredentialMetadata>,
     internal_device_state: InternalDeviceState,
     internal_pin_attempts_left: u32,
@@ -81,6 +83,7 @@ impl CredentialService {
             usb_state: usb_state.clone(),
             usb_uv_handler: UsbUvHandler::new(),
 
+            internal_hid_devices: Vec::new(),
             internal_device_credentials,
             internal_device_state: InternalDeviceState::Idle,
             internal_pin_attempts_left: 5,
@@ -88,6 +91,7 @@ impl CredentialService {
 
             cred_request,
             cred_response,
+            chosen_hid_device: None,
         }
     }
 
@@ -97,32 +101,73 @@ impl CredentialService {
 
     pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
         debug!("polling for USB status");
-        let prev_usb_state = self.usb_state.lock().await.clone();
+        let prev_usb_state = *self.usb_state.lock().await;
         let next_usb_state = match prev_usb_state {
             UsbState::Idle | UsbState::Waiting => {
-                let devices = libwebauthn::transport::hid::list_devices().await.unwrap();
-                if devices.is_empty() {
+                self.internal_hid_devices =
+                    libwebauthn::transport::hid::list_devices().await.unwrap();
+                if self.internal_hid_devices.is_empty() {
                     let state = UsbState::Waiting;
                     *self.usb_state.lock().await = state;
                     return Ok(state);
-                }
-                if devices.is_empty() {
-                    Ok(UsbState::Waiting)
-                } else {
+                } else if self.internal_hid_devices.len() == 1 {
+                    self.chosen_hid_device = Some(self.internal_hid_devices.swap_remove(0));
                     Ok(UsbState::Connected)
+                } else {
+                    Ok(UsbState::SelectingDevice)
                 }
             }
+            UsbState::SelectingDevice => {
+                let (blinking_tx, mut blinking_rx) = tokio::sync::mpsc::channel::<Option<HidDevice>>(
+                    self.internal_hid_devices.len(),
+                );
+                let mut expected_answers = self.internal_hid_devices.len();
+                for mut device in self.internal_hid_devices.drain(..) {
+                    let tx = blinking_tx.clone();
+                    tokio().spawn(async move {
+                        let (mut channel, _state_rx) = device.channel().await.unwrap();
+                        let res = channel
+                            .blink_and_wait_for_user_presence(Duration::from_secs(300))
+                            .await;
+                        drop(channel);
+                        match res {
+                            Ok(true) => {
+                                let _ = tx.send(Some(device)).await;
+                            }
+                            Ok(false) | Err(_) => {
+                                let _ = tx.send(None).await;
+                            }
+                        }
+                    });
+                }
+                let mut state = UsbState::Idle;
+                while let Some(msg) = blinking_rx.recv().await {
+                    expected_answers -= 1;
+                    match msg {
+                        Some(device) => {
+                            self.chosen_hid_device = Some(device);
+                            state = UsbState::Connected;
+                            break;
+                        }
+                        None => {
+                            if expected_answers == 0 {
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                }
+                Ok(state)
+            }
             UsbState::Connected => {
-                // TODO: I'm not sure how we want to handle multiple usb devices
-                // just take the first one found for now.
-                // TODO: store this device reference, perhaps in the enum itself
                 let handler = self.usb_uv_handler.clone();
                 let cred_request = self.cred_request.clone();
                 let signal_tx = self.usb_uv_handler.signal_tx.clone();
                 let pin_rx = self.usb_uv_handler.pin_rx.clone();
+                let mut device = self.chosen_hid_device.take().unwrap();
+                self.internal_hid_devices.clear();
                 tokio().spawn(async move {
-                    let mut devices = libwebauthn::transport::hid::list_devices().await.unwrap();
-                    let device = devices.first_mut().unwrap();
                     let (mut channel, state_rx) = device.channel().await.unwrap();
                     tokio().spawn(async move {
                         handle_usb_updates(signal_tx, pin_rx, state_rx).await;
@@ -288,7 +333,7 @@ impl CredentialService {
             UsbState::UserCancelled => Ok(prev_usb_state),
         }?;
 
-        *self.usb_state.lock().await = next_usb_state;
+        *self.usb_state.lock().await = next_usb_state.clone();
         Ok(next_usb_state)
     }
 
@@ -402,7 +447,6 @@ impl CredentialService {
     }
 }
 
-
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum UsbState {
     /// Not polling for FIDO USB device.
@@ -433,6 +477,10 @@ pub enum UsbState {
 
     // This isn't actually sent from the server.
     UserCancelled,
+
+    // When we encounter multiple devices, we let all of them blink and continue
+    // with the one that was tapped.
+    SelectingDevice,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
