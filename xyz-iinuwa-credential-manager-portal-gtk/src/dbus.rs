@@ -1,15 +1,20 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use async_std::channel::{Receiver, Sender};
 use async_std::sync::Mutex as AsyncMutex;
+use base64::Engine;
+use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD};
 use gettextrs::{gettext, LocaleCategory};
 use gtk::{gio, glib};
 
 use libwebauthn::ops::webauthn::{
-    Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
-    UserVerificationRequirement,
+    Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
+    GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
+    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialResponse,
+    MakeCredentialsRequestExtensions, UserVerificationRequirement,
 };
 use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
@@ -23,12 +28,13 @@ use zbus::{
 
 use crate::application::ExampleApplication;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
-use crate::cose;
 use crate::credential_service::CredentialService;
 use crate::view_model::CredentialType;
 use crate::view_model::Operation;
 use crate::view_model::{self, ViewEvent, ViewUpdate};
-use crate::webauthn::{self, PublicKeyCredentialParameters};
+use crate::webauthn::{
+    self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
+};
 use ring::digest;
 
 pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Connection> {
@@ -128,10 +134,10 @@ impl CredentialManager {
                         "xyz.iinuwa.credentials.CredentialManager:local".to_string(),
                     );
                     let (make_cred_request, client_data_json) =
-                        request.clone().try_into_ctap2_request().map_err(|_| {
-                            fdo::Error::Failed(
-                                "Could not parse passkey creation request.".to_owned(),
-                            )
+                        request.clone().try_into_ctap2_request().map_err(|e| {
+                            fdo::Error::Failed(format!(
+                                "Could not parse passkey creation request: {e:?}"
+                            ))
                         })?;
                     let request =
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
@@ -404,7 +410,41 @@ impl CreateCredentialRequest {
             } else {
                 (false, UserVerificationRequirement::Preferred)
             };
-        let extensions = None;
+        let extensions = if let Some(incoming_extensions) = other_options.extensions {
+            let extensions = MakeCredentialsRequestExtensions {
+                cred_blob: incoming_extensions
+                    .cred_blob
+                    .and_then(|x| URL_SAFE_NO_PAD.decode(x).ok()),
+                min_pin_length: incoming_extensions.min_pin_length,
+                cred_protect: match incoming_extensions.cred_protect_policy {
+                    Some(cred_prot_policy) => Some(CredentialProtectionExtension {
+                        policy: cred_prot_policy,
+                        enforce_policy: incoming_extensions
+                            .enforce_credential_protection_policy
+                            .unwrap_or_default(),
+                    }),
+                    None => None,
+                },
+                large_blob: incoming_extensions
+                    .large_blob
+                    .map(|x| x.support.unwrap_or_default())
+                    .unwrap_or_default(),
+                hmac_or_prf: if incoming_extensions.prf.is_some() {
+                    // CTAP currently doesn't support PRF queries at credentials.create()
+                    // So we ignore any potential value set in the request and only mark this
+                    // credential to activate HMAC for future PRF queries using credentials.get()
+                    MakeCredentialHmacOrPrfInput::Prf
+                } else {
+                    // MakeCredentialHmacOrPrfInput::Hmac is not used directly by webauthn
+                    MakeCredentialHmacOrPrfInput::None
+                },
+                ..Default::default()
+            };
+            Some(extensions)
+        } else {
+            None
+        };
+
         let credential_parameters = request_value
             .clone()
             .get("pubKeyCredParams")
@@ -494,29 +534,13 @@ impl CreatePublicKeyCredentialResponse {
         let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| {
             fdo::Error::Failed("Invalid credential received from authenticator".to_string())
         })?;
-        let public_key = cose::encode_cose_key(&attested_credential.credential_public_key)
-            .map_err(|_| {
-                fdo::Error::Failed(format!(
-                    "Unable to serialize public key type: {:?}",
-                    &attested_credential.credential_public_key
-                ))
-            })?;
-        let attested_credential_data = webauthn::create_attested_credential_data(
-            &attested_credential.credential_id,
-            &public_key,
-            &attested_credential.aaguid,
-        )
-        .unwrap();
 
-        // TODO: what's the format for extensions... JSON?
-        // let extensions = &auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref();
-        let authenticator_data_blob = webauthn::create_authenticator_data(
-            &auth_data.rp_id_hash,
-            &auth_data.flags,
-            (&auth_data).signature_count,
-            Some(&attested_credential_data),
-            None,
-        );
+        let unsigned_extensions = response
+            .ctap
+            .unsigned_extensions_output
+            .as_ref()
+            .map(|extensions| serde_json::to_string(&extensions).unwrap());
+        let authenticator_data_blob = auth_data.to_response_bytes().unwrap();
         let attestation_statement =
             (&response.ctap.attestation_statement)
                 .try_into()
@@ -536,14 +560,14 @@ impl CreatePublicKeyCredentialResponse {
             authenticator_data_blob,
             client_data_json,
             Some(response.transport.clone()),
-            None,
+            unsigned_extensions,
             response.attachment_modality.clone(),
         )
         .to_json();
         let response = CreatePublicKeyCredentialResponse {
             registration_response_json,
         };
-        Ok(response.into())
+        Ok(response)
     }
 }
 
@@ -668,12 +692,43 @@ impl GetCredentialRequest {
             let (_, effective_domain) = origin.rsplit_once('/').unwrap();
             effective_domain.to_string()
         });
-        // TODO(extensions-support)
-        let extensions = None;
+
+        let extensions = if let Some(incoming_extensions) = request.extensions {
+            let extensions = GetAssertionRequestExtensions {
+                cred_blob: incoming_extensions.get_cred_blob,
+                hmac_or_prf: incoming_extensions
+                    .prf
+                    .and_then(|x| {
+                        x.eval.map(|eval| {
+                            let eval = Some(eval.decode());
+                            let mut eval_by_credential = HashMap::new();
+                            if let Some(incoming_eval) = x.eval_by_credential {
+                                for (key, val) in incoming_eval.iter() {
+                                    eval_by_credential.insert(key.clone(), val.decode());
+                                }
+                            }
+                            GetAssertionHmacOrPrfInput::Prf {
+                                eval,
+                                eval_by_credential,
+                            }
+                        })
+                    })
+                    .unwrap_or_default(),
+                large_blob: incoming_extensions
+                    .large_blob
+                    // TODO: Implement GetAssertionLargeBlobExtension::Write, once libwebauthn supports it
+                    .filter(|x| x.read == Some(true))
+                    .map(|_| GetAssertionLargeBlobExtension::Read)
+                    .unwrap_or(GetAssertionLargeBlobExtension::None),
+            };
+            Some(extensions)
+        } else {
+            None
+        };
+
         Ok((
             GetAssertionRequest {
                 hash: client_data_hash,
-
                 relying_party_id,
                 user_verification,
                 allow,
@@ -703,40 +758,23 @@ impl GetPublicKeyCredentialResponse {
         response: &GetAssertionResponseInternal,
         client_data_json: String,
     ) -> std::result::Result<Self, fdo::Error> {
-        let auth_data = &response.ctap.authenticator_data;
-        let attested_credential_data = match &auth_data.attested_credential {
-            None => None,
-            Some(att) => {
-                let public_key =
-                    cose::encode_cose_key(&att.credential_public_key).map_err(|_| {
-                        fdo::Error::Failed(format!(
-                            "Unable to serialize public key type: {:?}",
-                            &att.credential_public_key
-                        ))
-                    })?;
-                let data = webauthn::create_attested_credential_data(
-                    &att.credential_id,
-                    &public_key,
-                    &att.aaguid,
-                )
-                .map_err(|_| {
-                    zbus::Error::Failure("Failed to parse attested credential data".to_string())
-                })?;
-                Some(data)
-            }
-        };
+        let authenticator_data_blob = response
+            .ctap
+            .authenticator_data
+            .to_response_bytes()
+            .unwrap();
 
-        // TODO: what's the format for extensions... CBOR?
-        // let ext = auth_data.extensions.as_ref().map(|e| serde_json::to_vec(&e).unwrap()).as_deref();
-        let extensions = None;
-
-        let authenticator_data_blob = webauthn::create_authenticator_data(
-            &auth_data.rp_id_hash,
-            &auth_data.flags,
-            (&auth_data).signature_count,
-            attested_credential_data.as_deref(),
-            extensions,
-        );
+        // We can't just do this here, because we need encode all byte arrays for the JS-communication:
+        // let unsigned_extensions = response
+        //     .ctap
+        //     .unsigned_extensions_output
+        //     .as_ref()
+        //     .map(|extensions| serde_json::to_string(&extensions).unwrap());
+        let unsigned_extensions = response
+            .ctap
+            .unsigned_extensions_output
+            .as_ref()
+            .map(GetPublicKeyCredentialUnsignedExtensionsResponse::from);
 
         let authentication_response_json = webauthn::GetPublicKeyCredentialResponse::new(
             client_data_json,
@@ -749,12 +787,14 @@ impl GetPublicKeyCredentialResponse {
             response.ctap.signature.clone(),
             response.ctap.user.as_ref().map(|u| u.id.clone().into_vec()),
             response.attachment_modality.clone(),
+            unsigned_extensions,
         )
         .to_json();
+
         let response = GetPublicKeyCredentialResponse {
             authentication_response_json,
         };
-        Ok(response.into())
+        Ok(response)
     }
 }
 

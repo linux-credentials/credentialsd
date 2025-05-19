@@ -13,13 +13,13 @@ use ring::{
         ECDSA_P256_SHA256_ASN1_SIGNING, RSA_PKCS1_SHA256,
     },
 };
+use serde::Deserialize;
 
 use crate::cose::{encode_pkcs8_key, CoseKeyType};
 use crate::webauthn::{
     self, AttestationStatement, AttestationStatementFormat, CreatePublicKeyCredentialResponse,
     CredentialDescriptor, CredentialSource, Error as WebAuthnError, GetPublicKeyCredentialResponse,
-    MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType, RelyingParty,
-    User,
+    MakeCredentialOptions, PublicKeyCredentialParameters, PublicKeyCredentialType,
 };
 
 static P256: &EcdsaSigningAlgorithm = &ECDSA_P256_SHA256_ASN1_SIGNING;
@@ -73,6 +73,65 @@ async fn create_passkey(
     })
 }
 */
+
+#[derive(Deserialize)]
+pub(crate) struct RelyingParty {
+    pub name: String,
+    pub id: String,
+}
+
+/// https://www.w3.org/TR/webauthn-3/#dictionary-user-credential-params
+#[derive(Deserialize)]
+pub(crate) struct User {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+struct Assertion {}
+
+pub(crate) fn create_attested_credential_data(
+    credential_id: &[u8],
+    public_key: &[u8],
+    aaguid: &[u8],
+) -> Result<Vec<u8>, webauthn::Error> {
+    let mut attested_credential_data: Vec<u8> = Vec::new();
+    if aaguid.len() != 16 {
+        return Err(webauthn::Error::Unknown);
+    }
+    attested_credential_data.extend(aaguid);
+    let cred_length: u16 = TryInto::<u16>::try_into(credential_id.len()).unwrap();
+    let cred_length_bytes: Vec<u8> = cred_length.to_be_bytes().to_vec();
+    attested_credential_data.extend(&cred_length_bytes);
+    attested_credential_data.extend(credential_id);
+    attested_credential_data.extend(public_key);
+    Ok(attested_credential_data)
+}
+
+pub(crate) fn create_authenticator_data(
+    rp_id_hash: &[u8],
+    flags: &AuthenticatorDataFlags,
+    signature_counter: u32,
+    attested_credential_data: Option<&[u8]>,
+    processed_extensions: Option<&[u8]>,
+) -> Vec<u8> {
+    let mut authenticator_data: Vec<u8> = Vec::new();
+    authenticator_data.extend(rp_id_hash);
+
+    authenticator_data.push(flags.bits());
+
+    authenticator_data.extend(signature_counter.to_be_bytes());
+
+    if let Some(attested_credential_data) = attested_credential_data {
+        authenticator_data.extend(attested_credential_data);
+    }
+
+    if let Some(extensions) = processed_extensions {
+        authenticator_data.extend(extensions);
+    }
+    authenticator_data
+}
 
 pub(crate) fn create_credential(
     origin: &str,
@@ -343,12 +402,12 @@ pub(crate) fn make_credential(
     let aaguid = vec![0_u8; 16];
     let public_key = encode_pkcs8_key(key_type, &key_pair).map_err(|_| WebAuthnError::Unknown)?;
     let attested_credential_data =
-        webauthn::create_attested_credential_data(&credential_id, &public_key, &aaguid)?;
+        create_attested_credential_data(&credential_id, &public_key, &aaguid)?;
 
     flags = flags | AuthenticatorDataFlags::ATTESTED_CREDENTIALS;
     // Let authenticatorData be the byte array specified in § 6.1 Authenticator Data, including attestedCredentialData as the attestedCredentialData and processedExtensions, if any, as the extensions.
     let rp_id_hash = ring::digest::digest(&digest::SHA256, &credential_source.rp_id.as_bytes());
-    let authenticator_data = webauthn::create_authenticator_data(
+    let authenticator_data = create_authenticator_data(
         rp_id_hash.as_ref(),
         &flags,
         signature_counter,
@@ -504,14 +563,13 @@ fn get_credential(
     // TODO: Assign AAGUID?
     let aaguid = vec![0_u8; 16];
     let attested_credential_data = if *attestation_format != AttestationStatementFormat::None {
-        webauthn::create_attested_credential_data(&selected_credential.id, &public_key, &aaguid)
-            .ok()
+        create_attested_credential_data(&selected_credential.id, &public_key, &aaguid).ok()
     } else {
         None
     };
     // Let authenticatorData be the byte array specified in § 6.1 Authenticator Data including processedExtensions, if any, as the extensions and excluding attestedCredentialData. This authenticatorData MUST include attested credential data if, and only if, attestationFormat is not none.
     let rp_id_hash = digest::digest(&digest::SHA256, selected_credential.rp_id.as_bytes());
-    let authenticator_data = webauthn::create_authenticator_data(
+    let authenticator_data = create_authenticator_data(
         rp_id_hash.as_ref(),
         &flags,
         signature_counter,
@@ -550,6 +608,7 @@ fn get_credential(
         // Note: In cases where allowCredentialDescriptorList was supplied the returned userHandle value may be null, see: userHandleResult.
         user_handle: selected_credential.user_handle.clone(),
         attachment_modality: String::from("platform"),
+        extensions: None,
     };
     Ok(response)
     // If the authenticator cannot find any credential corresponding to the specified Relying Party that matches the specified criteria, it terminates the operation and returns an error.
@@ -652,9 +711,8 @@ mod test {
     use crate::cose::encode_pkcs8_key;
 
     use crate::webauthn::{
-        create_attestation_object, create_attested_credential_data, create_authenticator_data,
-        AttestationStatement, CredentialSource, PublicKeyCredentialParameters,
-        PublicKeyCredentialType,
+        create_attestation_object, AttestationStatement, CredentialSource,
+        PublicKeyCredentialParameters, PublicKeyCredentialType,
     };
 
     use super::sign_attestation;

@@ -1,15 +1,15 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use libwebauthn::{
-    fido::AuthenticatorDataFlags,
+    ops::webauthn::{CredentialProtectionPolicy, MakeCredentialLargeBlobExtension},
     proto::ctap2::{
         Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor,
         Ctap2PublicKeyCredentialType, Ctap2Transport,
     },
 };
 use ring::digest;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
 use zbus::zvariant::{DeserializeDict, Type};
@@ -24,49 +24,6 @@ pub enum Error {
     NotAllowed,
     Constraint,
     Internal(String),
-}
-
-pub(crate) fn create_attested_credential_data(
-    credential_id: &[u8],
-    public_key: &[u8],
-    aaguid: &[u8],
-) -> Result<Vec<u8>, Error> {
-    let mut attested_credential_data: Vec<u8> = Vec::new();
-    if aaguid.len() != 16 {
-        return Err(Error::Unknown);
-    }
-    attested_credential_data.extend(aaguid);
-    let cred_length: u16 = TryInto::<u16>::try_into(credential_id.len()).unwrap();
-    let cred_length_bytes: Vec<u8> = cred_length.to_be_bytes().to_vec();
-    attested_credential_data.extend(&cred_length_bytes);
-    attested_credential_data.extend(credential_id);
-    attested_credential_data.extend(public_key);
-    Ok(attested_credential_data)
-}
-
-pub(crate) fn create_authenticator_data(
-    rp_id_hash: &[u8],
-    flags: &AuthenticatorDataFlags,
-    signature_counter: u32,
-    attested_credential_data: Option<&[u8]>,
-    processed_extensions: Option<&[u8]>,
-) -> Vec<u8> {
-    let mut authenticator_data: Vec<u8> = Vec::new();
-    authenticator_data.extend(rp_id_hash);
-
-    authenticator_data.push(flags.bits());
-
-    authenticator_data.extend(signature_counter.to_be_bytes());
-
-    if let Some(attested_credential_data) = attested_credential_data {
-        authenticator_data.extend(attested_credential_data);
-    }
-
-    if processed_extensions.is_some() {
-        todo!("Implement processed extensions");
-        // TODO: authenticator_data.append(processed_extensions.to_bytes());
-    }
-    authenticator_data
 }
 
 pub(crate) fn create_attestation_object(
@@ -113,23 +70,6 @@ pub(crate) fn create_attestation_object(
     Ok(attestation_object)
 }
 
-#[derive(Deserialize)]
-pub(crate) struct RelyingParty {
-    pub name: String,
-    pub id: String,
-}
-
-/// https://www.w3.org/TR/webauthn-3/#dictionary-user-credential-params
-#[derive(Deserialize)]
-pub(crate) struct User {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "displayName")]
-    pub display_name: String,
-}
-
-struct Assertion {}
-
 /*
 #[derive(DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
@@ -156,7 +96,7 @@ pub(crate) struct AssertionOptions {
     user_presence: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct MakeCredentialOptions {
     /// Timeout in milliseconds
     #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
@@ -169,11 +109,77 @@ pub(crate) struct MakeCredentialOptions {
     /// https://www.w3.org/TR/webauthn-3/#enum-attestation-convey
     pub attestation: Option<String>,
     /// extensions input as a JSON object
-    #[serde(rename = "extensionData")]
-    pub extension_data: Option<String>,
+    pub extensions: Option<MakeCredentialExtensions>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MakeCredentialExtensions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cred_blob: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cred_props: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_pin_length: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cred_protect_policy: Option<CredentialProtectionPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforce_credential_protection_policy: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub large_blob: Option<LargeBlobExtension>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prf: Option<Prf>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct LargeBlobExtension {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support: Option<MakeCredentialLargeBlobExtension>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Prf {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) eval: Option<PRFValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) eval_by_credential: Option<HashMap<String, PRFValue>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRFValue {
+    // base64 encoded data
+    pub first: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub second: Option<String>,
+}
+
+impl PRFValue {
+    pub(crate) fn decode(&self) -> libwebauthn::ops::webauthn::PRFValue {
+        let mut res = libwebauthn::ops::webauthn::PRFValue::default();
+        let first = URL_SAFE_NO_PAD.decode(&self.first).unwrap();
+        let len_to_copy = std::cmp::min(first.len(), 32); // Determine how many bytes to copy
+        res.first[..len_to_copy].copy_from_slice(&first[..len_to_copy]);
+        if let Some(second) = self
+            .second
+            .as_ref()
+            .map(|second| URL_SAFE_NO_PAD.decode(second).unwrap())
+        {
+            let len_to_copy = std::cmp::min(second.len(), 32); // Determine how many bytes to copy
+            let mut res_second = [0u8; 32];
+            res_second[..len_to_copy].copy_from_slice(&second[..len_to_copy]);
+            res.second = Some(res_second);
+        }
+        res
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct GetCredentialOptions {
     /// Challenge bytes in base64url-encoding with no padding.
     pub(crate) challenge: String,
@@ -202,12 +208,22 @@ pub(crate) struct GetCredentialOptions {
     #[serde(default)]
     pub(crate) hints: Vec<String>,
 
-    extensions: Option<()>,
+    pub(crate) extensions: Option<GetCredentialExtensions>,
 }
 
-// pub(crate) struct CredentialList(Vec<CredentialDescriptor>);
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetCredentialExtensions {
+    // TODO: appid
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub get_cred_blob: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub large_blob: Option<LargeBlobExtension>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prf: Option<Prf>,
+}
 
-#[derive(Deserialize, Type)]
+#[derive(Debug, Deserialize, Type)]
 #[zvariant(signature = "dict")]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-credential-descriptor
 pub(crate) struct CredentialDescriptor {
@@ -260,7 +276,7 @@ impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
     }
 }
 
-#[derive(DeserializeDict, Type)]
+#[derive(Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-authenticatorSelection
 pub(crate) struct AuthenticatorSelectionCriteria {
@@ -428,6 +444,7 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
         }
     }
 }
+
 pub struct CreatePublicKeyCredentialResponse {
     cred_type: String,
 
@@ -441,6 +458,61 @@ pub struct CreatePublicKeyCredentialResponse {
 
     /// If the device used is builtin ("platform") or removable ("cross-platform", aka "roaming")
     attachment_modality: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialPropertiesOutput {
+    /// This OPTIONAL property, known abstractly as the resident key credential property (i.e., client-side discoverable credential property), is a Boolean value indicating whether the PublicKeyCredential returned as a result of a registration ceremony is a client-side discoverable credential. If rk is true, the credential is a discoverable credential. if rk is false, the credential is a server-side credential. If rk is not present, it is not known whether the credential is a discoverable credential or a server-side credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rk: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticationExtensionsLargeBlobOutputs {
+    /// true if, and only if, the created credential supports storing large blobs. Only present in registration outputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported: Option<bool>,
+    /// The opaque byte string that was associated with the credential identified by rawId. Only valid if read was true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<Vec<u8>>,
+    /// A boolean that indicates that the contents of write were successfully stored on the authenticator, associated with the specified credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub written: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticationExtensionsPRFValues {
+    pub first: Vec<u8>,
+    pub second: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticationExtensionsPRFOutputs {
+    /// true if, and only if, the one or two PRFs are available for use with the created credential. This is only reported during registration and is not present in the case of authentication.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// The results of evaluating the PRF for the inputs given in eval or evalByCredential. Outputs may not be available during registration; see comments in eval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub results: Option<AuthenticationExtensionsPRFValues>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePublicKeyExtensionsResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cred_props: Option<CredentialPropertiesOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub large_blob: Option<AuthenticationExtensionsLargeBlobOutputs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prf: Option<AuthenticationExtensionsPRFOutputs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cred_protect: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_pin_length: Option<u32>,
 }
 
 /// Returned from a creation of a new public key credential.
@@ -498,24 +570,23 @@ impl CreatePublicKeyCredentialResponse {
 
     pub fn to_json(&self) -> String {
         let response = json!({
-            "clientDataJSON": URL_SAFE_NO_PAD.encode(&self.response.client_data_json.as_bytes()),
+            "clientDataJSON": URL_SAFE_NO_PAD.encode(self.response.client_data_json.as_bytes()),
             "attestationObject": URL_SAFE_NO_PAD.encode(&self.response.attestation_object),
             "transports": self.response.transports,
         });
-        let mut output = json!({
+        let extensions = if let Some(extensions) = &self.extensions {
+            serde_json::from_str(extensions).expect("Extensions json to be formatted properly")
+        } else {
+            // extensions field seems to be required, even if empty
+            json!({})
+        };
+        let output = json!({
             "id": self.get_id(),
             "rawId": self.get_id(),
             "response": response,
             "authenticatorAttachment": self.attachment_modality,
+            "clientExtensionResults": extensions,
         });
-        if let Some(extensions) = &self.extensions {
-            let extension_value =
-                serde_json::from_str(extensions).expect("Extensions json to be formatted properly");
-            output
-                .as_object_mut()
-                .unwrap()
-                .insert("clientExtensionResults".to_string(), extension_value);
-        }
         output.to_string()
     }
 }
@@ -544,6 +615,85 @@ pub struct GetPublicKeyCredentialResponse {
     /// Whether the used device is "cross-platform" (aka "roaming", i.e.: can be
     /// removed from the platform) or is built-in ("platform").
     pub(crate) attachment_modality: String,
+
+    /// Unsigned extension output
+    /// Unlike CreatePublicKey, we can't use a directly serialized JSON string here,
+    /// because we have to encode/decode the byte arrays for the JavaScript-communication
+    pub(crate) extensions: Option<GetPublicKeyCredentialUnsignedExtensionsResponse>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPublicKeyCredentialHMACGetSecretOutput {
+    // base64-encoded bytestring
+    pub output1: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // base64-encoded bytestring
+    pub output2: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct GetPublicKeyCredentialLargeBlobOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // base64-encoded bytestring
+    pub blob: Option<String>,
+    // Not yet supported
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub written: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct GetPublicKeyCredentialPrfOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub results: Option<GetPublicKeyCredentialPRFValue>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct GetPublicKeyCredentialPRFValue {
+    // base64-encoded bytestring
+    pub first: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    // base64-encoded bytestring
+    pub second: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct GetPublicKeyCredentialUnsignedExtensionsResponse {
+    pub hmac_get_secret: Option<GetPublicKeyCredentialHMACGetSecretOutput>,
+    pub large_blob: Option<GetPublicKeyCredentialLargeBlobOutput>,
+    pub prf: Option<GetPublicKeyCredentialPrfOutput>,
+}
+
+// Unlike CreatePublicKey, for GetPublicKey, we have a lot of Byte arrays,
+// so we need a lot of de/constructions, instead of serializing it directly
+impl From<&libwebauthn::ops::webauthn::GetAssertionResponseUnsignedExtensions>
+    for GetPublicKeyCredentialUnsignedExtensionsResponse
+{
+    fn from(value: &libwebauthn::ops::webauthn::GetAssertionResponseUnsignedExtensions) -> Self {
+        Self {
+            hmac_get_secret: value.hmac_get_secret.as_ref().map(|x| {
+                GetPublicKeyCredentialHMACGetSecretOutput {
+                    output1: URL_SAFE_NO_PAD.encode(x.output1),
+                    output2: x.output2.map(|output2| URL_SAFE_NO_PAD.encode(output2)),
+                }
+            }),
+            large_blob: value
+                .large_blob
+                .as_ref()
+                .map(|x| GetPublicKeyCredentialLargeBlobOutput {
+                    blob: x.blob.as_ref().map(|blob| URL_SAFE_NO_PAD.encode(blob)),
+                }),
+            prf: value.prf.as_ref().map(|x| GetPublicKeyCredentialPrfOutput {
+                results: x
+                    .results
+                    .as_ref()
+                    .map(|results| GetPublicKeyCredentialPRFValue {
+                        first: URL_SAFE_NO_PAD.encode(results.first),
+                        second: results.second.map(|second| URL_SAFE_NO_PAD.encode(second)),
+                    }),
+            }),
+        }
+    }
 }
 
 impl GetPublicKeyCredentialResponse {
@@ -554,6 +704,7 @@ impl GetPublicKeyCredentialResponse {
         signature: Vec<u8>,
         user_handle: Option<Vec<u8>>,
         attachment_modality: String,
+        extensions: Option<GetPublicKeyCredentialUnsignedExtensionsResponse>,
     ) -> Self {
         Self {
             cred_type: "public-key".to_string(),
@@ -563,11 +714,12 @@ impl GetPublicKeyCredentialResponse {
             signature,
             user_handle,
             attachment_modality,
+            extensions,
         }
     }
     pub fn to_json(&self) -> String {
         let response = json!({
-            "clientDataJSON": URL_SAFE_NO_PAD.encode(&self.client_data_json.as_bytes()),
+            "clientDataJSON": URL_SAFE_NO_PAD.encode(self.client_data_json.as_bytes()),
             "authenticatorData": URL_SAFE_NO_PAD.encode(&self.authenticator_data),
             "signature": URL_SAFE_NO_PAD.encode(&self.signature),
             "userHandle": self.user_handle.as_ref().map(|h| URL_SAFE_NO_PAD.encode(h))
@@ -578,23 +730,14 @@ impl GetPublicKeyCredentialResponse {
         // This means we'll have to remember the ID on the request if the allow-list has exactly one
         // credential descriptor, then we'll need. This should probably be done in libwebauthn.
         let id = self.raw_id.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id));
+
         let output = json!({
             "id": id,
             "rawId": id,
             "authenticatorAttachment": self.attachment_modality,
-            "response": response
+            "response": response,
+            "clientExtensionResults": self.extensions,
         });
-        // TODO: support client extensions
-        /*
-        if let Some(extensions) = &self.extensions {
-            let extension_value =
-                serde_json::from_str(extensions).expect("Extensions json to be formatted properly");
-            output
-                .as_object_mut()
-                .unwrap()
-                .insert("clientExtensionResults".to_string(), extension_value);
-        }
-        */
         output.to_string()
     }
 }

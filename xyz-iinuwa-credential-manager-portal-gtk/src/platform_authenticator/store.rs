@@ -8,7 +8,7 @@ use std::str::FromStr;
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ring::rand::{self, SecureRandom};
 
-use crate::webauthn::{CredentialDescriptor, Error, RelyingParty};
+use crate::webauthn::Error;
 static mut CRED_DIR: String = String::new();
 
 pub(crate) fn initialize() {
