@@ -36,12 +36,16 @@ function rcvFromContent(msg) {
   // const isCrossOrigin = origin === topOrigin
   // const isTopLevel = contentPort.sender.frameId === 0;
 
+  if (options) {
+    const serializedOptions = serializeRequest(options)
 
-  const serializedOptions = serializeRequest(options)
-
-  console.debug(options.publicKey.challenge)
-  console.debug("background script received options, passing onto native app")
-  nativePort.postMessage({ requestId, cmd, options: serializedOptions, origin, topOrigin })
+    console.debug(options.publicKey.challenge)
+    console.debug("background script received options, passing onto native app")
+    nativePort.postMessage({ requestId, cmd, options: serializedOptions, origin, topOrigin })
+  } else {
+    console.debug("background script received message without arguments, passing onto native app")
+    nativePort.postMessage({ requestId, cmd, origin, topOrigin })
+  }
 }
 
 function rcvFromNative(msg) {

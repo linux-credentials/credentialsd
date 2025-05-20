@@ -241,6 +241,20 @@ impl CredentialManager {
             ))
         }
     }
+
+    async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
+        Ok(GetClientCapabilitiesResponse {
+            conditional_create: false,
+            conditional_get: false,
+            hybrid_transport: false,
+            passkey_platform_authenticator: false,
+            user_verifying_platform_authenticator: false,
+            related_origins: false,
+            signal_all_accepted_credentials: false,
+            signal_current_user_details: false,
+            signal_unknown_credential: false,
+        })
+    }
 }
 
 async fn create_password(
@@ -836,6 +850,20 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
             password: None,
         }
     }
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct GetClientCapabilitiesResponse {
+    conditional_create: bool,
+    conditional_get: bool,
+    hybrid_transport: bool,
+    passkey_platform_authenticator: bool,
+    user_verifying_platform_authenticator: bool,
+    related_origins: bool,
+    signal_all_accepted_credentials: bool,
+    signal_current_user_details: bool,
+    signal_unknown_credential: bool,
 }
 
 fn format_client_data_json(

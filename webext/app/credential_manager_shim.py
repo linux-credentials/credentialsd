@@ -343,7 +343,7 @@ async def run(cmd, options, origin, top_origin):
 
     interface = proxy_object.get_interface(
         'xyz.iinuwa.credentials.CredentialManagerUi1')
-    logging.debug(f"COnnected to interface at {interface.path}")
+    logging.debug(f"Connected to interface at {interface.path}")
 
     if cmd == 'create':
         if 'publicKey' in options:
@@ -355,6 +355,12 @@ async def run(cmd, options, origin, top_origin):
             return await get_passkey(interface, options['publicKey'], origin, top_origin)
         else:
             raise Exception(f"Could not get unknown credential type: {options.keys()[0]}")
+    elif cmd == 'getClientCapabilities':
+        rsp = await interface.call_get_client_capabilities()
+        response = {}
+        for name, val in rsp.items():
+            response[name] = val.value
+        return response
     else:
         raise Exception(f"unknown cmd: {cmd}")
 
@@ -366,7 +372,10 @@ while True:
     request_id = receivedMessage['requestId']
     try:
         cmd = receivedMessage['cmd']
-        options = receivedMessage['options']
+
+        options = None
+        if 'options' in receivedMessage:
+            options = receivedMessage['options']
         origin = receivedMessage['origin']
         top_origin = receivedMessage['topOrigin']
         loop = asyncio.get_event_loop()
