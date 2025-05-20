@@ -614,9 +614,9 @@ impl From<crate::credential_service::UsbState> for UsbState {
     fn from(val: crate::credential_service::UsbState) -> Self {
         match val {
             crate::credential_service::UsbState::Idle => UsbState::NotListening,
-            crate::credential_service::UsbState::SelectingDevice => UsbState::SelectingDevice,
+            crate::credential_service::UsbState::SelectingDevice(..) => UsbState::SelectingDevice,
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
-            crate::credential_service::UsbState::Connected => UsbState::Connected,
+            crate::credential_service::UsbState::Connected(..) => UsbState::Connected,
             crate::credential_service::UsbState::NeedsPin { attempts_left } => {
                 UsbState::NeedsPin { attempts_left }
             }
