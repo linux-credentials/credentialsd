@@ -10,7 +10,9 @@ fn test_client_capabilities() {
     let client = DbusClient::new();
     let msg = client.call_method("GetClientCapabilities", &()).unwrap();
     let body = msg.body();
-    let rsp: HashMap<String, bool> = body.deserialize::<HashMap<String, Value>>().unwrap()
+    let rsp: HashMap<String, bool> = body
+        .deserialize::<HashMap<String, Value>>()
+        .unwrap()
         .into_iter()
         .map(|(k, v)| (k, v.try_into().unwrap()))
         .collect();
@@ -55,11 +57,16 @@ mod client {
             B: Serialize + DynamicType,
         {
             let connection = Connection::session().unwrap();
-            let message = connection.call_method(Some(SERVICE_NAME), PATH, Some(INTERFACE), method_name, body);
+            let message = connection.call_method(
+                Some(SERVICE_NAME),
+                PATH,
+                Some(INTERFACE),
+                method_name,
+                body,
+            );
             connection.close().unwrap();
             message
         }
-
     }
     impl Drop for DbusClient {
         fn drop(&mut self) {

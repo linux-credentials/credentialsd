@@ -232,13 +232,16 @@ impl ViewModel {
                                 match prev_state {
                                     UsbState::Completed => break,
                                     UsbState::UserCancelled => break,
-                                    _ => {},
+                                    _ => {}
                                 };
                                 async_std::task::sleep(Duration::from_millis(50)).await;
-                            },
+                            }
                             Err(err) => {
                                 // TODO: move to error page
-                                tracing::error!("There was an error trying to get credentials from USB: {}", err);
+                                tracing::error!(
+                                    "There was an error trying to get credentials from USB: {}",
+                                    err
+                                );
                                 break;
                             }
                         };
@@ -266,9 +269,11 @@ impl ViewModel {
                     {
                         if prev_state != current_state {
                             println!("{:?}", current_state);
-                            tx.send(BackgroundEvent::InternalDeviceStateChanged(current_state.clone()))
-                                .await
-                                .unwrap();
+                            tx.send(BackgroundEvent::InternalDeviceStateChanged(
+                                current_state.clone(),
+                            ))
+                            .await
+                            .unwrap();
                         }
                         prev_state = current_state;
                     }
@@ -356,19 +361,25 @@ impl ViewModel {
                         }
 
                         UsbState::NeedsPin { attempts_left } => {
-                            self.tx_update.send(ViewUpdate::UsbNeedsPin { attempts_left }).await.unwrap();
+                            self.tx_update
+                                .send(ViewUpdate::UsbNeedsPin { attempts_left })
+                                .await
+                                .unwrap();
                         }
                         UsbState::NeedsUserVerification { attempts_left } => {
-                            self.tx_update.send(ViewUpdate::UsbNeedsUserVerification { attempts_left }).await.unwrap();
+                            self.tx_update
+                                .send(ViewUpdate::UsbNeedsUserVerification { attempts_left })
+                                .await
+                                .unwrap();
                         }
-                        UsbState::NeedsUserPresence  => {
-                            self.tx_update.send(ViewUpdate::UsbNeedsUserPresence).await.unwrap();
+                        UsbState::NeedsUserPresence => {
+                            self.tx_update
+                                .send(ViewUpdate::UsbNeedsUserPresence)
+                                .await
+                                .unwrap();
                         }
                         UsbState::Completed => {
-                            self.credential_service
-                                .lock()
-                                .await
-                                .complete_auth();
+                            self.credential_service.lock().await.complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         _ => {}
@@ -381,10 +392,7 @@ impl ViewModel {
                         //     self.tx_update.send(ViewUpdate::InternalDeviceNeedsPin).await.unwrap();
                         // },
                         InternalDeviceState::Completed { device, cred_id } => {
-                            self.credential_service
-                                .lock()
-                                .await
-                                .complete_auth();
+                            self.credential_service.lock().await.complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         _ => {}
@@ -547,7 +555,6 @@ impl From<Transport> for String {
     }
 }
 
-
 impl Transport {
     fn as_str(&self) -> &'static str {
         match self {
@@ -571,10 +578,14 @@ pub enum UsbState {
     Waiting,
 
     /// The device needs the PIN to be entered.
-    NeedsPin { attempts_left: Option<u32> },
+    NeedsPin {
+        attempts_left: Option<u32>,
+    },
 
     /// The device needs on-device user verification to be entered.
-    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsUserVerification {
+        attempts_left: Option<u32>,
+    },
 
     /// The device needs on-device user verification to be entered.
     NeedsUserPresence,
@@ -595,8 +606,12 @@ impl From<crate::credential_service::UsbState> for UsbState {
             crate::credential_service::UsbState::Idle => UsbState::NotListening,
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
             crate::credential_service::UsbState::Connected => UsbState::Connected,
-            crate::credential_service::UsbState::NeedsPin { attempts_left }=> UsbState::NeedsPin { attempts_left },
-            crate::credential_service::UsbState::NeedsUserVerification { attempts_left }=> UsbState::NeedsUserVerification { attempts_left },
+            crate::credential_service::UsbState::NeedsPin { attempts_left } => {
+                UsbState::NeedsPin { attempts_left }
+            }
+            crate::credential_service::UsbState::NeedsUserVerification { attempts_left } => {
+                UsbState::NeedsUserVerification { attempts_left }
+            }
             crate::credential_service::UsbState::NeedsUserPresence => UsbState::NeedsUserPresence,
             crate::credential_service::UsbState::Completed => UsbState::Completed,
             crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
