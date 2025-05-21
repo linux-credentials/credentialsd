@@ -89,7 +89,8 @@ impl ViewModel {
         self.imp().tx.replace(Some(tx));
         self.imp().rx.replace(Some(rx));
         glib::spawn_future_local(clone!(
-            #[weak(rename_to = view_model)] self,
+            #[weak(rename_to = view_model)]
+            self,
             async move {
                 loop {
                     let rx = view_model.imp().rx.borrow();
@@ -99,20 +100,32 @@ impl ViewModel {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_pin_entry_visible(false);
                             match update {
-                                ViewUpdate::SetTitle(title) => { view_model.set_title(title) },
-                                ViewUpdate::SetDevices(devices) => { view_model.update_devices(&devices) },
-                                ViewUpdate::SetCredentials(credentials) => { view_model.update_credentials(&credentials) },
-                                ViewUpdate::SelectDevice(device) => { view_model.select_device(&device) },
-                                ViewUpdate::SelectCredential(cred_id) => { view_model.select_credential(cred_id) },
+                                ViewUpdate::SetTitle(title) => view_model.set_title(title),
+                                ViewUpdate::SetDevices(devices) => {
+                                    view_model.update_devices(&devices)
+                                }
+                                ViewUpdate::SetCredentials(credentials) => {
+                                    view_model.update_credentials(&credentials)
+                                }
+                                ViewUpdate::SelectDevice(device) => {
+                                    view_model.select_device(&device)
+                                }
+                                ViewUpdate::SelectCredential(cred_id) => {
+                                    view_model.select_credential(cred_id)
+                                }
                                 ViewUpdate::UsbNeedsPin { attempts_left } => {
                                     let prompt = match attempts_left {
-                                        Some(1) => "Enter your PIN. 1 attempt remaining.".to_string(),
-                                        Some(attempts_left) => format!("Enter your PIN. {attempts_left} attempts remaining."),
+                                        Some(1) => {
+                                            "Enter your PIN. 1 attempt remaining.".to_string()
+                                        }
+                                        Some(attempts_left) => format!(
+                                            "Enter your PIN. {attempts_left} attempts remaining."
+                                        ),
                                         None => format!("Enter your PIN."),
                                     };
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_pin_entry_visible(true);
-                                },
+                                }
                                 ViewUpdate::UsbNeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(1) => "Touch your device again. 1 attempt remaining.".to_string(),
@@ -120,15 +133,15 @@ impl ViewModel {
                                         None => format!("Touch your device."),
                                     };
                                     view_model.set_prompt(prompt);
-                                },
+                                }
                                 ViewUpdate::UsbNeedsUserPresence => {
                                     view_model.set_prompt("Touch your device");
-                                },
+                                }
                                 ViewUpdate::Completed => {
                                     view_model.set_completed(true);
-                                },
+                                }
                             }
-                        },
+                        }
                         Err(e) => {
                             debug!("ViewModel event listener interrupted: {}", e);
                             break;

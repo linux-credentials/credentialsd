@@ -402,7 +402,6 @@ impl CredentialService {
     }
 }
 
-
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum UsbState {
     /// Not polling for FIDO USB device.
