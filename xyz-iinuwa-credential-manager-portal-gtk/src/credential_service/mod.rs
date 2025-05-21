@@ -250,7 +250,6 @@ impl CredentialService {
                 }
             }
             UsbState::Completed => Ok(prev_usb_state),
-            UsbState::UserCancelled => Ok(prev_usb_state),
         }?;
 
         *self.usb_state.lock().await = next_usb_state;
@@ -295,23 +294,19 @@ pub enum UsbState {
     Connected,
 
     /// The device needs the PIN to be entered.
-    NeedsPin {
-        attempts_left: Option<u32>,
-    },
+    NeedsPin { attempts_left: Option<u32> },
 
     /// The device needs on-device user verification.
-    NeedsUserVerification {
-        attempts_left: Option<u32>,
-    },
+    NeedsUserVerification { attempts_left: Option<u32> },
 
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
 
     /// USB tapped, received credential
     Completed,
-
+    // TODO: implement cancellation
     // This isn't actually sent from the server.
-    UserCancelled,
+    // UserCancelled,
 }
 
 #[derive(Clone, Debug)]

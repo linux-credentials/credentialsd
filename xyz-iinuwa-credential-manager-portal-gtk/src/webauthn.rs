@@ -367,8 +367,6 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
 }
 
 pub struct CreatePublicKeyCredentialResponse {
-    cred_type: String,
-
     /// Raw bytes of credential ID.
     raw_id: Vec<u8>,
 
@@ -472,7 +470,6 @@ impl CreatePublicKeyCredentialResponse {
         attachment_modality: String,
     ) -> Self {
         Self {
-            cred_type: "public-key".to_string(),
             raw_id: id,
             response: AttestationResponse {
                 client_data_json,

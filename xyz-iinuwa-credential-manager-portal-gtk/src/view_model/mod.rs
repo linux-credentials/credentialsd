@@ -482,7 +482,6 @@ impl From<crate::credential_service::UsbState> for UsbState {
             }
             crate::credential_service::UsbState::NeedsUserPresence => UsbState::NeedsUserPresence,
             crate::credential_service::UsbState::Completed => UsbState::Completed,
-            crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
         }
     }
 }
