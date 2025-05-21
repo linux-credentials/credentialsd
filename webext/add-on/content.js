@@ -192,5 +192,5 @@ function getClientCapabilities() {
     console.log("forwarding getClientCapabilities call from content script to background script")
     const { requestId, promise } = startRequest();
     webauthnPort.postMessage({ requestId, cmd: 'getClientCapabilities', })
-    return promise
+    return promise.then((capabilities) => cloneInto(capabilities, window))
 };
