@@ -119,17 +119,8 @@ impl CredentialManager {
                 .clone()
                 .unwrap_or("xyz.iinuwa.credentials.CredentialManager:local".to_string());
             let is_same_origin = request.is_same_origin.unwrap_or(false);
-            let response = match (
-                request.r#type.as_ref(),
-                &request.password,
-                &request.public_key,
-            ) {
-                ("password", Some(password_request), _) => {
-                    let password_response =
-                        create_password(&origin, is_same_origin, password_request).await?;
-                    Ok(password_response.into())
-                }
-                ("publicKey", _, Some(passkey_request)) => {
+            let response = match (request.r#type.as_ref(), &request.public_key) {
+                ("publicKey", Some(_)) => {
                     _ = request.origin.get_or_insert(
                         "xyz.iinuwa.credentials.CredentialManager:local".to_string(),
                     );
@@ -181,17 +172,8 @@ impl CredentialManager {
                 .clone()
                 .unwrap_or("xyz.iinuwa.credentials.CredentialManager:local".to_string());
             let is_same_origin = request.is_same_origin.unwrap_or(false);
-            let response = match (
-                request.r#type.as_ref(),
-                &request.password,
-                &request.public_key,
-            ) {
-                ("password", Some(password_request), _) => {
-                    let password_response =
-                        get_password(&origin, is_same_origin, password_request).await?;
-                    Ok(password_response.into())
-                }
-                ("publicKey", _, Some(passkey_request)) => {
+            let response = match (request.r#type.as_ref(), &request.public_key) {
+                ("publicKey", Some(_)) => {
                     _ = request.origin.get_or_insert(
                         "xyz.iinuwa.credentials.CredentialManager:local".to_string(),
                     );
@@ -257,50 +239,6 @@ impl CredentialManager {
     }
 }
 
-async fn create_password(
-    origin: &str,
-    is_same_origin: bool,
-    request: &CreatePasswordCredentialRequest,
-) -> fdo::Result<CreatePasswordCredentialResponse> {
-    if !is_same_origin {
-        return Err(fdo::Error::AccessDenied(
-            "Passwords may only be requested from same-origin contexts".to_string(),
-        ));
-    }
-    /*
-    store::store_password(&request.origin, &request.id, &request.password).await
-        .map(|_| CreatePasswordCredentialResponse{})
-        .map_err(|_| fdo::Error::Failed("Failed to store password".to_string()));
-    */
-    let contents = format!(
-        "id={}&password={}",
-        request.id.replace('%', "%25").replace('&', "%26"),
-        request.password.replace('%', "%25").replace('&', "%26")
-    );
-    let display_name = format!("Password for {origin}"); // TODO
-                                                         /*
-                                                         store::store_secret(
-                                                             &[origin],
-                                                             &display_name,
-                                                             &request.id,
-                                                             "secret/password",
-                                                             None,
-                                                             contents.as_bytes(),
-                                                         )
-                                                         .await
-                                                         .map_err(|_| fdo::Error::Failed("".to_string()))?;
-                                                         */
-    Ok(CreatePasswordCredentialResponse {})
-}
-
-async fn get_password(
-    origin: &str,
-    is_same_origin: bool,
-    request: &GetPasswordCredentialRequest,
-) -> Result<GetPasswordCredentialResponse> {
-    todo!()
-}
-
 // D-Bus <-> internal types
 #[derive(Clone, Debug)]
 pub(crate) enum CredentialRequest {
@@ -358,7 +296,6 @@ pub struct CreateCredentialRequest {
     is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     r#type: String,
-    password: Option<CreatePasswordCredentialRequest>,
     #[zvariant(rename = "publicKey")]
     public_key: Option<CreatePublicKeyCredentialRequest>,
 }
@@ -528,13 +465,6 @@ impl CreateCredentialRequest {
 
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
-pub struct CreatePasswordCredentialRequest {
-    id: String,
-    password: String,
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
 pub struct CreatePublicKeyCredentialRequest {
     pub(crate) request_json: String,
 }
@@ -590,22 +520,7 @@ impl CreatePublicKeyCredentialResponse {
 pub struct CreateCredentialResponse {
     #[zvariant(rename = "type")]
     r#type: String,
-    password: Option<CreatePasswordCredentialResponse>,
     public_key: Option<CreatePublicKeyCredentialResponse>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreatePasswordCredentialResponse {}
-
-impl From<CreatePasswordCredentialResponse> for CreateCredentialResponse {
-    fn from(response: CreatePasswordCredentialResponse) -> Self {
-        CreateCredentialResponse {
-            r#type: "password".to_string(),
-            password: Some(response),
-            public_key: None,
-        }
-    }
 }
 
 #[derive(SerializeDict, Type)]
@@ -620,7 +535,6 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
             // TODO: Decide on camelCase or kebab-case for cred types
             r#type: "public-key".to_string(),
             public_key: Some(response),
-            password: None,
         }
     }
 }
@@ -632,7 +546,6 @@ pub struct GetCredentialRequest {
     is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     r#type: String,
-    password: Option<GetPasswordCredentialRequest>,
     #[zvariant(rename = "publicKey")]
     public_key: Option<GetPublicKeyCredentialRequest>,
 }
@@ -756,13 +669,6 @@ impl GetCredentialRequest {
 
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
-pub struct GetPasswordCredentialRequest {
-    id: String,
-    password: String,
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
 pub struct GetPublicKeyCredentialRequest {
     pub(crate) request_json: String,
 }
@@ -817,22 +723,7 @@ impl GetPublicKeyCredentialResponse {
 pub struct GetCredentialResponse {
     #[zvariant(rename = "type")]
     r#type: String,
-    password: Option<GetPasswordCredentialResponse>,
     public_key: Option<GetPublicKeyCredentialResponse>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetPasswordCredentialResponse {}
-
-impl From<GetPasswordCredentialResponse> for GetCredentialResponse {
-    fn from(response: GetPasswordCredentialResponse) -> Self {
-        GetCredentialResponse {
-            r#type: "password".to_string(),
-            password: Some(response),
-            public_key: None,
-        }
-    }
 }
 
 #[derive(SerializeDict, Type)]
@@ -847,7 +738,6 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
             // TODO: Decide on camelCase or kebab-case for cred types
             r#type: "public-key".to_string(),
             public_key: Some(response),
-            password: None,
         }
     }
 }
