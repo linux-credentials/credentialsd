@@ -150,29 +150,6 @@
 
             <child>
               <object class="GtkStackPage">
-                <property name="name">internal</property>
-                <property name="title">This device</property>
-                <property name="child">
-                  <object class="GtkBox">
-                    <property name="orientation">vertical</property>
-                    <child>
-                      <object class="GtkLabel">
-                        <property name="label">Enter your device PIN</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkPasswordEntry" id="internal_pin_entry">
-                        <signal name="activate" handler="handle_internal_pin_entered" swapped="true"/>
-                        <property name="placeholder-text">Enter your device PIN</property>
-                      </object>
-                    </child>
-                  </object>
-                </property>
-              </object>
-            </child>
-
-            <child>
-              <object class="GtkStackPage">
                 <property name="name">completed</property>
                 <property name="title">Complete</property>
                 <property name="child">

@@ -175,7 +175,7 @@ impl ViewModel {
                 Transport::Nfc => "nfc-symbolic",
                 Transport::Usb => "media-removable-symbolic",
                 // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
-                _ => "question-symbolic",
+                // _ => "question-symbolic",
             };
 
             let b = gtk::Box::builder()
@@ -261,10 +261,6 @@ impl ViewModel {
 
     pub async fn send_thingy(&self) {
         self.send_event(ViewEvent::ButtonClicked).await;
-    }
-
-    pub async fn send_internal_device_pin(&self, pin: String) {
-        self.send_event(ViewEvent::InternalPinEntered(pin)).await;
     }
 
     pub async fn send_usb_device_pin(&self, pin: String) {
