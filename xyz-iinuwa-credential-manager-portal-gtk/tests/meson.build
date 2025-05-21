@@ -28,7 +28,7 @@ configure_file(
 )
 
 test(
-  'cargo dbus tests',
+  'dbus',
   cargo,
   env: [cargo_env],
   args: [
