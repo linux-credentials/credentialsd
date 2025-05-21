@@ -10,7 +10,10 @@ fn test_client_capabilities() {
     let client = DbusClient::new();
     let msg = client.call_method("GetClientCapabilities", &()).unwrap();
     let body = msg.body();
-    let rsp: HashMap<String, Value> = body.deserialize().unwrap();
+    let rsp: HashMap<String, bool> = body.deserialize::<HashMap<String, Value>>().unwrap()
+        .into_iter()
+        .map(|(k, v)| (k, v.try_into().unwrap()))
+        .collect();
 
     let capabilities = HashMap::from([
         ("conditionalCreate", false),
@@ -24,8 +27,8 @@ fn test_client_capabilities() {
         ("signalUnknownCredential", false),
     ]);
     for (key, expected) in capabilities.iter() {
-        let value: &Value = rsp.get(*key).unwrap();
-        assert_eq!(*expected, value.try_into().unwrap());
+        let actual = rsp.get(*key).unwrap();
+        assert_eq!(*expected, *actual);
     }
 }
 
@@ -35,28 +38,16 @@ mod client {
     use serde::Serialize;
     use zbus::{blocking::Connection, zvariant::DynamicType, Message};
 
-    fn init_test_dbus() -> TestDBus {
-        let dbus = TestDBus::new(TestDBusFlags::NONE);
-
-        // assumes this runs in root of Cargo project.
-        let current_dir = std::env::current_dir().unwrap();
-        let service_dir = current_dir.join(SERVICE_DIR);
-        println!("{:?}", service_dir);
-        dbus.add_service_dir(service_dir.to_str().unwrap());
-
-        dbus.up();
-        dbus
-    }
-
     pub(super) struct DbusClient {
-        _bus: TestDBus,
+        bus: TestDBus,
     }
 
     impl DbusClient {
         pub fn new() -> Self {
-            Self {
-                _bus: init_test_dbus(),
-            }
+            let bus = TestDBus::new(TestDBusFlags::NONE);
+            bus.add_service_dir(SERVICE_DIR);
+            bus.up();
+            Self { bus }
         }
 
         pub fn call_method<B>(&self, method_name: &str, body: &B) -> zbus::Result<Message>
@@ -64,7 +55,15 @@ mod client {
             B: Serialize + DynamicType,
         {
             let connection = Connection::session().unwrap();
-            connection.call_method(Some(SERVICE_NAME), PATH, Some(INTERFACE), method_name, body)
+            let message = connection.call_method(Some(SERVICE_NAME), PATH, Some(INTERFACE), method_name, body);
+            connection.close().unwrap();
+            message
+        }
+
+    }
+    impl Drop for DbusClient {
+        fn drop(&mut self) {
+            self.bus.stop();
         }
     }
 }
