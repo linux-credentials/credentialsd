@@ -18,10 +18,26 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt install -y --no-install-recommends \
-            curl git build-essential meson \
+            curl git build-essential \
             libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
-            libxml2-utils desktop-file-utils
+            libxml2-utils desktop-file-utils \
+            python3-pip ninja-build
+      - name: Install Meson
+        run: |
+          # Newer version needed for --interactive flag needed below
+          python3 -m pip install --user -v 'meson==1.5.0'
       - name: Setup meson project
         run: meson setup build
       - name: Build
         run: ninja -C build
+      - name: Test
+        # We have to use the --interactive flag because of some
+        # weird issue with meson hanging after cargo exits due to the TestDBus.
+        # Probably has to do with forking the test processes.
+        run: meson test --interactive
+        working-directory: build/
+      - name: Check clippy recommendations
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path xyz-iinuwa-credential-manager-portal-gtk/Cargo.toml --target-dir build/xyz-iinuwa-credential-manager-portal-gtk/src
+      - name: Check formatting
+        run: cargo fmt --check
+        working-directory: xyz-iinuwa-credential-manager-portal-gtk

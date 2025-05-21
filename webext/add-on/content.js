@@ -14,6 +14,11 @@ exportFunction(createCredential, navigator.credentials, { defineAs: "create"})
 exportFunction(getCredential, navigator.credentials, { defineAs: "get"})
 
 
+if (window.PublicKeyCredential) {
+  console.log("overriding PublicKeyCredential.getClientCapabilities() in content script");
+  exportFunction(getClientCapabilities, PublicKeyCredential, { defineAs: "getClientCapabilities"})
+}
+
 function startRequest() {
     const requestId = requestCounter++;
     const {promise, resolve, reject } = window.Promise.withResolvers();
@@ -181,4 +186,11 @@ function getCredential(request) {
     const { requestId, promise } = startRequest();
     webauthnPort.postMessage({ requestId, cmd: 'get', options, })
     return promise.then(cloneCredentialResponse)
+};
+
+function getClientCapabilities() {
+    console.log("forwarding getClientCapabilities call from content script to background script")
+    const { requestId, promise } = startRequest();
+    webauthnPort.postMessage({ requestId, cmd: 'getClientCapabilities', })
+    return promise.then((capabilities) => cloneInto(capabilities, window))
 };

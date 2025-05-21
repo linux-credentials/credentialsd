@@ -52,7 +52,7 @@ async def run(cmd):
     elif cmd == 'get':
         user_data = json.load(open('./user.json', 'r'))
         cred_id = util.b64_decode(user_data['cred_id'])
-        auth_data = await get_passkey(interface, origin, is_same_origin, rp_id, cred_id, user_data)
+        auth_data = await get_passkey(interface, origin, top_origin, rp_id, cred_id, user_data)
         print(auth_data)
     else:
         print(f"unknown cmd: {cmd}")
@@ -140,7 +140,8 @@ async def create_passkey(interface, origin, top_origin, rp_id, user_handle, user
     return webauthn.verify_create_response(response_json, options, origin)
 
 
-async def get_passkey(interface, origin, is_same_origin, rp_id, cred_id, user: Optional[dict]):
+async def get_passkey(interface, origin, top_origin, rp_id, cred_id, user: Optional[dict]):
+    is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
         "rpId": rp_id,

@@ -57,11 +57,13 @@ mod imp {
             vm2.clone().connect_completed_notify(move |vm| {
                 if vm.completed() {
                     glib::spawn_future_local(clone!(
-                        #[weak] window2,
+                        #[weak]
+                        window2,
                         async move {
                             // Wait to show confirmation before closing.
                             async_std::task::sleep(Duration::from_millis(500)).await;
-                            gtk::prelude::WidgetExt::activate_action(&window2, "window.close", None).unwrap()
+                            gtk::prelude::WidgetExt::activate_action(&window2, "window.close", None)
+                                .unwrap()
                         }
                     ));
                 }

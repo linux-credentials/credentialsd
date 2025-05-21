@@ -75,7 +75,6 @@ where
         Ok(())
     }
 
-
     pub fn write_text(&mut self, text: &str) -> Result<(), Error> {
         let data = text.as_bytes();
         self.write_cbor_value(

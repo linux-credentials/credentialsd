@@ -1,10 +1,9 @@
-
 use libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier;
 use ring::{
-    rand::SystemRandom, signature::{
-        EcdsaKeyPair, Ed25519KeyPair, KeyPair,
-        RsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING,
-    }
+    rand::SystemRandom,
+    signature::{
+        EcdsaKeyPair, Ed25519KeyPair, KeyPair, RsaKeyPair, ECDSA_P256_SHA256_ASN1_SIGNING,
+    },
 };
 use tracing::debug;
 
@@ -48,9 +47,18 @@ impl CoseKeyParameters {
 impl From<CoseKeyType> for CoseKeyParameters {
     fn from(value: CoseKeyType) -> Self {
         match value {
-            CoseKeyType::ES256_P256 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::ES256, crv: Some(CoseEllipticCurveIdentifier::P256) },
-            CoseKeyType::EDDSA_ED25519 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::EdDSA, crv: Some(CoseEllipticCurveIdentifier::Ed25519) },
-            CoseKeyType::RS256 => CoseKeyParameters { alg: CoseKeyAlgorithmIdentifier::RS256, crv: None, },
+            CoseKeyType::ES256_P256 => CoseKeyParameters {
+                alg: CoseKeyAlgorithmIdentifier::ES256,
+                crv: Some(CoseEllipticCurveIdentifier::P256),
+            },
+            CoseKeyType::EDDSA_ED25519 => CoseKeyParameters {
+                alg: CoseKeyAlgorithmIdentifier::EdDSA,
+                crv: Some(CoseEllipticCurveIdentifier::Ed25519),
+            },
+            CoseKeyType::RS256 => CoseKeyParameters {
+                alg: CoseKeyAlgorithmIdentifier::RS256,
+                crv: None,
+            },
         }
     }
 }
@@ -126,10 +134,7 @@ pub enum Error {
     Unsupported,
 }
 
-pub(super) fn encode_pkcs8_key(
-    key_type: CoseKeyType,
-    pkcs8_key: &[u8],
-) -> Result<Vec<u8>, Error> {
+pub(super) fn encode_pkcs8_key(key_type: CoseKeyType, pkcs8_key: &[u8]) -> Result<Vec<u8>, Error> {
     match key_type {
         CoseKeyType::ES256_P256 => {
             let key_pair = EcdsaKeyPair::from_pkcs8(
@@ -194,7 +199,7 @@ pub(super) fn encode_pkcs8_key(
 /// returns CTAP2-serialized public key and algorithm
 pub(crate) fn encode_cose_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>, Error> {
     match public_key {
-            cosey::PublicKey::P256Key(p256_key) => {
+        cosey::PublicKey::P256Key(p256_key) => {
             let mut cose_key: Vec<u8> = Vec::new();
             cose_key.push(0b101_00101); // map with 5 items
             cose_key.extend([0b000_00001, 0b000_00010]); // kty (1): EC2 (2)
@@ -205,7 +210,7 @@ pub(crate) fn encode_cose_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>, 
             cose_key.extend([0b001_00010, 0b010_11000, 0b0010_0000]); // y (-3): <32-byte string>
             cose_key.extend(p256_key.y.clone());
             Ok(cose_key)
-        },
+        }
         cosey::PublicKey::Ed25519Key(ed25519_key) => {
             // TODO: Check this
             let mut cose_key: Vec<u8> = Vec::new();
@@ -216,7 +221,7 @@ pub(crate) fn encode_cose_key(public_key: &cosey::PublicKey) -> Result<Vec<u8>, 
             cose_key.extend([0b001_00001, 0b010_11000, 0b0010_0000]); // x (-2): <32-byte string>
             cose_key.extend(ed25519_key.x.clone());
             Ok(cose_key)
-        },
+        }
 
         _ => {
             debug!("Cannot serialize unknown key type {:?}", public_key);
