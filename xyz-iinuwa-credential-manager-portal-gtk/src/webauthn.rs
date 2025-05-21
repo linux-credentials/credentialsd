@@ -80,6 +80,7 @@ pub(crate) struct MakeCredentialOptions {
     #[serde(rename = "authenticatorSelection")]
     pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
     /// https://www.w3.org/TR/webauthn-3/#enum-attestation-convey
+    #[allow(dead_code)]
     pub attestation: Option<String>,
     /// extensions input as a JSON object
     pub extensions: Option<MakeCredentialExtensions>,
@@ -273,18 +274,7 @@ pub(crate) struct AuthenticatorSelectionCriteria {
 #[derive(Clone, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialparameters
 pub(crate) struct PublicKeyCredentialParameters {
-    #[serde(rename = "type")]
-    pub cred_type: String,
     pub alg: i64,
-}
-
-impl PublicKeyCredentialParameters {
-    pub(crate) fn new(alg: i64) -> Self {
-        Self {
-            cred_type: "public-key".to_string(),
-            alg,
-        }
-    }
 }
 
 impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
@@ -312,8 +302,8 @@ impl TryFrom<&PublicKeyCredentialParameters> for CoseKeyType {
     type Error = String;
     fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
         match value.alg {
-            -7 => Ok(CoseKeyType::ES256_P256),
-            -8 => Ok(CoseKeyType::EDDSA_ED25519),
+            -7 => Ok(CoseKeyType::Es256P256),
+            -8 => Ok(CoseKeyType::EddsaEd25519),
             -257 => Ok(CoseKeyType::RS256),
             _ => Err("Invalid or unsupported algorithm specified".to_owned()),
         }
@@ -453,17 +443,12 @@ pub struct AttestationResponse {
     ///
     /// but others may be specified.
     transports: Vec<String>,
-
-    /// Encodes contextual bindings made by the authenticator. These bindings
-    /// are controlled by the authenticator itself.
-    authenticator_data: Vec<u8>,
 }
 
 impl CreatePublicKeyCredentialResponse {
     pub fn new(
         id: Vec<u8>,
         attestation_object: Vec<u8>,
-        authenticator_data: Vec<u8>,
         client_data_json: String,
         transports: Option<Vec<String>>,
         extension_output_json: Option<String>,
@@ -475,7 +460,6 @@ impl CreatePublicKeyCredentialResponse {
                 client_data_json,
                 attestation_object,
                 transports: transports.unwrap_or_default(),
-                authenticator_data,
             },
             extensions: extension_output_json,
             attachment_modality,

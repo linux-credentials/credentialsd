@@ -503,7 +503,6 @@ impl CreatePublicKeyCredentialResponse {
         let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
             attested_credential.credential_id.clone(),
             attestation_object,
-            authenticator_data_blob,
             client_data_json,
             Some(response.transport.clone()),
             unsigned_extensions,
