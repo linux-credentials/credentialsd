@@ -114,16 +114,17 @@ impl CredentialManager {
         mut request: CreateCredentialRequest,
     ) -> fdo::Result<CreateCredentialResponse> {
         if let Some(tx) = self.app_lock.try_lock() {
-            let origin = request
-                .origin
-                .clone()
-                .unwrap_or("xyz.iinuwa.credentials.CredentialManager:local".to_string());
+            if request.origin.is_none() {
+                todo!("Implicit caller-origin binding not yet implemented.")
+            };
             let is_same_origin = request.is_same_origin.unwrap_or(false);
             let response = match (request.r#type.as_ref(), &request.public_key) {
                 ("publicKey", Some(_)) => {
-                    _ = request.origin.get_or_insert(
-                        "xyz.iinuwa.credentials.CredentialManager:local".to_string(),
-                    );
+                    if !is_same_origin {
+                        return Err(fdo::Error::AccessDenied(String::from(
+                            "Cross-origin public-key credentials are not allowed.",
+                        )));
+                    }
                     let (make_cred_request, client_data_json) =
                         request.clone().try_into_ctap2_request().map_err(|e| {
                             fdo::Error::Failed(format!(
@@ -167,16 +168,17 @@ impl CredentialManager {
         mut request: GetCredentialRequest,
     ) -> fdo::Result<GetCredentialResponse> {
         if let Some(tx) = self.app_lock.try_lock() {
-            let origin = request
-                .origin
-                .clone()
-                .unwrap_or("xyz.iinuwa.credentials.CredentialManager:local".to_string());
+            if request.origin.is_none() {
+                todo!("Implicit caller-origin binding is not yet implemented.");
+            }
             let is_same_origin = request.is_same_origin.unwrap_or(false);
             let response = match (request.r#type.as_ref(), &request.public_key) {
                 ("publicKey", Some(_)) => {
-                    _ = request.origin.get_or_insert(
-                        "xyz.iinuwa.credentials.CredentialManager:local".to_string(),
-                    );
+                    if !is_same_origin {
+                        return Err(fdo::Error::AccessDenied(String::from(
+                            "Cross-origin public-key credentials are not allowed.",
+                        )));
+                    }
                     // TODO: assert that RP ID is bound to origin:
                     // - if RP ID is not set, set the RP ID to the origin's effective domain
                     // - if RP ID is set, assert that it matches origin's effective domain
