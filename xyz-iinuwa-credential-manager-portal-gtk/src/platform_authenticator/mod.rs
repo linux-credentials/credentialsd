@@ -715,7 +715,7 @@ mod test {
         PublicKeyCredentialParameters, PublicKeyCredentialType,
     };
 
-    use super::sign_attestation;
+    use super::{create_attested_credential_data, create_authenticator_data, sign_attestation};
 
     #[test]
     fn test_attestation() {
