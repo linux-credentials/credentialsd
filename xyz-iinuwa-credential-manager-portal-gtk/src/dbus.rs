@@ -853,7 +853,7 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
 }
 
 #[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
+#[zvariant(signature = "dict", rename_all = "camelCase")]
 pub struct GetClientCapabilitiesResponse {
     conditional_create: bool,
     conditional_get: bool,
