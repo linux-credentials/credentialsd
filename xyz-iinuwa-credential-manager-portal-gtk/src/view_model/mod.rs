@@ -231,8 +231,7 @@ impl ViewModel {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    _ = self
-                        .credential_service
+                    self.credential_service
                         .lock()
                         .await
                         .validate_usb_device_pin(&pin)
@@ -358,10 +357,10 @@ pub enum HybridState {
     /// Connecting to caBLE tunnel.
     Connecting,
 
-    /// Connected to device via caBLE tunnel.
-    // I don't think is necessary to signal
-    // Connected,
-
+    /*  I don't think is necessary to signal.
+       /// Connected to device via caBLE tunnel.
+       Connected,
+    */
     /// Credential received over tunnel.
     Completed,
 

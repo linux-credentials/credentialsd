@@ -350,7 +350,7 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
             }
             _ => {
                 debug!("Unsupported attestation type: {:?}", value);
-                return Err(Error::NotSupported);
+                Err(Error::NotSupported)
             }
         }
     }

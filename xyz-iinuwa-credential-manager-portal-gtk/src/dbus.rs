@@ -111,7 +111,7 @@ struct CredentialManager {
 impl CredentialManager {
     async fn create_credential(
         &self,
-        mut request: CreateCredentialRequest,
+        request: CreateCredentialRequest,
     ) -> fdo::Result<CreateCredentialResponse> {
         if let Some(tx) = self.app_lock.try_lock() {
             if request.origin.is_none() {
@@ -165,7 +165,7 @@ impl CredentialManager {
 
     async fn get_credential(
         &self,
-        mut request: GetCredentialRequest,
+        request: GetCredentialRequest,
     ) -> fdo::Result<GetCredentialResponse> {
         if let Some(tx) = self.app_lock.try_lock() {
             if request.origin.is_none() {

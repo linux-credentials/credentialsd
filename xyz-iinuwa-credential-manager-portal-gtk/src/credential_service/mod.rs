@@ -62,7 +62,7 @@ impl CredentialService {
 
     pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
         debug!("polling for USB status");
-        let prev_usb_state = self.usb_state.lock().await.clone();
+        let prev_usb_state = *self.usb_state.lock().await;
         let next_usb_state = match prev_usb_state {
             UsbState::Idle | UsbState::Waiting => {
                 let devices = libwebauthn::transport::hid::list_devices().await.unwrap();
@@ -263,7 +263,7 @@ impl CredentialService {
     }
 
     pub(crate) async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()> {
-        let current_state = self.usb_state.lock().await.clone();
+        let current_state = *self.usb_state.lock().await;
         match current_state {
             UsbState::NeedsPin {
                 attempts_left: Some(attempts_left),
@@ -374,7 +374,7 @@ async fn handle_usb_updates(
                     .unwrap();
             }
             UxUpdate::PinRequired(pin_update) => {
-                if pin_update.attempts_left.map_or(false, |num| num <= 1) {
+                if pin_update.attempts_left.is_some_and(|num| num <= 1) {
                     // TODO: cancel authenticator operation
                     signal_tx.send(Err("No more PIN attempts allowed. Select a different authenticator or try again later.".to_string())).await.unwrap();
                     continue;

@@ -93,8 +93,10 @@ impl ViewModel {
             self,
             async move {
                 loop {
-                    let rx = view_model.imp().rx.borrow();
-                    let rx = rx.as_ref().expect("rx to exist");
+                    let rx = {
+                        let rx_ptr = view_model.imp().rx.borrow();
+                        rx_ptr.as_ref().expect("rx to exist").clone()
+                    };
                     match rx.recv().await {
                         Ok(update) => {
                             // TODO: hack so I don't have to unset this in every event manually.
@@ -121,7 +123,7 @@ impl ViewModel {
                                         Some(attempts_left) => format!(
                                             "Enter your PIN. {attempts_left} attempts remaining."
                                         ),
-                                        None => format!("Enter your PIN."),
+                                        None => "Enter your PIN.".to_string(),
                                     };
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_pin_entry_visible(true);
@@ -130,7 +132,7 @@ impl ViewModel {
                                     let prompt = match attempts_left {
                                         Some(1) => "Touch your device again. 1 attempt remaining.".to_string(),
                                         Some(attempts_left) => format!("Touch your device again. {attempts_left} attempts remaining."),
-                                        None => format!("Touch your device."),
+                                        None => "Touch your device.".to_string(),
                                     };
                                     view_model.set_prompt(prompt);
                                 }
