@@ -36,3 +36,8 @@ jobs:
         # Probably has to do with forking the test processes.
         run: meson test --interactive
         working-directory: build/
+      - name: Check clippy recommendations
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path xyz-iinuwa-credential-manager-portal-gtk/Cargo.toml --target-dir build/xyz-iinuwa-credential-manager-portal-gtk/src
+      - name: Check formatting
+        run: cargo fmt --check
+        working-directory: xyz-iinuwa-credential-manager-portal-gtk
