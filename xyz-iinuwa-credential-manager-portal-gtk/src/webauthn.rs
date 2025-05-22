@@ -8,7 +8,6 @@ use libwebauthn::{
         Ctap2PublicKeyCredentialType, Ctap2Transport,
     },
 };
-use ring::digest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
@@ -70,32 +69,6 @@ pub(crate) fn create_attestation_object(
     Ok(attestation_object)
 }
 
-/*
-#[derive(DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub(crate) struct ClientData {
-    client_data_type: String,
-    challenge: String,
-    origin: String,
-    cross_origin: bool,
-    token_binding: Option<TokenBinding>,
-}
-
-#[derive(DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub(crate) struct TokenBinding {
-    status: String,
-    id: Option<String>,
-}
-*/
-
-#[derive(DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub(crate) struct AssertionOptions {
-    user_verification: Option<bool>,
-    user_presence: Option<bool>,
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct MakeCredentialOptions {
     /// Timeout in milliseconds
@@ -107,6 +80,7 @@ pub(crate) struct MakeCredentialOptions {
     #[serde(rename = "authenticatorSelection")]
     pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
     /// https://www.w3.org/TR/webauthn-3/#enum-attestation-convey
+    #[allow(dead_code)]
     pub attestation: Option<String>,
     /// extensions input as a JSON object
     pub extensions: Option<MakeCredentialExtensions>,
@@ -300,18 +274,7 @@ pub(crate) struct AuthenticatorSelectionCriteria {
 #[derive(Clone, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialparameters
 pub(crate) struct PublicKeyCredentialParameters {
-    #[serde(rename = "type")]
-    pub cred_type: String,
     pub alg: i64,
-}
-
-impl PublicKeyCredentialParameters {
-    pub(crate) fn new(alg: i64) -> Self {
-        Self {
-            cred_type: "public-key".to_string(),
-            alg,
-        }
-    }
 }
 
 impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
@@ -339,8 +302,8 @@ impl TryFrom<&PublicKeyCredentialParameters> for CoseKeyType {
     type Error = String;
     fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
         match value.alg {
-            -7 => Ok(CoseKeyType::ES256_P256),
-            -8 => Ok(CoseKeyType::EDDSA_ED25519),
+            -7 => Ok(CoseKeyType::Es256P256),
+            -8 => Ok(CoseKeyType::EddsaEd25519),
             -257 => Ok(CoseKeyType::RS256),
             _ => Err("Invalid or unsupported algorithm specified".to_owned()),
         }
@@ -352,58 +315,6 @@ impl TryFrom<PublicKeyCredentialParameters> for CoseKeyType {
     fn try_from(value: PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
         CoseKeyType::try_from(&value)
     }
-}
-
-#[derive(Clone)]
-pub struct CredentialSource {
-    pub cred_type: PublicKeyCredentialType,
-
-    /// A probabilistically-unique byte sequence identifying a public key
-    /// credential source and its authentication assertions.
-    pub id: Vec<u8>,
-
-    /// The credential private key
-    pub private_key: Vec<u8>,
-
-    pub key_parameters: PublicKeyCredentialParameters,
-
-    /// The Relying Party Identifier, for the Relying Party this public key
-    /// credential source is scoped to.
-    pub rp_id: String,
-
-    /// The user handle is specified by a Relying Party, as the value of
-    /// `user.id`, and used to map a specific public key credential to a specific
-    /// user account with the Relying Party. Authenticators in turn map RP IDs
-    /// and user handle pairs to public key credential sources.
-    ///
-    /// A user handle is an opaque byte sequence with a maximum size of 64
-    /// bytes, and is not meant to be displayed to the user.
-    pub user_handle: Option<Vec<u8>>,
-
-    // Any other information the authenticator chooses to include.
-    /// other information used by the authenticator to inform its UI. For
-    /// example, this might include the user’s displayName. otherUI is a
-    /// mutable item and SHOULD NOT be bound to the public key credential
-    /// source in a way that prevents otherUI from being updated.
-    pub other_ui: Option<String>,
-}
-
-impl CredentialSource {
-    pub(crate) fn rp_id_hash<'a>(&'a self) -> Vec<u8> {
-        let hash = digest::digest(&digest::SHA256, self.rp_id.as_bytes());
-        hash.as_ref().to_owned()
-    }
-}
-
-#[derive(Clone)]
-pub(crate) enum PublicKeyCredentialType {
-    PublicKey,
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum AttestationStatementFormat {
-    None,
-    Packed,
 }
 
 #[derive(Debug, PartialEq)]
@@ -439,15 +350,13 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
             }
             _ => {
                 debug!("Unsupported attestation type: {:?}", value);
-                return Err(Error::NotSupported);
+                Err(Error::NotSupported)
             }
         }
     }
 }
 
 pub struct CreatePublicKeyCredentialResponse {
-    cred_type: String,
-
     /// Raw bytes of credential ID.
     raw_id: Vec<u8>,
 
@@ -534,30 +443,23 @@ pub struct AttestationResponse {
     ///
     /// but others may be specified.
     transports: Vec<String>,
-
-    /// Encodes contextual bindings made by the authenticator. These bindings
-    /// are controlled by the authenticator itself.
-    authenticator_data: Vec<u8>,
 }
 
 impl CreatePublicKeyCredentialResponse {
     pub fn new(
         id: Vec<u8>,
         attestation_object: Vec<u8>,
-        authenticator_data: Vec<u8>,
         client_data_json: String,
         transports: Option<Vec<String>>,
         extension_output_json: Option<String>,
         attachment_modality: String,
     ) -> Self {
         Self {
-            cred_type: "public-key".to_string(),
             raw_id: id,
             response: AttestationResponse {
                 client_data_json,
                 attestation_object,
                 transports: transports.unwrap_or_default(),
-                authenticator_data,
             },
             extensions: extension_output_json,
             attachment_modality,
@@ -592,8 +494,6 @@ impl CreatePublicKeyCredentialResponse {
 }
 
 pub struct GetPublicKeyCredentialResponse {
-    pub(crate) cred_type: String,
-
     /// clientDataJSON.
     pub(crate) client_data_json: String,
 
@@ -707,7 +607,6 @@ impl GetPublicKeyCredentialResponse {
         extensions: Option<GetPublicKeyCredentialUnsignedExtensionsResponse>,
     ) -> Self {
         Self {
-            cred_type: "public-key".to_string(),
             client_data_json,
             raw_id: id,
             authenticator_data,
@@ -728,7 +627,7 @@ impl GetPublicKeyCredentialResponse {
         // unambiguously specified in the request. As a convenience, we should
         // always return a credential ID, even if the authenticator doesn't.
         // This means we'll have to remember the ID on the request if the allow-list has exactly one
-        // credential descriptor, then we'll need. This should probably be done in libwebauthn.
+        // credential descriptor. This should probably be done in libwebauthn.
         let id = self.raw_id.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id));
 
         let output = json!({

@@ -62,20 +62,6 @@ mod imp {
                 }
             ));
         }
-
-        #[template_callback]
-        fn handle_internal_pin_entered(&self, entry: &gtk::PasswordEntry) {
-            let view_model = &self.view_model.borrow();
-            let view_model = view_model.as_ref().unwrap();
-            let pin = entry.text().to_string();
-            glib::spawn_future_local(clone!(
-                #[weak]
-                view_model,
-                async move {
-                    view_model.send_internal_device_pin(pin).await;
-                }
-            ));
-        }
     }
 
     impl Default for ExampleApplicationWindow {
@@ -173,7 +159,6 @@ impl ExampleApplicationWindow {
                     //       If so, we need to transition this to choose_credential as well.
                     //       For now, we'll skip it.
                     Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
-                    Ok(Transport::Internal) => stack.set_visible_child_name("choose_credential"),
                     _ => {}
                 };
             }
@@ -194,7 +179,6 @@ impl ExampleApplicationWindow {
                     .expect("selected device to exist at notify");
                 match d.transport().try_into() {
                     Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
-                    Ok(Transport::Internal) => stack.set_visible_child_name("internal"),
                     _ => {}
                 };
             }
