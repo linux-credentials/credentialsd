@@ -1,7 +1,6 @@
 use std::{
-    ops::Add,
     sync::{Arc, Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use libwebauthn::{
@@ -15,7 +14,6 @@ use libwebauthn::{
 use async_std::{
     channel::TryRecvError,
     sync::{Arc as AsyncArc, Mutex as AsyncMutex},
-    task,
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, warn};
@@ -25,7 +23,7 @@ use crate::{
         CredentialRequest, CredentialResponse, GetAssertionResponseInternal,
         MakeCredentialResponseInternal,
     },
-    view_model::{Device, InternalPinState, Transport},
+    view_model::{Device, Transport},
 };
 
 #[derive(Debug)]
@@ -34,11 +32,6 @@ pub struct CredentialService {
 
     usb_state: AsyncArc<AsyncMutex<UsbState>>,
     usb_uv_handler: UsbUvHandler,
-
-    internal_device_credentials: Vec<CredentialMetadata>,
-    internal_device_state: InternalDeviceState,
-    internal_pin_attempts_left: u32,
-    internal_pin_unlock_time: Option<SystemTime>,
 
     cred_request: CredentialRequest,
     // Place to store data to be returned to the caller
@@ -50,41 +43,16 @@ impl CredentialService {
         cred_request: CredentialRequest,
         cred_response: Arc<Mutex<Option<CredentialResponse>>>,
     ) -> Self {
-        let devices = vec![
-            Device {
-                id: String::from("0"),
-                transport: Transport::Usb,
-            },
-            Device {
-                id: String::from("1"),
-                transport: Transport::Internal,
-            },
-        ];
-        let internal_device_credentials = vec![
-            CredentialMetadata {
-                id: String::from("0"),
-                origin: String::from("foo.example.com"),
-                display_name: String::from("Foo"),
-                username: String::from("joecool"),
-            },
-            CredentialMetadata {
-                id: String::from("1"),
-                origin: String::from("bar.example.org"),
-                display_name: String::from("Bar"),
-                username: String::from("cooliojoe"),
-            },
-        ];
+        let devices = vec![Device {
+            id: String::from("0"),
+            transport: Transport::Usb,
+        }];
         let usb_state = AsyncArc::new(AsyncMutex::new(UsbState::Idle));
         Self {
             devices,
 
             usb_state: usb_state.clone(),
             usb_uv_handler: UsbUvHandler::new(),
-
-            internal_device_credentials,
-            internal_device_state: InternalDeviceState::Idle,
-            internal_pin_attempts_left: 5,
-            internal_pin_unlock_time: None,
 
             cred_request,
             cred_response,
@@ -320,7 +288,6 @@ impl CredentialService {
                 }
             }
             UsbState::Completed => Ok(prev_usb_state),
-            UsbState::UserCancelled => Ok(prev_usb_state),
         }?;
 
         *self.usb_state.lock().await = next_usb_state.clone();
@@ -344,91 +311,6 @@ impl CredentialService {
             }
             _ => Err(()),
         }
-    }
-
-    pub(crate) async fn get_internal_device_credentials(
-        &self,
-    ) -> Result<&Vec<CredentialMetadata>, ()> {
-        Ok(&self.internal_device_credentials)
-    }
-
-    pub(crate) async fn validate_internal_device_pin(
-        &mut self,
-        pin: &str,
-        cred_id: &str,
-    ) -> Result<InternalPinState, ()> {
-        // TODO: Should this have the selected credential ID included with it to make sure the
-        // frontend and backend are talking about the same credential?
-        let now = SystemTime::now();
-        if let Some(unlock_time) = self.internal_pin_unlock_time {
-            if unlock_time < now {
-                let t = unlock_time.duration_since(UNIX_EPOCH).unwrap();
-                return Ok(InternalPinState::LockedOut { unlock_time: t });
-            } else {
-                self.internal_pin_unlock_time = None;
-            }
-        }
-        if pin == "123456" {
-            let device = self
-                .devices
-                .iter()
-                .find(|d| d.transport == Transport::Internal)
-                .unwrap()
-                .clone();
-            self.internal_device_state = InternalDeviceState::Completed {
-                device,
-                cred_id: cred_id.to_owned(),
-            };
-            Ok(InternalPinState::PinCorrect {
-                completion_token: "pin".to_string(),
-            })
-        } else {
-            self.internal_device_state = InternalDeviceState::NeedsPin;
-            self.internal_pin_attempts_left -= 1;
-            if self.internal_pin_attempts_left > 0 {
-                Ok(InternalPinState::PinIncorrect {
-                    attempts_left: self.internal_pin_attempts_left,
-                })
-            } else {
-                let t = now.add(Duration::from_secs(10));
-                self.internal_pin_unlock_time = Some(t);
-                Ok(InternalPinState::LockedOut {
-                    unlock_time: t.duration_since(UNIX_EPOCH).unwrap(),
-                })
-            }
-        }
-    }
-
-    pub(crate) async fn start_device_discovery_internal(
-        &mut self,
-    ) -> Result<InternalDeviceState, String> {
-        println!("frontend: Start Internal flow");
-        if let InternalDeviceState::Idle = self.internal_device_state {
-            self.internal_device_state = InternalDeviceState::NeedsPin;
-            Ok(self.internal_device_state.clone())
-        } else {
-            Err(format!(
-                "Invalid state to begin discovery: {:?}",
-                self.internal_device_state
-            ))
-        }
-    }
-
-    pub(crate) async fn poll_device_discovery_internal(
-        &mut self,
-    ) -> Result<InternalDeviceState, String> {
-        task::sleep(Duration::from_millis(5)).await;
-
-        if let InternalDeviceState::Idle = self.internal_device_state {
-            return Err(String::from("Internal polling not started."));
-        }
-
-        Ok(self.internal_device_state.clone())
-    }
-
-    pub(crate) async fn cancel_device_discovery_internal(&mut self) -> Result<(), String> {
-        self.internal_device_state = InternalDeviceState::Idle;
-        Ok(())
     }
 
     pub(crate) fn complete_auth(&mut self) {
@@ -464,48 +346,13 @@ pub enum UsbState {
 
     /// USB tapped, received credential
     Completed,
-
+    // TODO: implement cancellation
     // This isn't actually sent from the server.
-    UserCancelled,
+    //UserCancelled,
 
     // When we encounter multiple devices, we let all of them blink and continue
     // with the one that was tapped.
     SelectingDevice(Vec<HidDevice>),
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum InternalDeviceState {
-    /// Not awaiting for internal FIDO device.
-    #[default]
-    Idle,
-
-    /// The device needs the PIN to be entered.
-    NeedsPin,
-
-    /// Internal device credentials
-    Completed {
-        device: Device,
-        cred_id: String,
-    },
-
-    // This isn't actually sent from the server.
-    UserCancelled,
-}
-
-#[derive(Debug)]
-pub(crate) struct CredentialMetadata {
-    /// ID of credential, to be used in `SelectCredential()`.
-    pub(crate) id: String,
-
-    /// Origin of credential.
-    // TODO: Does this need to be multiple origins?
-    pub(crate) origin: String,
-
-    /// User-chosen name for the credential.
-    pub(crate) display_name: String,
-
-    /// Username of credential, if any.
-    pub(crate) username: String,
 }
 
 #[derive(Clone, Debug)]
@@ -573,7 +420,7 @@ async fn handle_usb_updates(
                     .unwrap();
             }
             UxUpdate::PinRequired(pin_update) => {
-                if pin_update.attempts_left.map_or(false, |num| num <= 1) {
+                if pin_update.attempts_left.is_some_and(|num| num <= 1) {
                     // TODO: cancel authenticator operation
                     signal_tx.send(Err("No more PIN attempts allowed. Select a different authenticator or try again later.".to_string())).await.unwrap();
                     continue;

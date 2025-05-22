@@ -1,15 +1,7 @@
 pub(crate) mod b64 {
     use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-
-    pub(crate) fn serialize<S>(value: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let s = URL_SAFE_NO_PAD.encode(value);
-        String::serialize(&s, serializer)
-    }
+    use serde::{de, Deserialize, Deserializer};
 
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where

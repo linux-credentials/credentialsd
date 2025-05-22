@@ -139,6 +139,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 enum MajorType {
     PositiveInteger,
     NegativeInteger,

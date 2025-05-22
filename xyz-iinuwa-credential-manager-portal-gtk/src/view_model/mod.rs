@@ -10,7 +10,7 @@ use async_std::{
 };
 use tracing::info;
 
-use crate::credential_service::{CredentialService, InternalDeviceState};
+use crate::credential_service::CredentialService;
 
 #[derive(Debug)]
 pub(crate) struct ViewModel {
@@ -28,13 +28,6 @@ pub(crate) struct ViewModel {
     selected_credential: Option<String>,
 
     providers: Vec<Provider>,
-
-    internal_uv_methods: Vec<UserVerificationMethod>,
-    internal_selected_uv_method: UserVerificationMethod,
-    internal_device_credentials: Vec<Credential>,
-    internal_device_pin_state: InternalPinState, // TOOD: I think this is a duplicate
-    internal_fingerprint_sensor_state: FingerprintSensorState,
-    internal_device_state: InternalDeviceState,
 
     usb_device_state: UsbState,
     usb_device_pin_state: UsbPinState,
@@ -65,12 +58,6 @@ impl ViewModel {
             selected_device: None,
             selected_credential: None,
             providers: Vec::new(),
-            internal_uv_methods: Vec::new(),
-            internal_selected_uv_method: UserVerificationMethod::default(),
-            internal_device_credentials: Vec::new(),
-            internal_device_state: InternalDeviceState::default(),
-            internal_device_pin_state: InternalPinState::default(),
-            internal_fingerprint_sensor_state: FingerprintSensorState::default(),
             usb_device_state: UsbState::default(),
             usb_device_pin_state: UsbPinState::default(),
             hybrid_qr_state: HybridState::default(),
@@ -112,9 +99,6 @@ impl ViewModel {
     fn select_uv_method(&self) {
         todo!("not implemented");
     }
-    fn send_internal_device_pin(&self) {
-        todo!("not implemented");
-    }
 
     fn finish_authentication(&self) {
         todo!("not implemented");
@@ -147,28 +131,6 @@ impl ViewModel {
             .unwrap();
     }
 
-    async fn update_internal_credentials(&mut self) {
-        let credential_service = self.credential_service.lock().await;
-        let credentials: Vec<Credential> = credential_service
-            .get_internal_device_credentials()
-            .await
-            .unwrap()
-            .iter()
-            .map(|c| Credential {
-                id: c.id.to_owned(),
-                name: c.display_name.to_owned(),
-                username: Some(c.username.to_owned()),
-            })
-            .collect();
-        self.internal_device_credentials.extend(credentials);
-        self.tx_update
-            .send(ViewUpdate::SetCredentials(
-                self.internal_device_credentials.to_owned(),
-            ))
-            .await
-            .unwrap();
-    }
-
     pub(crate) async fn select_device(&mut self, id: &str) {
         let device = self.devices.iter().find(|d| d.id == id).unwrap();
         println!("{:?}", device);
@@ -186,14 +148,6 @@ impl ViewModel {
                     .cancel_device_discovery_usb()
                     .await
                     .unwrap(),
-                Transport::Internal { .. } => {
-                    self.credential_service
-                        .lock()
-                        .await
-                        .cancel_device_discovery_internal()
-                        .await
-                        .unwrap();
-                }
                 _ => {
                     todo!()
                 }
@@ -248,37 +202,6 @@ impl ViewModel {
                     }
                 });
             }
-            Transport::Internal => {
-                let cred_service = self.credential_service.clone();
-                _ = self
-                    .credential_service
-                    .lock()
-                    .await
-                    .start_device_discovery_internal()
-                    .await
-                    .unwrap();
-                let tx = self.bg_update.clone();
-                async_std::task::spawn(async move {
-                    // TODO: add cancellation
-                    let mut prev_state = InternalDeviceState::default();
-                    while let Ok(current_state) = cred_service
-                        .lock()
-                        .await
-                        .poll_device_discovery_internal()
-                        .await
-                    {
-                        if prev_state != current_state {
-                            println!("{:?}", current_state);
-                            tx.send(BackgroundEvent::InternalDeviceStateChanged(
-                                current_state.clone(),
-                            ))
-                            .await
-                            .unwrap();
-                        }
-                        prev_state = current_state;
-                    }
-                });
-            }
             _ => {
                 todo!()
             }
@@ -299,7 +222,6 @@ impl ViewModel {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
                     self.update_devices().await;
-                    self.update_internal_credentials().await;
                 }
                 Event::View(ViewEvent::ButtonClicked) => {
                     println!("Got it!")
@@ -309,34 +231,12 @@ impl ViewModel {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    _ = self
-                        .credential_service
+                    self.credential_service
                         .lock()
                         .await
                         .validate_usb_device_pin(&pin)
                         .await
                         .unwrap();
-                }
-                Event::View(ViewEvent::InternalPinEntered(pin)) => {
-                    // TODO: This might be racy; put cred_id in the view event instead.
-                    let cred_id = self.selected_credential.as_ref().unwrap();
-                    let state = self
-                        .credential_service
-                        .lock()
-                        .await
-                        .validate_internal_device_pin(&pin, cred_id)
-                        .await
-                        .unwrap();
-                    println!("{:?}", state);
-                    match state {
-                        InternalPinState::PinCorrect { completion_token } => {
-                            // I think this will be handled by the bacground polling
-                            // Otherwise, we might want to show some sort of check mark that the pin is correct before transitioning to complete.
-                            // self.credential_service.lock().await.complete_auth(self.selected_device.completion_token);
-                            // self.tx_update.send(ViewUpdate::).await.unwrap();
-                        }
-                        _ => todo!(),
-                    }
                 }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
                     println!(
@@ -391,19 +291,6 @@ impl ViewModel {
                         UsbState::NotListening | UsbState::Waiting | UsbState::UserCancelled => {}
                     }
                 }
-                Event::Background(BackgroundEvent::InternalDeviceStateChanged(state)) => {
-                    self.internal_device_state = state.clone();
-                    match state {
-                        // InternalDeviceState::NeedsPin => {
-                        //     self.tx_update.send(ViewUpdate::InternalDeviceNeedsPin).await.unwrap();
-                        // },
-                        InternalDeviceState::Completed { device, cred_id } => {
-                            self.credential_service.lock().await.complete_auth();
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
-                        }
-                        _ => {}
-                    }
-                }
             };
         }
     }
@@ -415,7 +302,6 @@ pub enum ViewEvent {
     DeviceSelected(String),
     CredentialSelected(String),
     UsbPinEntered(String),
-    InternalPinEntered(String),
 }
 
 pub enum ViewUpdate {
@@ -434,7 +320,6 @@ pub enum ViewUpdate {
 pub enum BackgroundEvent {
     UsbPressed,
     UsbStateChanged(UsbState),
-    InternalDeviceStateChanged(InternalDeviceState),
 }
 
 pub enum Event {
@@ -479,33 +364,15 @@ pub enum HybridState {
     /// Connecting to caBLE tunnel.
     Connecting,
 
-    /// Connected to device via caBLE tunnel.
-    // I don't think is necessary to signal
-    // Connected,
-
+    /*  I don't think is necessary to signal.
+       /// Connected to device via caBLE tunnel.
+       Connected,
+    */
     /// Credential received over tunnel.
     Completed,
 
     // This isn't actually sent from the server.
     UserCancelled,
-}
-
-#[derive(Debug, Default)]
-pub enum InternalPinState {
-    #[default]
-    Waiting,
-
-    PinIncorrect {
-        attempts_left: u32,
-    },
-
-    LockedOut {
-        unlock_time: Duration,
-    },
-
-    PinCorrect {
-        completion_token: String,
-    },
 }
 
 #[derive(Debug)]
@@ -625,7 +492,6 @@ impl From<crate::credential_service::UsbState> for UsbState {
             }
             crate::credential_service::UsbState::NeedsUserPresence => UsbState::NeedsUserPresence,
             crate::credential_service::UsbState::Completed => UsbState::Completed,
-            crate::credential_service::UsbState::UserCancelled => UsbState::UserCancelled,
         }
     }
 }
