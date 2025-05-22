@@ -20,8 +20,7 @@ serde_json = "1.0.140"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
 zbus = "5.5.0"
-# libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn", rev = "7efdc9324039ea7776a3a71a79d087f791b1ed91" }
-libwebauthn = { git = "https://github.com/msirringhaus/xdg-credentials-portal", rev = "465b143207e97140371321a4b5bae45d4d211c8f" }
+libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn", rev = "73970627b81ff775fbd80fb70694bef049ac2c85" }
 async-trait = "0.1.88"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
