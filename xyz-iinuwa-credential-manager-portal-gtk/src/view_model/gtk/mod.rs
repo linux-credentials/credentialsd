@@ -109,8 +109,9 @@ impl ViewModel {
                                 ViewUpdate::SetCredentials(credentials) => {
                                     view_model.update_credentials(&credentials)
                                 }
-                                ViewUpdate::SelectDevice(device) => {
-                                    view_model.select_device(&device)
+                                ViewUpdate::SelectingDevice => view_model.selecting_device(),
+                                ViewUpdate::WaitingForDevice(device) => {
+                                    view_model.waiting_for_device(&device)
                                 }
                                 ViewUpdate::SelectCredential(cred_id) => {
                                     view_model.select_credential(cred_id)
@@ -243,7 +244,7 @@ impl ViewModel {
         self.set_credentials(credential_list);
     }
 
-    fn select_device(&self, device: &Device) {
+    fn waiting_for_device(&self, device: &Device) {
         match device.transport {
             Transport::Usb => {
                 self.set_prompt("Insert your security key.");
@@ -255,6 +256,10 @@ impl ViewModel {
         }
         self.set_selected_device(&device.into());
         self.set_selected_credential("");
+    }
+
+    fn selecting_device(&self) {
+        self.set_prompt("Multiple devices found. Please select with which to proceed.");
     }
 
     fn select_credential(&self, cred_id: String) {

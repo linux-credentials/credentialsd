@@ -208,7 +208,7 @@ impl ViewModel {
         }
 
         self.tx_update
-            .send(ViewUpdate::SelectDevice(device.clone()))
+            .send(ViewUpdate::WaitingForDevice(device.clone()))
             .await
             .unwrap();
     }
@@ -282,7 +282,13 @@ impl ViewModel {
                             self.credential_service.lock().await.complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
-                        _ => {}
+                        UsbState::SelectingDevice => {
+                            self.tx_update
+                                .send(ViewUpdate::SelectingDevice)
+                                .await
+                                .unwrap();
+                        }
+                        UsbState::NotListening | UsbState::Waiting | UsbState::UserCancelled => {}
                     }
                 }
             };
@@ -302,12 +308,13 @@ pub enum ViewUpdate {
     SetTitle(String),
     SetDevices(Vec<Device>),
     SetCredentials(Vec<Credential>),
-    SelectDevice(Device),
+    WaitingForDevice(Device),
     SelectCredential(String),
     UsbNeedsPin { attempts_left: Option<u32> },
     UsbNeedsUserVerification { attempts_left: Option<u32> },
     UsbNeedsUserPresence,
     Completed,
+    SelectingDevice,
 }
 
 pub enum BackgroundEvent {
@@ -465,14 +472,18 @@ pub enum UsbState {
 
     // This isn't actually sent from the server.
     UserCancelled,
+
+    /// Multiple devices found
+    SelectingDevice,
 }
 
 impl From<crate::credential_service::UsbState> for UsbState {
     fn from(val: crate::credential_service::UsbState) -> Self {
         match val {
             crate::credential_service::UsbState::Idle => UsbState::NotListening,
+            crate::credential_service::UsbState::SelectingDevice(..) => UsbState::SelectingDevice,
             crate::credential_service::UsbState::Waiting => UsbState::Waiting,
-            crate::credential_service::UsbState::Connected => UsbState::Connected,
+            crate::credential_service::UsbState::Connected(..) => UsbState::Connected,
             crate::credential_service::UsbState::NeedsPin { attempts_left } => {
                 UsbState::NeedsPin { attempts_left }
             }
