@@ -44,7 +44,7 @@ ninja -C build
 # Run the server, with debug logging enabled
 export GSETTINGS_SCHEMA_DIR=build/xyz-iinuwa-credential-manager-portal-gtk/data
 export RUST_LOG=xyz_iinuwa_credential_manager_portal_gtk=debug
-./build/xyz-iinuwa-credential-manager-gtk/src/xyz-iinuwa-credential-manager-portal-gtk
+./build/xyz-iinuwa-credential-manager-portal-gtk/src/xyz-iinuwa-credential-manager-portal-gtk
 ```
 
 ### Clients
