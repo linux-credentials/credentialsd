@@ -47,6 +47,7 @@ impl TryFrom<Ctap2COSEAlgorithmIdentifier> for CoseKeyAlgorithmIdentifier {
                 debug!("Unknown public key algorithm type: {:?}", value);
                 Err(Error::Unsupported)
             }
+            Ctap2COSEAlgorithmIdentifier::Unknown => Err(Error::Unsupported),
         }
     }
 }
