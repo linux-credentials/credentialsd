@@ -55,3 +55,17 @@ cargo_build = custom_target(
     'cp', backend_executable_name / 'src' / rust_target / backend_executable_name, '@OUTPUT@',
   ]
 )
+
+test(
+  'cargo-unit-tests',
+  cargo,
+  env: [cargo_env],
+  args: [
+    'test',
+    '--bins',
+    '--no-fail-fast', cargo_options,
+    '--',
+    '--nocapture',
+  ],
+  protocol: 'rust',
+)
