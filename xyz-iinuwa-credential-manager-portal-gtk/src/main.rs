@@ -6,7 +6,6 @@ mod cose;
 mod credential_service;
 mod dbus;
 mod serde;
-mod tokio_runtime;
 #[allow(dead_code)]
 mod view_model;
 mod webauthn;
@@ -21,7 +20,6 @@ async fn main() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
-    _ = tokio_runtime::get();
 
     println!("Starting...");
     run().await.unwrap();

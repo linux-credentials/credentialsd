@@ -1,23 +1,22 @@
 pub mod gtk;
 
-use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_std::prelude::*;
 use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex,
 };
-use tracing::info;
+use tokio::sync::oneshot;
+use tracing::{error, info};
 
-// TODO: turn CredentialService into a trait so we don't have to do specify handler types manually.
-use crate::credential_service::hybrid::InternalHybridHandler;
-use crate::credential_service::{CredentialService, CredentialServiceClient};
+use crate::credential_service::{CredentialServiceClient, UsbState};
 
 #[derive(Debug)]
 pub(crate) struct ViewModel<C>
-where C: CredentialServiceClient + Send {
+where
+    C: CredentialServiceClient + Send,
+{
     credential_service: Arc<Mutex<C>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
@@ -33,8 +32,7 @@ where C: CredentialServiceClient + Send {
 
     providers: Vec<Provider>,
 
-    usb_device_state: UsbState,
-    usb_device_pin_state: UsbPinState,
+    usb_pin_tx: Option<Arc<oneshot::Sender<String>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -42,7 +40,7 @@ where C: CredentialServiceClient + Send {
     hybrid_linked_state: HybridState,
 }
 
-impl <C: CredentialServiceClient + Send> ViewModel<C> {
+impl<C: CredentialServiceClient + Send> ViewModel<C> {
     pub(crate) fn new(
         operation: Operation,
         credential_service: C,
@@ -62,8 +60,7 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
             selected_device: None,
             selected_credential: None,
             providers: Vec::new(),
-            usb_device_state: UsbState::default(),
-            usb_device_pin_state: UsbPinState::default(),
+            usb_pin_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
             hybrid_linked_state: HybridState::default(),
@@ -145,18 +142,14 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
                 return;
             }
             match prev_device.transport {
-                Transport::Usb => self
-                    .credential_service
-                    .lock()
-                    .await
-                    .cancel_device_discovery_usb()
-                    .await
-                    .unwrap(),
+                Transport::Usb => {
+                    todo!("Implement cancellation for USB");
+                }
                 Transport::HybridQr => {
                     todo!("Implement cancellation for Hybrid QR");
                 }
                 _ => {
-                    todo!()
+                    todo!();
                 }
             };
             self.selected_credential = None;
@@ -167,36 +160,42 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
             Transport::Usb => {
                 let cred_service = self.credential_service.clone();
                 let tx = self.bg_update.clone();
+                let mut stream = {
+                    let cred_service = cred_service.lock().await;
+                    cred_service.get_usb_credential()
+                };
                 async_std::task::spawn(async move {
                     // TODO: add cancellation
-                    let mut prev_state = UsbState::default();
-                    loop {
-                        match cred_service.lock().await.poll_device_discovery_usb().await {
-                            Ok(usb_state) => {
-                                let state = usb_state.into();
-                                if prev_state != state {
-                                    println!("{:?}", state);
-                                    tx.send(BackgroundEvent::UsbStateChanged(state.clone()))
-                                        .await
-                                        .unwrap();
-                                }
-                                prev_state = state;
-                                match prev_state {
-                                    UsbState::Completed => break,
-                                    UsbState::UserCancelled => break,
-                                    _ => {}
-                                };
-                                async_std::task::sleep(Duration::from_millis(50)).await;
+                    while let Some(usb_state) = stream.next().await {
+                        tx.send(BackgroundEvent::UsbStateChanged(usb_state.clone()))
+                            .await
+                            .unwrap();
+                        /*
+                        Ok(usb_state) => {
+                            let state = usb_state.into();
+                            if prev_state != state {
+                                println!("{:?}", state);
+                                tx.send(BackgroundEvent::UsbStateChanged(state.clone()))
+                                    .await
+                                    .unwrap();
                             }
-                            Err(err) => {
-                                // TODO: move to error page
-                                tracing::error!(
-                                    "There was an error trying to get credentials from USB: {}",
-                                    err
-                                );
-                                break;
-                            }
-                        };
+                            prev_state = state;
+                            match prev_state {
+                                UsbState::Completed => break,
+                                UsbState::UserCancelled => break,
+                                _ => {}
+                            };
+                            async_std::task::sleep(Duration::from_millis(50)).await;
+                        }
+                        Err(err) => {
+                            // TODO: move to error page
+                            tracing::error!(
+                                "There was an error trying to get credentials from USB: {}",
+                                err
+                            );
+                            break;
+                        }
+                        */
                     }
                 });
             }
@@ -264,12 +263,17 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    self.credential_service
-                        .lock()
-                        .await
-                        .validate_usb_device_pin(&pin)
-                        .await
-                        .unwrap();
+                    let pin_tx = self.usb_pin_tx.take().unwrap();
+                    match Arc::try_unwrap(pin_tx) {
+                        Ok(pin_tx) => {
+                            if let Err(_) = pin_tx.send(pin) {
+                                error!("Failed to send pin to device");
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to send pin to device: {:?}", e);
+                        }
+                    }
                 }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
                     println!(
@@ -287,13 +291,17 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("UsbPressed");
                 }
                 Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
-                    self.usb_device_state = state;
-                    match self.usb_device_state {
+                    // TODO: do we need to store the USB state?
+                    match state {
                         UsbState::Connected => {
                             info!("Found USB device")
                         }
 
-                        UsbState::NeedsPin { attempts_left } => {
+                        UsbState::NeedsPin {
+                            attempts_left,
+                            pin_tx,
+                        } => {
+                            let _ = self.usb_pin_tx.insert(pin_tx);
                             self.tx_update
                                 .send(ViewUpdate::UsbNeedsPin { attempts_left })
                                 .await
@@ -321,7 +329,7 @@ impl <C: CredentialServiceClient + Send> ViewModel<C> {
                                 .await
                                 .unwrap();
                         }
-                        UsbState::NotListening | UsbState::Waiting | UsbState::UserCancelled => {}
+                        UsbState::Idle | UsbState::Waiting => {}
                     }
                 }
                 Event::Background(BackgroundEvent::HybridQrStateChanged(state)) => {
@@ -528,76 +536,6 @@ impl Transport {
             Transport::Usb => "USB",
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum UsbState {
-    /// Not currently listening for USB devices.
-    #[default]
-    NotListening,
-
-    /// Awaiting FIDO USB device to be plugged in.
-    Waiting,
-
-    /// The device needs the PIN to be entered.
-    NeedsPin {
-        attempts_left: Option<u32>,
-    },
-
-    /// The device needs on-device user verification to be entered.
-    NeedsUserVerification {
-        attempts_left: Option<u32>,
-    },
-
-    /// The device needs on-device user verification to be entered.
-    NeedsUserPresence,
-
-    /// USB device connected, prompt user to tap
-    Connected,
-
-    /// USB tapped, received credential
-    Completed,
-
-    // This isn't actually sent from the server.
-    UserCancelled,
-
-    /// Multiple devices found
-    SelectingDevice,
-}
-
-impl From<crate::credential_service::UsbState> for UsbState {
-    fn from(val: crate::credential_service::UsbState) -> Self {
-        match val {
-            crate::credential_service::UsbState::Idle => UsbState::NotListening,
-            crate::credential_service::UsbState::SelectingDevice(..) => UsbState::SelectingDevice,
-            crate::credential_service::UsbState::Waiting => UsbState::Waiting,
-            crate::credential_service::UsbState::Connected(..) => UsbState::Connected,
-            crate::credential_service::UsbState::NeedsPin { attempts_left } => {
-                UsbState::NeedsPin { attempts_left }
-            }
-            crate::credential_service::UsbState::NeedsUserVerification { attempts_left } => {
-                UsbState::NeedsUserVerification { attempts_left }
-            }
-            crate::credential_service::UsbState::NeedsUserPresence => UsbState::NeedsUserPresence,
-            crate::credential_service::UsbState::Completed => UsbState::Completed,
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub enum UsbPinState {
-    #[default]
-    Waiting,
-
-    PinIncorrect {
-        attempts_left: u32,
-    },
-
-    LockedOut {
-        unlock_time: Duration,
-    },
-
-    PinCorrect,
 }
 
 #[derive(Debug, Default)]

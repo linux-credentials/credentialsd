@@ -10,7 +10,7 @@ use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOpe
 use libwebauthn::transport::Device;
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use crate::{dbus::CredentialRequest, tokio_runtime};
+use crate::dbus::CredentialRequest;
 
 use super::AuthenticatorResponse;
 
@@ -33,7 +33,7 @@ impl HybridHandler for InternalHybridHandler {
     fn start(&self, request: &CredentialRequest) -> Self::Stream {
         let request = request.clone();
         let (tx, rx) = async_std::channel::unbounded();
-        async_std::task::spawn(async move {
+        tokio::spawn(async move {
             let hint = match request {
                 CredentialRequest::CreatePublicKeyCredentialRequest(_) => {
                     QrCodeOperationHint::MakeCredential
@@ -48,8 +48,14 @@ impl HybridHandler for InternalHybridHandler {
                 tracing::error!("Failed to send caBLE update: {:?}", err);
                 return;
             };
-            tokio_runtime::get().spawn(async move {
-                let (mut channel, _) = device.channel().await.unwrap();
+            tokio::spawn(async move {
+                let mut channel = match device.channel().await {
+                    Ok((channel, _)) => channel,
+                    Err(e) => {
+                        tracing::error!("Failed to open hybrid channel: {:?}", e);
+                        panic!();
+                    }
+                };
                 let response: AuthenticatorResponse = loop {
                     match &request {
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
