@@ -7,8 +7,7 @@ use std::{
     time::Duration,
 };
 
-use async_std::stream::Stream;
-use futures_lite::{FutureExt, StreamExt};
+use futures_lite::{FutureExt, Stream, StreamExt};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},

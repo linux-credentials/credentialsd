@@ -2,8 +2,7 @@ use std::fmt::Debug;
 use std::task::Poll;
 
 use async_std::channel::Receiver;
-use async_std::stream::Stream;
-use futures_lite::FutureExt;
+use futures_lite::{FutureExt, Stream};
 use libwebauthn::fido::{AuthenticatorData, AuthenticatorDataFlags};
 use libwebauthn::ops::webauthn::{Assertion, GetAssertionResponse};
 use libwebauthn::proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2Transport};

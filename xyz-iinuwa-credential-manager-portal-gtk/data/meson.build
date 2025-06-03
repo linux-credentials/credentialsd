@@ -76,7 +76,7 @@ if glib_compile_schemas.found()
 endif
 
 if get_option('profile') == 'development'
-  gschema_target = custom_target('gschema',
+  custom_target('gschema',
             input : gschema_xml,
             output : 'gschema.compiled',
             command : [glib_compile_schemas, '--strict', meson.current_build_dir()],
