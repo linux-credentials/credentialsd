@@ -92,9 +92,13 @@ where {
      fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>>;
 }
 
-impl<H: HybridHandler + Debug> CredentialServiceClient for CredentialService<H>
-where <H as HybridHandler>::Stream: Unpin + Send {
-     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialServiceClient
+    for CredentialService<H, U>
+where
+    <H as HybridHandler>::Stream: Unpin + Send + 'static,
+    <U as UsbHandler>::Stream: Unpin + Send + 'static,
+{
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         Ok(self.devices.to_owned())
     }
 
@@ -106,7 +110,7 @@ where <H as HybridHandler>::Stream: Unpin + Send {
         // data.replace((self.cred_response));
     }
 
-     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>> {
+    fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let stream = self.hybrid_handler.start(&self.cred_request);
         Box::pin(HybridStateStream {
             inner: stream,
