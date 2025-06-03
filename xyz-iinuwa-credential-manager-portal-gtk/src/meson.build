@@ -67,5 +67,5 @@ test(
     '--',
     '--nocapture',
   ],
-  protocol: 'rust',
+  protocol: 'exitcode',
 )
