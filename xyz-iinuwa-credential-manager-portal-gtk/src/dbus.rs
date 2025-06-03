@@ -3,8 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use async_std::channel::{Receiver, Sender};
-use async_std::sync::Mutex as AsyncMutex;
 use base64::Engine;
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD};
 use gettextrs::{gettext, LocaleCategory};
@@ -20,10 +18,12 @@ use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
     Ctap2PublicKeyCredentialUserEntity,
 };
-use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
+use ring::digest;
+use tokio::sync::{mpsc::{self, Receiver, Sender}, Mutex as AsyncMutex};
 use zbus::{
     connection::{self, Connection},
     fdo, interface, Result,
+    zvariant::{DeserializeDict, SerializeDict, Type}
 };
 
 use crate::application::ExampleApplication;
@@ -36,10 +36,9 @@ use crate::view_model::{self, ViewEvent, ViewUpdate};
 use crate::webauthn::{
     self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
 };
-use ring::digest;
 
 pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Connection> {
-    let (gui_tx, gui_rx) = async_std::channel::bounded(1);
+    let (gui_tx, gui_rx) = mpsc::channel(1);
     let lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<Option<CredentialResponse>>)>>> =
         Arc::new(AsyncMutex::new(gui_tx));
     start_gui_thread(gui_rx);
@@ -50,11 +49,11 @@ pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Conn
         .await
 }
 
-fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<Option<CredentialResponse>>)>) {
+fn start_gui_thread(mut rx: Receiver<(CredentialRequest, Sender<Option<CredentialResponse>>)>) {
     thread::Builder::new()
         .name("gui".into())
         .spawn(move || {
-            while let Ok((cred_request, response_tx)) = rx.recv_blocking() {
+            while let Some((cred_request, response_tx)) = rx.blocking_recv() {
                 let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
                 let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
                 let data = Arc::new(Mutex::new(None));
@@ -86,13 +85,13 @@ fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<Option<CredentialRes
                 async_std::task::block_on(event_loop.cancel());
                 let lock = data.lock().unwrap();
                 let response = lock.as_ref().cloned();
-                response_tx.send_blocking(response).unwrap();
+                response_tx.blocking_send(response).unwrap();
             }
         })
         .unwrap();
 }
 
-fn start_gtk_app(tx_event: Sender<ViewEvent>, rx_update: Receiver<ViewUpdate>) {
+fn start_gtk_app(tx_event: async_std::channel::Sender<ViewEvent>, rx_update: async_std::channel::Receiver<ViewUpdate>) {
     // Prepare i18n
     gettextrs::setlocale(LocaleCategory::LcAll, "");
     gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
@@ -118,7 +117,7 @@ impl CredentialManager {
         &self,
         request: CreateCredentialRequest,
     ) -> fdo::Result<CreateCredentialResponse> {
-        if let Some(tx) = self.app_lock.try_lock() {
+        if let Ok(tx) = self.app_lock.try_lock() {
             if request.origin.is_none() {
                 todo!("Implicit caller-origin binding not yet implemented.")
             };
@@ -138,9 +137,8 @@ impl CredentialManager {
                         })?;
                     let request =
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
-                    let (data_tx, data_rx) = async_std::channel::bounded(1);
+                    let (data_tx, mut data_rx) = mpsc::channel(1);
                     tx.send((request, data_tx)).await.unwrap();
-                    let data_rx = Arc::new(data_rx);
                     if let Some(CredentialResponse::CreatePublicKeyCredentialResponse(
                         cred_response,
                     )) = data_rx.recv().await.unwrap()
@@ -172,7 +170,7 @@ impl CredentialManager {
         &self,
         request: GetCredentialRequest,
     ) -> fdo::Result<GetCredentialResponse> {
-        if let Some(tx) = self.app_lock.try_lock() {
+        if let Ok(tx) = self.app_lock.try_lock() {
             if request.origin.is_none() {
                 todo!("Implicit caller-origin binding is not yet implemented.");
             }
@@ -198,11 +196,10 @@ impl CredentialManager {
                         })?;
                     let request =
                         CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
-                    let (data_tx, data_rx) = async_std::channel::bounded(1);
+                    let (data_tx, mut data_rx) = mpsc::channel(1);
                     tx.send((request, data_tx)).await.unwrap();
-                    let data_rx = Arc::new(data_rx);
                     match data_rx.recv().await {
-                        Ok(Some(CredentialResponse::GetPublicKeyCredentialResponse(
+                        Some(Some(CredentialResponse::GetPublicKeyCredentialResponse(
                             cred_response,
                         ))) => {
                             let public_key_response =
@@ -212,10 +209,10 @@ impl CredentialManager {
                                 )?;
                             Ok(public_key_response.into())
                         }
-                        Ok(_) => Err(fdo::Error::Failed(
+                        Some(_) => Err(fdo::Error::Failed(
                             "Invalid credential response received from authenticator".to_string(),
                         )),
-                        Err(_) => Err(fdo::Error::Failed("User cancelled operation".to_string())),
+                        None => Err(fdo::Error::Failed("User cancelled operation".to_string())),
                     }
                 }
                 _ => Err(fdo::Error::Failed(

@@ -14,9 +14,8 @@ mod window;
 
 use std::error::Error;
 
-use async_std::task;
-
-fn main() {
+#[tokio::main]
+async fn main() {
     // Initialize logger
     tracing_subscriber::fmt::init();
     rustls::crypto::ring::default_provider()
@@ -25,20 +24,16 @@ fn main() {
     _ = tokio_runtime::get();
 
     println!("Starting...");
-    task::block_on(run()).unwrap();
+    run().await.unwrap();
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let service_name = "xyz.iinuwa.credentials.CredentialManagerUi";
     let path = "/xyz/iinuwa/credentials/CredentialManagerUi";
     let _conn = dbus::start_service(service_name, path).await?;
-    // store::initialize();
-    // let _conn = dbus::start_service(service_name, path, seed_key).await?;
     println!("Started");
     loop {
-        // do something else, wait forever or timeout here:
-        // handling D-Bus messages is done in the background
-
+        // wait forever, handle D-Bus in the background
         std::future::pending::<()>().await;
     }
 }
