@@ -2,55 +2,48 @@ pub mod hybrid;
 pub mod usb;
 
 use std::{
-    fmt::Debug, future::Future, pin::Pin, sync::{Arc, Mutex}, task::Poll, time::Duration
+    fmt::Debug,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::Poll,
 };
 
 use futures_lite::{FutureExt, Stream, StreamExt};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
-    transport::{hid::HidDevice, Device as _},
-    webauthn::{Error as WebAuthnError, WebAuthn},
-    UxUpdate,
 };
-
-use async_std::{
-    sync::{Arc as AsyncArc, Mutex as AsyncMutex},
-};
-use tracing::{debug, warn};
 
 use crate::{
     dbus::{
         CredentialRequest, CredentialResponse, GetAssertionResponseInternal,
         MakeCredentialResponseInternal,
     },
-    tokio_runtime,
     view_model::{Device, Transport},
 };
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
-use usb::UsbUvHandler;
 pub use usb::UsbState;
+use usb::{UsbHandler, UsbStateInternal};
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler> {
+pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
     devices: Vec<Device>,
-
-    usb_state: AsyncArc<AsyncMutex<UsbState>>,
-    usb_uv_handler: UsbUvHandler,
 
     cred_request: CredentialRequest,
     // Place to store data to be returned to the caller
     cred_response: Arc<Mutex<Option<CredentialResponse>>>,
 
     hybrid_handler: H,
+    usb_handler: U,
 }
 
-impl <H: HybridHandler + Debug> CredentialService<H> {
+impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialService<H, U> {
     pub fn new(
         cred_request: CredentialRequest,
         cred_response: Arc<Mutex<Option<CredentialResponse>>>,
         hybrid_handler: H,
+        usb_handler: U,
     ) -> Self {
         let devices = vec![
             Device {
@@ -62,34 +55,25 @@ impl <H: HybridHandler + Debug> CredentialService<H> {
                 transport: Transport::HybridQr,
             },
         ];
-        let usb_state = AsyncArc::new(AsyncMutex::new(UsbState::Idle));
         Self {
             devices,
-
-            usb_state: usb_state.clone(),
-            usb_uv_handler: UsbUvHandler::new(),
 
             cred_request,
             cred_response,
 
             hybrid_handler,
+            usb_handler,
         }
     }
 }
 
-pub trait CredentialServiceClient
-where {
-     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+pub trait CredentialServiceClient {
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
 
-     async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String>;
+    fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>>;
+    fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send>>;
 
-     async fn cancel_device_discovery_usb(&mut self) -> Result<(), String>;
-
-     async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()>;
-
-     fn complete_auth(&mut self);
-
-     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>>;
+    fn complete_auth(&mut self);
 }
 
 impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialServiceClient
@@ -102,20 +86,26 @@ where
         Ok(self.devices.to_owned())
     }
 
-     async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
-    }
-
-     fn complete_auth(&mut self) {
-        // let mut data = self.output_data.lock().unwrap();
-        // data.replace((self.cred_response));
-    }
-
     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let stream = self.hybrid_handler.start(&self.cred_request);
+        let cred_response = self.cred_response.clone();
         Box::pin(HybridStateStream {
+            inner: stream,
+            cred_response,
+        })
+    }
+
+    fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+        let stream = self.usb_handler.start(&self.cred_request);
+        Box::pin(UsbStateStream {
             inner: stream,
             cred_response: self.cred_response.clone(),
         })
+    }
+
+    fn complete_auth(&mut self) {
+        // let mut data = self.output_data.lock().unwrap();
+        // data.replace((self.cred_response));
     }
 }
 
@@ -131,42 +121,16 @@ where
     type Item = HybridState;
 
     fn poll_next(
-        self: std::pin::Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
+    ) -> Poll<Option<Self::Item>> {
         let cred_response = &self.cred_response.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(state)) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
-                    let response = match hybrid_response {
-                        AuthenticatorResponse::CredentialCreated(make_response) => {
-                            CredentialResponse::CreatePublicKeyCredentialResponse(
-                                MakeCredentialResponseInternal::new(
-                                    make_response.clone(),
-                                    vec![String::from("hybrid")],
-                                    String::from("cross-platform"),
-                                ),
-                            )
-                        }
-
-                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse {
-                            assertions,
-                        }) if assertions.len() == 1 => {
-                            CredentialResponse::GetPublicKeyCredentialResponse(
-                                GetAssertionResponseInternal::new(
-                                    assertions[0].clone(),
-                                    String::from("cross-platform"),
-                                ),
-                            )
-                        }
-                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse {
-                            assertions,
-                        }) => {
-                            assert!(!assertions.is_empty());
-                            todo!("need to support selection from multiple credentials");
-                        }
-                    };
+                    let response =
+                        hybrid_response.into_cred_response(&["hybrid"], "cross-platform");
                     let mut cred_response = cred_response.lock().unwrap();
                     cred_response.replace(response);
                 }
@@ -177,11 +141,68 @@ where
     }
 }
 
+struct UsbStateStream<H> {
+    inner: H,
+    cred_response: Arc<Mutex<Option<CredentialResponse>>>,
+}
+
+impl<H> Stream for UsbStateStream<H>
+where
+    H: Stream<Item = UsbStateInternal> + Unpin + Sized,
+{
+    type Item = UsbState;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let cred_response = &self.cred_response.clone();
+        match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(state)) => {
+                if let UsbStateInternal::Completed(response) = &state {
+                    let response = response.into_cred_response(&["usb"], "cross-platform");
+                    let mut cred_response = cred_response.lock().unwrap();
+                    cred_response.replace(response);
+                }
+                Poll::Ready(Some(state.into()))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum AuthenticatorResponse {
     CredentialCreated(MakeCredentialResponse),
     CredentialsAsserted(GetAssertionResponse),
+}
+impl AuthenticatorResponse {
+    fn into_cred_response(&self, transports: &[&str], modality: &str) -> CredentialResponse {
+        match self {
+            AuthenticatorResponse::CredentialCreated(make_response) => {
+                CredentialResponse::CreatePublicKeyCredentialResponse(
+                    MakeCredentialResponseInternal::new(
+                        make_response.clone(),
+                        transports.iter().map(|s| s.to_string()).collect(),
+                        modality.to_string(),
+                    ),
+                )
+            }
+
+            AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions })
+                if assertions.len() == 1 =>
+            {
+                CredentialResponse::GetPublicKeyCredentialResponse(
+                    GetAssertionResponseInternal::new(assertions[0].clone(), modality.to_string()),
+                )
+            }
+            AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions }) => {
+                assert!(!assertions.is_empty());
+                todo!("need to support selection from multiple credentials");
+            }
+        }
+    }
 }
 
 impl From<MakeCredentialResponse> for AuthenticatorResponse {
@@ -202,13 +223,14 @@ mod test {
 
     use async_std::stream::StreamExt;
 
-    use crate::dbus::{
-        CreateCredentialRequest, CreatePublicKeyCredentialRequest, CredentialRequest,
+    use crate::{
+        credential_service::usb::LocalUsbHandler,
+        dbus::{CreateCredentialRequest, CreatePublicKeyCredentialRequest, CredentialRequest},
     };
 
     use super::{
         hybrid::{DummyHybridHandler, HybridStateInternal},
-        AuthenticatorResponse, CredentialService, CredentialServiceClient
+        AuthenticatorResponse, CredentialService, CredentialServiceClient,
     };
 
     #[test]
@@ -224,7 +246,8 @@ mod test {
             HybridStateInternal::Connecting,
             HybridStateInternal::Completed(authenticator_response),
         ]);
-        let cred_service = CredentialService::new(request, response, hybrid_handler);
+        let usb_handler = LocalUsbHandler {};
+        let cred_service = CredentialService::new(request, response, hybrid_handler, usb_handler);
         let mut stream = cred_service.get_hybrid_credential();
         async_std::task::block_on(async move { while let Some(_) = stream.next().await {} });
         assert!(cred_service.cred_response.lock().unwrap().is_some());

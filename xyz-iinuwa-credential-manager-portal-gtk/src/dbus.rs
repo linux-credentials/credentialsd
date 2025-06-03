@@ -19,16 +19,21 @@ use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialUserEntity,
 };
 use ring::digest;
-use tokio::sync::{mpsc::{self, Receiver, Sender}, Mutex as AsyncMutex};
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    Mutex as AsyncMutex,
+};
 use zbus::{
     connection::{self, Connection},
-    fdo, interface, Result,
-    zvariant::{DeserializeDict, SerializeDict, Type}
+    fdo, interface,
+    zvariant::{DeserializeDict, SerializeDict, Type},
+    Result,
 };
 
 use crate::application::ExampleApplication;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use crate::credential_service::hybrid::InternalHybridHandler;
+use crate::credential_service::usb::LocalUsbHandler;
 use crate::credential_service::CredentialService;
 use crate::view_model::CredentialType;
 use crate::view_model::Operation;
@@ -69,6 +74,7 @@ fn start_gui_thread(mut rx: Receiver<(CredentialRequest, Sender<Option<Credentia
                     cred_request,
                     data.clone(),
                     InternalHybridHandler::new(),
+                    LocalUsbHandler {},
                 );
                 let event_loop = async_std::task::spawn(async move {
                     let mut vm = view_model::ViewModel::new(
@@ -91,7 +97,10 @@ fn start_gui_thread(mut rx: Receiver<(CredentialRequest, Sender<Option<Credentia
         .unwrap();
 }
 
-fn start_gtk_app(tx_event: async_std::channel::Sender<ViewEvent>, rx_update: async_std::channel::Receiver<ViewUpdate>) {
+fn start_gtk_app(
+    tx_event: async_std::channel::Sender<ViewEvent>,
+    rx_update: async_std::channel::Receiver<ViewUpdate>,
+) {
     // Prepare i18n
     gettextrs::setlocale(LocaleCategory::LcAll, "");
     gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
