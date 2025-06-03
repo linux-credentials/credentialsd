@@ -66,8 +66,11 @@ fn start_gui_thread(rx: Receiver<(CredentialRequest, Sender<Option<CredentialRes
                         cred_types: vec![CredentialType::Passkey],
                     },
                 };
-                let credential_service =
-                    CredentialService::new(cred_request, data.clone(), InternalHybridHandler::new());
+                let credential_service = CredentialService::new(
+                    cred_request,
+                    data.clone(),
+                    InternalHybridHandler::new(),
+                );
                 let event_loop = async_std::task::spawn(async move {
                     let mut vm = view_model::ViewModel::new(
                         operation,

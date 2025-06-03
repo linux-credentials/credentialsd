@@ -19,7 +19,9 @@ use async_std::task;
 fn main() {
     // Initialize logger
     tracing_subscriber::fmt::init();
-    rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
     _ = tokio_runtime::get();
 
     println!("Starting...");

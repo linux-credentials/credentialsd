@@ -11,10 +11,7 @@ use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOpe
 use libwebauthn::transport::Device;
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use crate::{
-    dbus::CredentialRequest,
-    tokio_runtime,
-};
+use crate::{dbus::CredentialRequest, tokio_runtime};
 
 use super::AuthenticatorResponse;
 
@@ -23,15 +20,13 @@ pub(crate) trait HybridHandler {
     fn start(&self, request: &CredentialRequest) -> Self::Stream;
 }
 
-
 #[derive(Debug)]
 pub struct InternalHybridHandler {}
 impl InternalHybridHandler {
     pub fn new() -> Self {
-        Self { }
+        Self {}
     }
 }
-
 
 impl HybridHandler for InternalHybridHandler {
     type Stream = InternalHybridStream;
@@ -41,8 +36,12 @@ impl HybridHandler for InternalHybridHandler {
         let (tx, rx) = async_std::channel::unbounded();
         async_std::task::spawn(async move {
             let hint = match request {
-                CredentialRequest::CreatePublicKeyCredentialRequest(_) => QrCodeOperationHint::MakeCredential,
-                CredentialRequest::GetPublicKeyCredentialRequest(_) => QrCodeOperationHint::GetAssertionRequest,
+                CredentialRequest::CreatePublicKeyCredentialRequest(_) => {
+                    QrCodeOperationHint::MakeCredential
+                }
+                CredentialRequest::GetPublicKeyCredentialRequest(_) => {
+                    QrCodeOperationHint::GetAssertionRequest
+                }
             };
             let mut device = CableQrCodeDevice::new_transient(hint);
             let qr_code = device.qr_code.to_string();
@@ -55,10 +54,7 @@ impl HybridHandler for InternalHybridHandler {
                 let response: AuthenticatorResponse = loop {
                     match &request {
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
-                            match channel
-                                .webauthn_make_credential(&make_request)
-                                .await
-                            {
+                            match channel.webauthn_make_credential(&make_request).await {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
@@ -69,13 +65,9 @@ impl HybridHandler for InternalHybridHandler {
                                 }
                                 Err(err) => break Err(err),
                             };
-
                         }
                         CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
-                            match channel
-                                .webauthn_get_assertion(&get_request)
-                                .await
-                            {
+                            match channel.webauthn_get_assertion(&get_request).await {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
@@ -86,7 +78,6 @@ impl HybridHandler for InternalHybridHandler {
                                 }
                                 Err(err) => break Err(err),
                             };
-
                         }
                     }
                 }
@@ -94,7 +85,6 @@ impl HybridHandler for InternalHybridHandler {
                 if let Err(err) = tx.send(HybridStateInternal::Completed(response)).await {
                     tracing::error!("Failed to send caBLE update: {:?}", err)
                 }
-
             });
         });
         InternalHybridStream { rx }
@@ -102,13 +92,16 @@ impl HybridHandler for InternalHybridHandler {
 }
 
 pub struct InternalHybridStream {
-    rx: Receiver<HybridStateInternal>
+    rx: Receiver<HybridStateInternal>,
 }
 
 impl Stream for InternalHybridStream {
     type Item = HybridStateInternal;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         match self.rx.recv().poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(state)) => Poll::Ready(Some(state)),
@@ -126,7 +119,7 @@ impl DummyHybridHandler {
     #[cfg(test)]
     pub fn new(states: Vec<HybridStateInternal>) -> Self {
         Self {
-            stream: DummyHybridStateStream { states }
+            stream: DummyHybridStateStream { states },
         }
     }
 }
@@ -134,7 +127,7 @@ impl DummyHybridHandler {
 impl Default for DummyHybridHandler {
     fn default() -> Self {
         Self {
-            stream: DummyHybridStateStream::default()
+            stream: DummyHybridStateStream::default(),
         }
     }
 }
@@ -254,11 +247,10 @@ impl From<HybridStateInternal> for HybridState {
     fn from(value: HybridStateInternal) -> Self {
         match value {
             HybridStateInternal::Init(qr_code) => HybridState::Init(qr_code),
-            HybridStateInternal::Waiting       => HybridState::Waiting,
-            HybridStateInternal::Connecting    => HybridState::Connecting,
-            HybridStateInternal::Completed(_)  => HybridState::Completed,
+            HybridStateInternal::Waiting => HybridState::Waiting,
+            HybridStateInternal::Connecting => HybridState::Connecting,
+            HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::UserCancelled => HybridState::UserCancelled,
-
         }
     }
 }

@@ -367,23 +367,32 @@ where
             Poll::Ready(Some(state)) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
                     let response = match hybrid_response {
-                        AuthenticatorResponse::CredentialCreated(make_response) => CredentialResponse::CreatePublicKeyCredentialResponse(
-                                        MakeCredentialResponseInternal::new(
-                                            make_response.clone(),
-                                            vec![String::from("hybrid")],
-                                            String::from("cross-platform"),
-                                        )),
-
-                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions }) if assertions.len() == 1 => CredentialResponse::GetPublicKeyCredentialResponse(
-                            GetAssertionResponseInternal::new(
-                                assertions[0].clone(),
-                                String::from("cross-platform"),
+                        AuthenticatorResponse::CredentialCreated(make_response) => {
+                            CredentialResponse::CreatePublicKeyCredentialResponse(
+                                MakeCredentialResponseInternal::new(
+                                    make_response.clone(),
+                                    vec![String::from("hybrid")],
+                                    String::from("cross-platform"),
+                                ),
                             )
-                        ),
-                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions }) => {
+                        }
+
+                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse {
+                            assertions,
+                        }) if assertions.len() == 1 => {
+                            CredentialResponse::GetPublicKeyCredentialResponse(
+                                GetAssertionResponseInternal::new(
+                                    assertions[0].clone(),
+                                    String::from("cross-platform"),
+                                ),
+                            )
+                        }
+                        AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse {
+                            assertions,
+                        }) => {
                             assert!(!assertions.is_empty());
                             todo!("need to support selection from multiple credentials");
-                        },
+                        }
                     };
                     let mut cred_response = cred_response.lock().unwrap();
                     cred_response.replace(response);
@@ -551,9 +560,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     use async_std::stream::StreamExt;
 
@@ -562,7 +569,8 @@ mod test {
     };
 
     use super::{
-        hybrid::{DummyHybridHandler, HybridStateInternal}, AuthenticatorResponse, CredentialService
+        hybrid::{DummyHybridHandler, HybridStateInternal},
+        AuthenticatorResponse, CredentialService,
     };
 
     #[test]
@@ -580,9 +588,7 @@ mod test {
         ]);
         let cred_service = CredentialService::new(request, response, hybrid_handler);
         let mut stream = cred_service.get_hybrid_credential();
-        async_std::task::block_on(async {
-            while let Some(_) = stream.next().await { }
-        });
+        async_std::task::block_on(async { while let Some(_) = stream.next().await {} });
         assert!(cred_service.cred_response.lock().unwrap().is_some());
     }
 
@@ -643,8 +649,7 @@ mod test {
         use libwebauthn::{
             fido::{AuthenticatorData, AuthenticatorDataFlags},
             ops::webauthn::{Assertion, GetAssertionResponse},
-            proto::ctap2::{Ctap2Transport, Ctap2PublicKeyCredentialDescriptor},
-
+            proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2Transport},
         };
         // SHA256("webauthn.io")
         let rp_id_hash = [
@@ -677,6 +682,9 @@ mod test {
             enterprise_attestation: None,
             attestation_statement: None,
         };
-        GetAssertionResponse { assertions: vec![assertion] }.into()
+        GetAssertionResponse {
+            assertions: vec![assertion],
+        }
+        .into()
     }
 }

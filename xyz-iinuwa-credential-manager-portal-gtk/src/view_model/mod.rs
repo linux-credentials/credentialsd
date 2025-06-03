@@ -454,7 +454,9 @@ impl From<crate::credential_service::hybrid::HybridState> for HybridState {
             crate::credential_service::hybrid::HybridState::Waiting => HybridState::Waiting,
             crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
             crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
-            crate::credential_service::hybrid::HybridState::UserCancelled => HybridState::UserCancelled,
+            crate::credential_service::hybrid::HybridState::UserCancelled => {
+                HybridState::UserCancelled
+            }
         }
     }
 }
