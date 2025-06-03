@@ -1,10 +1,7 @@
 pub mod hybrid;
 
 use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-    task::Poll,
-    time::Duration,
+    fmt::Debug, future::Future, pin::Pin, sync::{Arc, Mutex}, task::Poll, time::Duration
 };
 
 use futures_lite::{FutureExt, Stream, StreamExt};
@@ -47,7 +44,7 @@ pub struct CredentialService<H: HybridHandler> {
     hybrid_handler: H,
 }
 
-impl<H: HybridHandler + Debug> CredentialService<H> {
+impl <H: HybridHandler + Debug> CredentialService<H> {
     pub fn new(
         cred_request: CredentialRequest,
         cred_response: Arc<Mutex<Option<CredentialResponse>>>,
@@ -76,12 +73,30 @@ impl<H: HybridHandler + Debug> CredentialService<H> {
             hybrid_handler,
         }
     }
+}
 
-    pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+pub trait CredentialServiceClient
+where {
+     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+
+     async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String>;
+
+     async fn cancel_device_discovery_usb(&mut self) -> Result<(), String>;
+
+     async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()>;
+
+     fn complete_auth(&mut self);
+
+     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>>;
+}
+
+impl<H: HybridHandler + Debug> CredentialServiceClient for CredentialService<H>
+where <H as HybridHandler>::Stream: Unpin + Send {
+     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         Ok(self.devices.to_owned())
     }
 
-    pub(crate) async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
+     async fn poll_device_discovery_usb(&mut self) -> Result<UsbState, String> {
         debug!("polling for USB status");
         let prev_usb_state = self.usb_state.lock().await.clone();
         let next_usb_state = match prev_usb_state {
@@ -312,13 +327,13 @@ impl<H: HybridHandler + Debug> CredentialService<H> {
         Ok(next_usb_state)
     }
 
-    pub(crate) async fn cancel_device_discovery_usb(&mut self) -> Result<(), String> {
+     async fn cancel_device_discovery_usb(&mut self) -> Result<(), String> {
         *self.usb_state.lock().await = UsbState::Idle;
         println!("frontend: Cancel USB request");
         Ok(())
     }
 
-    pub(crate) async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()> {
+     async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()> {
         let current_state = self.usb_state.lock().await.clone();
         match current_state {
             UsbState::NeedsPin {
@@ -331,17 +346,17 @@ impl<H: HybridHandler + Debug> CredentialService<H> {
         }
     }
 
-    pub(crate) fn complete_auth(&mut self) {
+     fn complete_auth(&mut self) {
         // let mut data = self.output_data.lock().unwrap();
         // data.replace((self.cred_response));
     }
 
-    pub(crate) fn get_hybrid_credential(&self) -> HybridStateStream<H::Stream> {
+     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>> {
         let stream = self.hybrid_handler.start(&self.cred_request);
-        HybridStateStream {
+        Box::pin(HybridStateStream {
             inner: stream,
             cred_response: self.cred_response.clone(),
-        }
+        })
     }
 }
 
@@ -569,7 +584,7 @@ mod test {
 
     use super::{
         hybrid::{DummyHybridHandler, HybridStateInternal},
-        AuthenticatorResponse, CredentialService,
+        AuthenticatorResponse, CredentialService, CredentialServiceClient
     };
 
     #[test]
@@ -587,7 +602,7 @@ mod test {
         ]);
         let cred_service = CredentialService::new(request, response, hybrid_handler);
         let mut stream = cred_service.get_hybrid_credential();
-        async_std::task::block_on(async { while let Some(_) = stream.next().await {} });
+        async_std::task::block_on(async move { while let Some(_) = stream.next().await {} });
         assert!(cred_service.cred_response.lock().unwrap().is_some());
     }
 

@@ -1,5 +1,6 @@
 pub mod gtk;
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,11 +13,12 @@ use tracing::info;
 
 // TODO: turn CredentialService into a trait so we don't have to do specify handler types manually.
 use crate::credential_service::hybrid::InternalHybridHandler;
-use crate::credential_service::CredentialService;
+use crate::credential_service::{CredentialService, CredentialServiceClient};
 
 #[derive(Debug)]
-pub(crate) struct ViewModel {
-    credential_service: Arc<Mutex<CredentialService<InternalHybridHandler>>>,
+pub(crate) struct ViewModel<C>
+where C: CredentialServiceClient + Send {
+    credential_service: Arc<Mutex<C>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     bg_update: Sender<BackgroundEvent>,
@@ -40,10 +42,10 @@ pub(crate) struct ViewModel {
     hybrid_linked_state: HybridState,
 }
 
-impl ViewModel {
+impl <C: CredentialServiceClient + Send> ViewModel<C> {
     pub(crate) fn new(
         operation: Operation,
-        credential_service: CredentialService<InternalHybridHandler>,
+        credential_service: C,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
