@@ -29,3 +29,4 @@ qrcode = "0.14.1"
 # this is temporary until we move COSE -> Vec<u8> serialization methods into libwebauthn
 cosey = "0.3.2"
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12", "ring", "log", "logging", "prefer-post-quantum"] }
+async-stream = "0.3.6"

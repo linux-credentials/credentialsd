@@ -12,7 +12,7 @@
             "args": [],
             "env": {
                 "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data",
-                "RUST_LOG": "xyz_iinuwa_credential_manager_portal_gtk=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug"
+                "RUST_LOG": "xyz_iinuwa_credential_manager_portal_gtk=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug"
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",

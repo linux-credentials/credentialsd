@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::task::Poll;
 
 use async_std::channel::Receiver;
+use async_stream::stream;
 use futures_lite::{FutureExt, Stream};
 use libwebauthn::fido::{AuthenticatorData, AuthenticatorDataFlags};
 use libwebauthn::ops::webauthn::{Assertion, GetAssertionResponse};
@@ -9,14 +10,18 @@ use libwebauthn::proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2Transpo
 use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
 use libwebauthn::transport::Device;
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::dbus::CredentialRequest;
 
 use super::AuthenticatorResponse;
 
 pub(crate) trait HybridHandler {
-    type Stream: Stream<Item = HybridStateInternal>;
-    fn start(&self, request: &CredentialRequest) -> Self::Stream;
+    // type Stream: Stream<Item = HybridStateInternal>;
+    fn start(
+        &self,
+        request: &CredentialRequest,
+    ) -> impl Stream<Item = HybridStateInternal> + Unpin + Send + Sized + 'static;
 }
 
 #[derive(Debug)]
@@ -28,9 +33,12 @@ impl InternalHybridHandler {
 }
 
 impl HybridHandler for InternalHybridHandler {
-    type Stream = InternalHybridStream;
+    // type Stream = InternalHybridStream;
 
-    fn start(&self, request: &CredentialRequest) -> Self::Stream {
+    fn start(
+        &self,
+        request: &CredentialRequest,
+    ) -> impl Stream<Item = HybridStateInternal> + Unpin + Send + Sized + 'static {
         let request = request.clone();
         let (tx, rx) = async_std::channel::unbounded();
         tokio::spawn(async move {
@@ -92,10 +100,16 @@ impl HybridHandler for InternalHybridHandler {
                 }
             });
         });
-        InternalHybridStream { rx }
+        Box::pin(stream! {
+            while let Ok(state) = rx.recv().await {
+                yield state
+            }
+        })
+        // InternalHybridStream { rx }
     }
 }
 
+/*
 pub struct InternalHybridStream {
     rx: Receiver<HybridStateInternal>,
 }
@@ -107,14 +121,19 @@ impl Stream for InternalHybridStream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        match self.rx.recv().poll(cx) {
+        match self.rx.poll() {
+            Ok(state) => Poll::Ready(state),
+            Err(_) => Poll:Ready(None),
+            /*
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(state)) => Poll::Ready(Some(state)),
             Poll::Ready(Err(_)) => Poll::Ready(None),
+            */
         }
     }
 }
 
+*/
 #[derive(Debug)]
 pub struct DummyHybridHandler {
     stream: DummyHybridStateStream,
@@ -137,9 +156,12 @@ impl Default for DummyHybridHandler {
     }
 }
 impl HybridHandler for DummyHybridHandler {
-    type Stream = DummyHybridStateStream;
+    // type Stream = DummyHybridStateStream;
 
-    fn start(&self, _request: &CredentialRequest) -> Self::Stream {
+    fn start(
+        &self,
+        _request: &CredentialRequest,
+    ) -> impl Stream<Item = HybridStateInternal> + Send + Sized + Unpin + 'static {
         self.stream.clone()
     }
 }
