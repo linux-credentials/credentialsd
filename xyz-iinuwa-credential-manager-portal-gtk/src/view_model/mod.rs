@@ -7,7 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info};
 
 use crate::credential_service::{CredentialServiceClient, UsbState};
@@ -32,7 +32,7 @@ where
 
     providers: Vec<Provider>,
 
-    usb_pin_tx: Option<Arc<oneshot::Sender<String>>>,
+    usb_pin_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -162,12 +162,12 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                 let tx = self.bg_update.clone();
                 let mut stream = {
                     let cred_service = cred_service.lock().await;
-                    cred_service.get_usb_credential()
+                    cred_service.get_usb_credential().await
                 };
                 async_std::task::spawn(async move {
                     // TODO: add cancellation
                     while let Some(usb_state) = stream.next().await {
-                        tx.send(BackgroundEvent::UsbStateChanged(usb_state.clone()))
+                        tx.send(BackgroundEvent::UsbStateChanged(usb_state))
                             .await
                             .unwrap();
                         /*
@@ -202,7 +202,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
             Transport::HybridQr => {
                 let tx = self.bg_update.clone();
                 let cred_service = self.credential_service.clone();
-                let mut stream = cred_service.lock().await.get_hybrid_credential();
+                let mut stream = cred_service.lock().await.get_hybrid_credential().await;
                 async_std::task::spawn(async move {
                     while let Some(state) = stream.next().await {
                         let state = state.into();
@@ -263,15 +263,9 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    let pin_tx = self.usb_pin_tx.take().unwrap();
-                    match Arc::try_unwrap(pin_tx) {
-                        Ok(pin_tx) => {
-                            if let Err(_) = pin_tx.send(pin) {
-                                error!("Failed to send pin to device");
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to send pin to device: {:?}", e);
+                    if let Some(pin_tx) = self.usb_pin_tx.take() {
+                        if let Err(_) = pin_tx.lock().await.send(pin).await {
+                            error!("Failed to send pin to device");
                         }
                     }
                 }
@@ -301,7 +295,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                             attempts_left,
                             pin_tx,
                         } => {
-                            let _ = self.usb_pin_tx.insert(pin_tx);
+                            let _ = self.usb_pin_tx.insert(Arc::new(Mutex::new(pin_tx)));
                             self.tx_update
                                 .send(ViewUpdate::UsbNeedsPin { attempts_left })
                                 .await
@@ -320,7 +314,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .unwrap();
                         }
                         UsbState::Completed => {
-                            self.credential_service.lock().await.complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         UsbState::SelectingDevice => {
@@ -356,7 +349,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         }
                         HybridState::Completed => {
                             self.hybrid_qr_code_data = None;
-                            self.credential_service.lock().await.complete_auth();
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         HybridState::UserCancelled => {

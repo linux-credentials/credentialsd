@@ -1,4 +1,5 @@
 pub mod hybrid;
+mod server;
 pub mod usb;
 
 use std::{
@@ -23,14 +24,17 @@ use crate::{
 };
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
-pub use usb::UsbState;
 use usb::{UsbHandler, UsbStateInternal};
+pub use {
+    server::{CredentialManagementClient, CredentialServiceClient, InProcessServer},
+    usb::UsbState,
+};
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
     devices: Vec<Device>,
 
-    cred_request: CredentialRequest,
+    cred_request: Mutex<Option<CredentialRequest>>,
     // Place to store data to be returned to the caller
     cred_response: Arc<Mutex<Option<CredentialResponse>>>,
 
@@ -38,13 +42,12 @@ pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
     usb_handler: U,
 }
 
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialService<H, U> {
-    pub fn new(
-        cred_request: CredentialRequest,
-        cred_response: Arc<Mutex<Option<CredentialResponse>>>,
-        hybrid_handler: H,
-        usb_handler: U,
-    ) -> Self {
+impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialService<H, U>
+where
+// <H as HybridHandler>::Stream: Unpin + Send + Sized + 'static,
+// <U as UsbHandler>::Stream: Unpin + Send + Sized + 'static,
+{
+    pub fn new(hybrid_handler: H, usb_handler: U) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -58,36 +61,32 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialService<H, U> {
         Self {
             devices,
 
-            cred_request,
-            cred_response,
+            cred_request: Mutex::new(None),
+            cred_response: Arc::new(Mutex::new(None)),
 
             hybrid_handler,
             usb_handler,
         }
     }
-}
 
-pub trait CredentialServiceClient {
-    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+    pub fn init_request(&self, request: &CredentialRequest) -> Result<(), String> {
+        let mut cred_request = self.cred_request.lock().unwrap();
+        if cred_request.is_some() {
+            Err("Already a request in progress.".to_string())
+        } else {
+            _ = cred_request.insert(request.clone());
+            Ok(())
+        }
+    }
 
-    fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>>;
-    fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send>>;
-
-    fn complete_auth(&mut self);
-}
-
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialServiceClient
-    for CredentialService<H, U>
-where
-    <H as HybridHandler>::Stream: Unpin + Send + 'static,
-    <U as UsbHandler>::Stream: Unpin + Send + 'static,
-{
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         Ok(self.devices.to_owned())
     }
 
     fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let stream = self.hybrid_handler.start(&self.cred_request);
+        let guard = self.cred_request.lock().unwrap();
+        let cred_request = guard.clone().unwrap();
+        let stream = self.hybrid_handler.start(&cred_request);
         let cred_response = self.cred_response.clone();
         Box::pin(HybridStateStream {
             inner: stream,
@@ -96,16 +95,19 @@ where
     }
 
     fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
-        let stream = self.usb_handler.start(&self.cred_request);
+        let guard = self.cred_request.lock().unwrap();
+        let cred_request = guard.clone().unwrap();
+        let stream = self.usb_handler.start(&cred_request);
         Box::pin(UsbStateStream {
             inner: stream,
             cred_response: self.cred_response.clone(),
         })
     }
 
-    fn complete_auth(&mut self) {
-        // let mut data = self.output_data.lock().unwrap();
-        // data.replace((self.cred_response));
+    pub fn complete_auth(&self) -> Option<CredentialResponse> {
+        self.cred_request.lock().unwrap().take();
+        let mut cred_response = self.cred_response.lock().unwrap();
+        cred_response.take()
     }
 }
 
@@ -189,7 +191,6 @@ impl AuthenticatorResponse {
                     ),
                 )
             }
-
             AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions })
                 if assertions.len() == 1 =>
             {
@@ -219,7 +220,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod test {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use async_std::stream::StreamExt;
 
@@ -230,13 +231,12 @@ mod test {
 
     use super::{
         hybrid::{DummyHybridHandler, HybridStateInternal},
-        AuthenticatorResponse, CredentialService, CredentialServiceClient,
+        AuthenticatorResponse, CredentialService,
     };
 
     #[test]
     fn test_hybrid_sets_credential() {
         let request = create_credential_request();
-        let response = Arc::new(Mutex::new(None));
         let qr_code = String::from("FIDO:/078241338926040702789239694720083010994762289662861130514766991835876383562063181103169246410435938367110394959927031730060360967994421343201235185697538107096654083332");
         let authenticator_response = create_authenticator_response();
 
@@ -247,10 +247,12 @@ mod test {
             HybridStateInternal::Completed(authenticator_response),
         ]);
         let usb_handler = LocalUsbHandler {};
-        let cred_service = CredentialService::new(request, response, hybrid_handler, usb_handler);
+        let cred_service = Arc::new(CredentialService::new(hybrid_handler, usb_handler));
+        cred_service.init_request(&request).unwrap();
         let mut stream = cred_service.get_hybrid_credential();
         async_std::task::block_on(async move { while let Some(_) = stream.next().await {} });
-        assert!(cred_service.cred_response.lock().unwrap().is_some());
+        let cred_service = Arc::try_unwrap(cred_service).unwrap();
+        assert!(cred_service.complete_auth().is_some());
     }
 
     fn create_credential_request() -> CredentialRequest {

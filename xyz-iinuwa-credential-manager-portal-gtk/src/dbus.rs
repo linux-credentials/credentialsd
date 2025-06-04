@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD};
-use gettextrs::{gettext, LocaleCategory};
-use gtk::{gio, glib};
 
 use libwebauthn::ops::webauthn::{
     Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
@@ -19,10 +16,7 @@ use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialUserEntity,
 };
 use ring::digest;
-use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
-    Mutex as AsyncMutex,
-};
+use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     connection::{self, Connection},
     fdo, interface,
@@ -30,98 +24,41 @@ use zbus::{
     Result,
 };
 
-use crate::application::ExampleApplication;
-use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
-use crate::credential_service::hybrid::InternalHybridHandler;
-use crate::credential_service::usb::LocalUsbHandler;
-use crate::credential_service::CredentialService;
-use crate::view_model::CredentialType;
-use crate::view_model::Operation;
-use crate::view_model::{self, ViewEvent, ViewUpdate};
+use crate::credential_service::CredentialManagementClient;
+use crate::gui::ViewRequest;
+use crate::view_model::{CredentialType, Operation};
 use crate::webauthn::{
     self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
 };
 
-pub(crate) async fn start_service(service_name: &str, path: &str) -> Result<Connection> {
-    let (gui_tx, gui_rx) = mpsc::channel(1);
-    let lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<Option<CredentialResponse>>)>>> =
+pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 'static>(
+    service_name: &str,
+    path: &str,
+    gui_tx: async_std::channel::Sender<ViewRequest>,
+    manager_client: C,
+) -> Result<Connection> {
+    let lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>> =
         Arc::new(AsyncMutex::new(gui_tx));
-    start_gui_thread(gui_rx);
     connection::Builder::session()?
         .name(service_name)?
-        .serve_at(path, CredentialManager { app_lock: lock })?
+        .serve_at(
+            path,
+            CredentialManager {
+                app_lock: lock,
+                manager_client,
+            },
+        )?
         .build()
         .await
 }
 
-fn start_gui_thread(mut rx: Receiver<(CredentialRequest, Sender<Option<CredentialResponse>>)>) {
-    thread::Builder::new()
-        .name("gui".into())
-        .spawn(move || {
-            while let Some((cred_request, response_tx)) = rx.blocking_recv() {
-                let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
-                let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
-                let data = Arc::new(Mutex::new(None));
-                let operation = match &cred_request {
-                    CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create {
-                        cred_type: CredentialType::Passkey,
-                    },
-                    CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get {
-                        cred_types: vec![CredentialType::Passkey],
-                    },
-                };
-                let credential_service = CredentialService::new(
-                    cred_request,
-                    data.clone(),
-                    InternalHybridHandler::new(),
-                    LocalUsbHandler {},
-                );
-                let event_loop = async_std::task::spawn(async move {
-                    let mut vm = view_model::ViewModel::new(
-                        operation,
-                        credential_service,
-                        rx_event,
-                        tx_update,
-                    );
-                    vm.start_event_loop().await;
-                    println!("event loop ended?");
-                });
-                start_gtk_app(tx_event, rx_update);
-
-                async_std::task::block_on(event_loop.cancel());
-                let lock = data.lock().unwrap();
-                let response = lock.as_ref().cloned();
-                response_tx.blocking_send(response).unwrap();
-            }
-        })
-        .unwrap();
-}
-
-fn start_gtk_app(
-    tx_event: async_std::channel::Sender<ViewEvent>,
-    rx_update: async_std::channel::Receiver<ViewUpdate>,
-) {
-    // Prepare i18n
-    gettextrs::setlocale(LocaleCategory::LcAll, "");
-    gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
-    gettextrs::textdomain(GETTEXT_PACKAGE).expect("Unable to switch to the text domain");
-
-    if glib::application_name().is_none() {
-        glib::set_application_name(&gettext("Credential Manager"));
-    }
-    let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
-    gio::resources_register(&res);
-
-    let app = ExampleApplication::new(tx_event, rx_update);
-    app.run();
-}
-
-struct CredentialManager {
-    app_lock: Arc<AsyncMutex<Sender<(CredentialRequest, Sender<Option<CredentialResponse>>)>>>,
+struct CredentialManager<C: CredentialManagementClient> {
+    app_lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>>,
+    manager_client: C,
 }
 
 #[interface(name = "xyz.iinuwa.credentials.CredentialManagerUi1")]
-impl CredentialManager {
+impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C> {
     async fn create_credential(
         &self,
         request: CreateCredentialRequest,
@@ -144,13 +81,13 @@ impl CredentialManager {
                                 "Could not parse passkey creation request: {e:?}"
                             ))
                         })?;
-                    let request =
+                    let cred_request =
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
-                    let (data_tx, mut data_rx) = mpsc::channel(1);
-                    tx.send((request, data_tx)).await.unwrap();
-                    if let Some(CredentialResponse::CreatePublicKeyCredentialResponse(
-                        cred_response,
-                    )) = data_rx.recv().await.unwrap()
+
+                    let response = execute_flow(&tx, &self.manager_client, &cred_request).await?;
+
+                    if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) =
+                        response
                     {
                         let public_key_response =
                             CreatePublicKeyCredentialResponse::try_from_ctap2_response(
@@ -191,6 +128,8 @@ impl CredentialManager {
                             "Cross-origin public-key credentials are not allowed.",
                         )));
                     }
+                    // Setup request
+
                     // TODO: assert that RP ID is bound to origin:
                     // - if RP ID is not set, set the RP ID to the origin's effective domain
                     // - if RP ID is set, assert that it matches origin's effective domain
@@ -203,14 +142,13 @@ impl CredentialManager {
                                 "Could not parse passkey assertion request.".to_owned(),
                             )
                         })?;
-                    let request =
+                    let cred_request =
                         CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
-                    let (data_tx, mut data_rx) = mpsc::channel(1);
-                    tx.send((request, data_tx)).await.unwrap();
-                    match data_rx.recv().await {
-                        Some(Some(CredentialResponse::GetPublicKeyCredentialResponse(
-                            cred_response,
-                        ))) => {
+
+                    let response = execute_flow(&tx, &self.manager_client, &cred_request).await?;
+
+                    match response {
+                        CredentialResponse::GetPublicKeyCredentialResponse(cred_response) => {
                             let public_key_response =
                                 GetPublicKeyCredentialResponse::try_from_ctap2_response(
                                     &cred_response,
@@ -218,10 +156,9 @@ impl CredentialManager {
                                 )?;
                             Ok(public_key_response.into())
                         }
-                        Some(_) => Err(fdo::Error::Failed(
+                        _ => Err(fdo::Error::Failed(
                             "Invalid credential response received from authenticator".to_string(),
                         )),
-                        None => Err(fdo::Error::Failed("User cancelled operation".to_string())),
                     }
                 }
                 _ => Err(fdo::Error::Failed(
@@ -250,6 +187,44 @@ impl CredentialManager {
             signal_unknown_credential: false,
         })
     }
+}
+
+async fn execute_flow<C: CredentialManagementClient>(
+    gui_tx: &async_std::channel::Sender<ViewRequest>,
+    manager_client: &C,
+    cred_request: &CredentialRequest,
+) -> Result<CredentialResponse> {
+    manager_client
+        .init_request(cred_request.clone())
+        .await
+        .map_err(|_| fdo::Error::Failed("Request already running".to_string()))?;
+
+    // start GUI
+    let operation = match &cred_request {
+        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create {
+            cred_type: CredentialType::Passkey,
+        },
+        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get {
+            cred_types: vec![CredentialType::Passkey],
+        },
+    };
+    let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();
+    let view_request = ViewRequest {
+        operation,
+        signal: signal_tx,
+    };
+    gui_tx.send(view_request).await.unwrap();
+
+    // wait for gui to complete
+    signal_rx.await.map_err(|_| {
+        zbus::Error::Failure("GUI channel closed before completing request.".to_string())
+    })?;
+
+    // finish up
+    manager_client.complete_auth().await.map_err(|err| {
+        tracing::error!("Error retrieving credential: {:?}", err);
+        zbus::Error::Failure("Error retrieving credential".to_string())
+    })
 }
 
 // D-Bus <-> internal types

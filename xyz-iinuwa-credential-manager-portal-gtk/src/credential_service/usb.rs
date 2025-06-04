@@ -1,15 +1,13 @@
-use std::{ops::DerefMut, sync::Arc, time::Duration};
+use std::{ops::DerefMut, time::Duration};
 
+use async_stream::stream;
 use futures_lite::Stream;
 use libwebauthn::{
     transport::{hid::HidDevice, Device},
     webauthn::{Error as WebAuthnError, WebAuthn},
     UxUpdate,
 };
-use tokio::sync::{
-    mpsc::{self, error::TryRecvError, Receiver, Sender, WeakSender},
-    oneshot,
-};
+use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
 use crate::dbus::CredentialRequest;
@@ -17,8 +15,12 @@ use crate::dbus::CredentialRequest;
 use super::AuthenticatorResponse;
 
 pub(crate) trait UsbHandler {
-    type Stream: Stream<Item = UsbStateInternal>;
-    fn start(&self, request: &CredentialRequest) -> Self::Stream;
+    // type Stream: Stream<Item = UsbStateInternal>;
+    // fn start(&self, request: &CredentialRequest) -> Self::Stream;
+    fn start(
+        &self,
+        request: &CredentialRequest,
+    ) -> impl Stream<Item = UsbStateInternal> + Send + Sized + Unpin + 'static;
 }
 
 #[derive(Debug)]
@@ -101,7 +103,7 @@ impl LocalUsbHandler {
                             pin_tx,
                         })) => Ok(UsbStateInternal::NeedsPin {
                             attempts_left,
-                            pin_tx: Arc::new(pin_tx),
+                            pin_tx: pin_tx,
                         }),
                         Some(Ok(UsbUvMessage::NeedsUserVerification { attempts_left })) => {
                             Ok(UsbStateInternal::NeedsUserVerification {
@@ -129,29 +131,31 @@ impl LocalUsbHandler {
                 }
                 UsbStateInternal::NeedsPin { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
-                | UsbStateInternal::NeedsUserPresence => match signal_rx.try_recv() {
-                    Ok(msg) => match msg? {
-                        UsbUvMessage::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        } => Ok(UsbStateInternal::NeedsPin {
-                            attempts_left,
-                            pin_tx: Arc::new(pin_tx),
-                        }),
-                        UsbUvMessage::NeedsUserVerification { attempts_left } => {
-                            Ok(UsbStateInternal::NeedsUserVerification {
-                                attempts_left: attempts_left,
-                            })
-                        }
-                        UsbUvMessage::NeedsUserPresence => Ok(UsbStateInternal::NeedsUserPresence),
-                        UsbUvMessage::ReceivedCredential(response) => {
-                            Ok(UsbStateInternal::Completed(response.clone()))
-                        }
-                    },
-                    Err(TryRecvError::Empty) => Ok(prev_usb_state),
-                    Err(TryRecvError::Disconnected) => {
-                        Err("USB UV handler channel closed".to_string())
+                | UsbStateInternal::NeedsUserPresence => match signal_rx.recv().await {
+                    Some(msg) => {
+                        let state = match msg? {
+                            UsbUvMessage::NeedsPin {
+                                attempts_left,
+                                pin_tx,
+                            } => Ok(UsbStateInternal::NeedsPin {
+                                attempts_left,
+                                pin_tx: pin_tx,
+                            }),
+                            UsbUvMessage::NeedsUserVerification { attempts_left } => {
+                                Ok(UsbStateInternal::NeedsUserVerification {
+                                    attempts_left: attempts_left,
+                                })
+                            }
+                            UsbUvMessage::NeedsUserPresence => {
+                                Ok(UsbStateInternal::NeedsUserPresence)
+                            }
+                            UsbUvMessage::ReceivedCredential(response) => {
+                                Ok(UsbStateInternal::Completed(response.clone()))
+                            }
+                        };
+                        state
                     }
+                    None => Err("USB UV handler channel closed".to_string()),
                 },
                 UsbStateInternal::Completed(_) => Ok(prev_usb_state),
             };
@@ -260,17 +264,25 @@ async fn notify_ceremony_failed(signal_tx: &Sender<Result<UsbUvMessage, String>>
 }
 
 impl UsbHandler for LocalUsbHandler {
-    type Stream = LocalUsbStateStream;
+    // type Stream = LocalUsbStateStream;
 
-    fn start(&self, request: &CredentialRequest) -> Self::Stream {
+    fn start(
+        &self,
+        request: &CredentialRequest,
+    ) -> impl Stream<Item = UsbStateInternal> + Send + Sized + Unpin + 'static {
         let request = request.clone();
-        let (tx, rx) = mpsc::channel(32);
+        let (tx, mut rx) = mpsc::channel(32);
         tokio::spawn(async move {
             if let Err(err) = LocalUsbHandler::process(tx, request).await {
                 tracing::error!("Error getting credential from USB: {:?}", err);
             }
         });
-        LocalUsbStateStream { rx }
+        Box::pin(stream! {
+            while let Some(state) = rx.recv().await {
+                yield state
+            }
+        })
+        // LocalUsbStateStream { rx }
     }
 }
 
@@ -304,7 +316,7 @@ pub enum UsbStateInternal {
     /// The device needs the PIN to be entered.
     NeedsPin {
         attempts_left: Option<u32>,
-        pin_tx: Arc<oneshot::Sender<String>>,
+        pin_tx: mpsc::Sender<String>,
     },
 
     /// The device needs on-device user verification.
@@ -341,7 +353,7 @@ pub enum UsbState {
     /// The device needs the PIN to be entered.
     NeedsPin {
         attempts_left: Option<u32>,
-        pin_tx: Arc<oneshot::Sender<String>>,
+        pin_tx: mpsc::Sender<String>,
     },
 
     /// The device needs on-device user verification.
@@ -409,7 +421,7 @@ async fn handle_usb_updates(
                     signal_tx.send(Err("No more PIN attempts allowed. Select a different authenticator or try again later.".to_string())).await.unwrap();
                     continue;
                 }
-                let (pin_tx, pin_rx) = oneshot::channel();
+                let (pin_tx, mut pin_rx) = mpsc::channel(1);
                 signal_tx
                     .send(Ok(UsbUvMessage::NeedsPin {
                         pin_tx,
@@ -417,12 +429,12 @@ async fn handle_usb_updates(
                     }))
                     .await
                     .unwrap();
-                match pin_rx.await {
-                    Ok(pin) => match pin_update.send_pin(&pin) {
+                match pin_rx.recv().await {
+                    Some(pin) => match pin_update.send_pin(&pin) {
                         Ok(()) => {}
                         Err(err) => tracing::error!("Error sending pin to device: {:?}", err),
                     },
-                    Err(err) => tracing::debug!("Error receiving pin from client: {:?}", err),
+                    None => tracing::debug!("Pin channel closed before receiving pin from client."),
                 }
             }
             UxUpdate::PresenceRequired => {
@@ -439,7 +451,7 @@ async fn handle_usb_updates(
 enum UsbUvMessage {
     NeedsPin {
         attempts_left: Option<u32>,
-        pin_tx: oneshot::Sender<String>,
+        pin_tx: mpsc::Sender<String>,
     },
     NeedsUserVerification {
         attempts_left: Option<u32>,
