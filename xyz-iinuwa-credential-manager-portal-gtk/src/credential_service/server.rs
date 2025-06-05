@@ -20,7 +20,7 @@ pub enum ServiceRequest {
 }
 
 enum ManagementRequest {
-    InitRequest(CredentialRequest),
+    InitRequest(Box<CredentialRequest>),
     CompleteAuth,
 }
 
@@ -30,6 +30,9 @@ enum ManagementResponse {
     CompleteAuth(Option<CredentialResponse>),
 }
 
+// Clippy complains that these variant names have the same prefix, but that's
+// intentional for now.
+#[allow(clippy::enum_variant_names)]
 pub enum ServiceResponse {
     GetDevices(Vec<Device>),
     GetHybridCredential(Pin<Box<dyn Stream<Item = HybridState> + Send>>),
@@ -115,7 +118,7 @@ impl InProcessManager {
 impl CredentialManagementClient for InProcessManager {
     async fn init_request(&self, cred_request: CredentialRequest) -> Result<(), String> {
         let response = self
-            .send(ManagementRequest::InitRequest(cred_request))
+            .send(ManagementRequest::InitRequest(Box::new(cred_request)))
             .await
             .unwrap();
         if let ManagementResponse::InitRequest(result) = response {
@@ -197,19 +200,19 @@ impl CredentialServiceClient for InProcessClient {
 
 impl CredentialServiceClient for Arc<InProcessClient> {
     fn get_available_public_key_devices(&self) -> impl Future<Output = Result<Vec<Device>, ()>> {
-        InProcessClient::get_available_public_key_devices(&self)
+        InProcessClient::get_available_public_key_devices(self)
     }
 
     fn get_hybrid_credential(
         &self,
     ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> {
-        InProcessClient::get_hybrid_credential(&self)
+        InProcessClient::get_hybrid_credential(self)
     }
 
     fn get_usb_credential(
         &self,
     ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> {
-        InProcessClient::get_usb_credential(&self)
+        InProcessClient::get_usb_credential(self)
     }
 }
 
@@ -217,9 +220,7 @@ impl CredentialServiceClient for Arc<InProcessClient> {
 pub struct InProcessServer<H, U>
 where
     H: HybridHandler + Debug,
-    // <H as HybridHandler>::Stream: Unpin + Send + Sized + 'static,
     U: UsbHandler + Debug,
-    // <U as UsbHandler>::Stream: Unpin + Send + Sized + 'static,
 {
     svc: CredentialService<H, U>,
     rx: mpsc::Receiver<(
@@ -231,9 +232,7 @@ where
 impl<H, U> InProcessServer<H, U>
 where
     H: HybridHandler + Debug,
-    // <H as HybridHandler>::Stream: Unpin + Send + Sized + 'static,
     U: UsbHandler + Debug,
-    // <U as UsbHandler>::Stream: Unpin + Send + Sized + 'static,
 {
     pub fn new(svc: CredentialService<H, U>) -> (Self, InProcessManager, InProcessClient) {
         let (tx, rx) = mpsc::channel(256);

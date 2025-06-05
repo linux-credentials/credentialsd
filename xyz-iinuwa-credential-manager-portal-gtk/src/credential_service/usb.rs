@@ -1,4 +1,4 @@
-use std::{ops::DerefMut, time::Duration};
+use std::time::Duration;
 
 use async_stream::stream;
 use futures_lite::Stream;
@@ -15,18 +15,16 @@ use crate::dbus::CredentialRequest;
 use super::AuthenticatorResponse;
 
 pub(crate) trait UsbHandler {
-    // type Stream: Stream<Item = UsbStateInternal>;
-    // fn start(&self, request: &CredentialRequest) -> Self::Stream;
     fn start(
         &self,
         request: &CredentialRequest,
-    ) -> impl Stream<Item = UsbStateInternal> + Send + Sized + Unpin + 'static;
+    ) -> impl Stream<Item = UsbEvent> + Send + Sized + Unpin + 'static;
 }
 
 #[derive(Debug)]
-pub struct LocalUsbHandler {}
+pub struct InProcessUsbHandler {}
 
-impl LocalUsbHandler {
+impl InProcessUsbHandler {
     async fn process(
         tx: Sender<UsbStateInternal>,
         cred_request: CredentialRequest,
@@ -103,12 +101,10 @@ impl LocalUsbHandler {
                             pin_tx,
                         })) => Ok(UsbStateInternal::NeedsPin {
                             attempts_left,
-                            pin_tx: pin_tx,
+                            pin_tx,
                         }),
                         Some(Ok(UsbUvMessage::NeedsUserVerification { attempts_left })) => {
-                            Ok(UsbStateInternal::NeedsUserVerification {
-                                attempts_left: attempts_left,
-                            })
+                            Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
                         }
                         Some(Ok(UsbUvMessage::NeedsUserPresence)) => {
                             Ok(UsbStateInternal::NeedsUserPresence)
@@ -132,29 +128,22 @@ impl LocalUsbHandler {
                 UsbStateInternal::NeedsPin { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
                 | UsbStateInternal::NeedsUserPresence => match signal_rx.recv().await {
-                    Some(msg) => {
-                        let state = match msg? {
-                            UsbUvMessage::NeedsPin {
-                                attempts_left,
-                                pin_tx,
-                            } => Ok(UsbStateInternal::NeedsPin {
-                                attempts_left,
-                                pin_tx: pin_tx,
-                            }),
-                            UsbUvMessage::NeedsUserVerification { attempts_left } => {
-                                Ok(UsbStateInternal::NeedsUserVerification {
-                                    attempts_left: attempts_left,
-                                })
-                            }
-                            UsbUvMessage::NeedsUserPresence => {
-                                Ok(UsbStateInternal::NeedsUserPresence)
-                            }
-                            UsbUvMessage::ReceivedCredential(response) => {
-                                Ok(UsbStateInternal::Completed(response.clone()))
-                            }
-                        };
-                        state
-                    }
+                    Some(msg) => match msg? {
+                        UsbUvMessage::NeedsPin {
+                            attempts_left,
+                            pin_tx,
+                        } => Ok(UsbStateInternal::NeedsPin {
+                            attempts_left,
+                            pin_tx,
+                        }),
+                        UsbUvMessage::NeedsUserVerification { attempts_left } => {
+                            Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
+                        }
+                        UsbUvMessage::NeedsUserPresence => Ok(UsbStateInternal::NeedsUserPresence),
+                        UsbUvMessage::ReceivedCredential(response) => {
+                            Ok(UsbStateInternal::Completed(response.clone()))
+                        }
+                    },
                     None => Err("USB UV handler channel closed".to_string()),
                 },
                 UsbStateInternal::Completed(_) => Ok(prev_usb_state),
@@ -163,35 +152,11 @@ impl LocalUsbHandler {
             tx.send(state.clone())
                 .await
                 .map_err(|_| "Receiver channel closed".to_string())?;
-            match state {
-                UsbStateInternal::Completed(_) => break Ok(()),
-                _ => {}
+            if let UsbStateInternal::Completed(_) = state {
+                break Ok(());
             }
         }
     }
-
-    /*
-     async fn cancel_device_discovery_usb(&mut self) -> Result<(), String> {
-        *self.usb_state.lock().await = UsbState::Idle;
-        println!("frontend: Cancel USB request");
-        Ok(())
-    }
-    */
-
-    /*
-        async fn validate_usb_device_pin(&mut self, pin: &str) -> Result<(), ()> {
-           let current_state = self.usb_state.lock().await.clone();
-           match current_state {
-               UsbState::NeedsPin {
-                   attempts_left: Some(attempts_left),
-               } if attempts_left > 1 => {
-                   self.usb_uv_handler.send_pin(pin).await;
-                   Ok(())
-               }
-               _ => Err(()),
-           }
-       }
-    */
 }
 
 async fn handle_events(
@@ -207,10 +172,10 @@ async fn handle_events(
     });
     match cred_request {
         CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => loop {
-            match channel.webauthn_make_credential(&make_cred_request).await {
+            match channel.webauthn_make_credential(make_cred_request).await {
                 Ok(response) => {
                     notify_ceremony_completed(
-                        &signal_tx,
+                        signal_tx,
                         AuthenticatorResponse::CredentialCreated(response),
                     )
                     .await;
@@ -221,16 +186,16 @@ async fn handle_events(
                     continue;
                 }
                 Err(err) => {
-                    notify_ceremony_failed(&signal_tx, err.to_string()).await;
+                    notify_ceremony_failed(signal_tx, err.to_string()).await;
                     break;
                 }
             };
         },
         CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => loop {
-            match channel.webauthn_get_assertion(&get_cred_request).await {
+            match channel.webauthn_get_assertion(get_cred_request).await {
                 Ok(response) => {
                     notify_ceremony_completed(
-                        &signal_tx,
+                        signal_tx,
                         AuthenticatorResponse::CredentialsAsserted(response),
                     )
                     .await;
@@ -241,7 +206,7 @@ async fn handle_events(
                     continue;
                 }
                 Err(err) => {
-                    notify_ceremony_failed(&signal_tx, err.to_string()).await;
+                    notify_ceremony_failed(signal_tx, err.to_string()).await;
                     break;
                 }
             };
@@ -263,46 +228,32 @@ async fn notify_ceremony_failed(signal_tx: &Sender<Result<UsbUvMessage, String>>
     signal_tx.send(Err(err)).await.unwrap();
 }
 
-impl UsbHandler for LocalUsbHandler {
-    // type Stream = LocalUsbStateStream;
-
+impl UsbHandler for InProcessUsbHandler {
     fn start(
         &self,
         request: &CredentialRequest,
-    ) -> impl Stream<Item = UsbStateInternal> + Send + Sized + Unpin + 'static {
+    ) -> impl Stream<Item = UsbEvent> + Send + Sized + Unpin + 'static {
         let request = request.clone();
         let (tx, mut rx) = mpsc::channel(32);
         tokio::spawn(async move {
-            if let Err(err) = LocalUsbHandler::process(tx, request).await {
+            if let Err(err) = InProcessUsbHandler::process(tx, request).await {
                 tracing::error!("Error getting credential from USB: {:?}", err);
             }
         });
         Box::pin(stream! {
             while let Some(state) = rx.recv().await {
-                yield state
+                yield UsbEvent { state }
             }
         })
-        // LocalUsbStateStream { rx }
     }
 }
 
-pub struct LocalUsbStateStream {
-    rx: Receiver<UsbStateInternal>,
-}
-
-impl Stream for LocalUsbStateStream {
-    type Item = UsbStateInternal;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.deref_mut().rx.poll_recv(cx)
-    }
+pub struct UsbEvent {
+    pub(super) state: UsbStateInternal,
 }
 
 #[derive(Clone, Debug, Default)]
-pub enum UsbStateInternal {
+pub(super) enum UsbStateInternal {
     /// Not polling for FIDO USB device.
     #[default]
     Idle,

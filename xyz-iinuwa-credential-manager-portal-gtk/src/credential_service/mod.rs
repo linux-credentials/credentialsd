@@ -16,6 +16,7 @@ use libwebauthn::{
 };
 
 use crate::{
+    credential_service::{hybrid::HybridEvent, usb::UsbEvent},
     dbus::{
         CredentialRequest, CredentialResponse, GetAssertionResponseInternal,
         MakeCredentialResponseInternal,
@@ -118,7 +119,7 @@ pub struct HybridStateStream<H> {
 
 impl<H> Stream for HybridStateStream<H>
 where
-    H: Stream<Item = HybridStateInternal> + Unpin + Sized,
+    H: Stream<Item = HybridEvent> + Unpin + Sized,
 {
     type Item = HybridState;
 
@@ -129,10 +130,9 @@ where
         let cred_response = &self.cred_response.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(state)) => {
+            Poll::Ready(Some(HybridEvent { state })) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
-                    let response =
-                        hybrid_response.into_cred_response(&["hybrid"], "cross-platform");
+                    let response = hybrid_response.as_cred_response(&["hybrid"], "cross-platform");
                     let mut cred_response = cred_response.lock().unwrap();
                     cred_response.replace(response);
                 }
@@ -150,7 +150,7 @@ struct UsbStateStream<H> {
 
 impl<H> Stream for UsbStateStream<H>
 where
-    H: Stream<Item = UsbStateInternal> + Unpin + Sized,
+    H: Stream<Item = UsbEvent> + Unpin + Sized,
 {
     type Item = UsbState;
 
@@ -161,9 +161,9 @@ where
         let cred_response = &self.cred_response.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(state)) => {
+            Poll::Ready(Some(UsbEvent { state })) => {
                 if let UsbStateInternal::Completed(response) = &state {
-                    let response = response.into_cred_response(&["usb"], "cross-platform");
+                    let response = response.as_cred_response(&["usb"], "cross-platform");
                     let mut cred_response = cred_response.lock().unwrap();
                     cred_response.replace(response);
                 }
@@ -180,7 +180,7 @@ enum AuthenticatorResponse {
     CredentialsAsserted(GetAssertionResponse),
 }
 impl AuthenticatorResponse {
-    fn into_cred_response(&self, transports: &[&str], modality: &str) -> CredentialResponse {
+    fn as_cred_response(&self, transports: &[&str], modality: &str) -> CredentialResponse {
         match self {
             AuthenticatorResponse::CredentialCreated(make_response) => {
                 CredentialResponse::CreatePublicKeyCredentialResponse(
@@ -225,12 +225,12 @@ mod test {
     use async_std::stream::StreamExt;
 
     use crate::{
-        credential_service::usb::LocalUsbHandler,
+        credential_service::usb::InProcessUsbHandler,
         dbus::{CreateCredentialRequest, CreatePublicKeyCredentialRequest, CredentialRequest},
     };
 
     use super::{
-        hybrid::{DummyHybridHandler, HybridStateInternal},
+        hybrid::{test::DummyHybridHandler, HybridStateInternal},
         AuthenticatorResponse, CredentialService,
     };
 
@@ -246,7 +246,7 @@ mod test {
             HybridStateInternal::Connecting,
             HybridStateInternal::Completed(authenticator_response),
         ]);
-        let usb_handler = LocalUsbHandler {};
+        let usb_handler = InProcessUsbHandler {};
         let cred_service = Arc::new(CredentialService::new(hybrid_handler, usb_handler));
         cred_service.init_request(&request).unwrap();
         let mut stream = cred_service.get_hybrid_credential();
