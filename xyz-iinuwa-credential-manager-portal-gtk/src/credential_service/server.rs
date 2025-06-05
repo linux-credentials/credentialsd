@@ -13,6 +13,7 @@ use super::hybrid::{HybridHandler, HybridState};
 use super::usb::{UsbHandler, UsbState};
 use super::CredentialService;
 
+#[allow(clippy::enum_variant_names)]
 pub enum ServiceRequest {
     GetDevices,
     GetHybridCredential,

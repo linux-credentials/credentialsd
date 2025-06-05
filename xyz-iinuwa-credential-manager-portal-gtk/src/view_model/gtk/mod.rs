@@ -284,7 +284,8 @@ impl ViewModel {
                 todo!();
             }
         }
-        self.set_selected_device(&device.into());
+        let device_object: DeviceObject = device.into();
+        self.set_selected_device(device_object);
         self.set_selected_credential("");
     }
 

@@ -55,6 +55,9 @@ impl HybridHandler for InternalHybridHandler {
                         panic!();
                     }
                 };
+                if let Err(err) = tx.send(HybridStateInternal::Connected).await {
+                    tracing::error!("Failed to send caBLE update: {:?}", err)
+                }
                 let response: AuthenticatorResponse = loop {
                     match &request {
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {

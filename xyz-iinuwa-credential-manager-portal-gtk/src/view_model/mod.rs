@@ -7,7 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::credential_service::{CredentialServiceClient, UsbState};
@@ -152,7 +152,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     todo!();
                 }
             };
-            self.selected_credential = None;
+            // Remove the attribute below when we implement cancellation for at least one transport.
+            #[allow(unreachable_code)]
+            {
+                self.selected_credential = None;
+            }
         }
 
         // start discovery for newly selected device
@@ -264,7 +268,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
                     if let Some(pin_tx) = self.usb_pin_tx.take() {
-                        if let Err(_) = pin_tx.lock().await.send(pin).await {
+                        if pin_tx.lock().await.send(pin).await.is_err() {
                             error!("Failed to send pin to device");
                         }
                     }
