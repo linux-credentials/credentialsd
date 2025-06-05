@@ -242,7 +242,6 @@ mod test {
 
         let hybrid_handler = DummyHybridHandler::new(vec![
             HybridStateInternal::Init(qr_code),
-            HybridStateInternal::Waiting,
             HybridStateInternal::Connecting,
             HybridStateInternal::Completed(authenticator_response),
         ]);
