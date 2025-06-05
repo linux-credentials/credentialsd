@@ -254,10 +254,10 @@ impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
 #[zvariant(signature = "dict")]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-authenticatorSelection
 pub(crate) struct AuthenticatorSelectionCriteria {
-    /// https://www.w3.org/TR/webauthn-3/#enum-attachment
-    #[zvariant(rename = "authenticatorAttachment")]
-    pub authenticator_attachment: Option<String>,
-
+    // /// https://www.w3.org/TR/webauthn-3/#enum-attachment
+    // #[zvariant(rename = "authenticatorAttachment")]
+    // pub authenticator_attachment: Option<String>,
+    //
     /// https://www.w3.org/TR/webauthn-3/#enum-residentKeyRequirement
     #[zvariant(rename = "residentKey")]
     pub resident_key: Option<String>,
