@@ -104,12 +104,9 @@ impl HybridHandler for InternalHybridHandler {
 
 #[derive(Clone, Debug)]
 pub(super) enum HybridStateInternal {
-    /// The FIDO string to be displayed to the user, which contains QR secret
-    /// and public key.
+    /// Awaiting BLE advert from phone. Content is the FIDO string to be
+    /// displayed to the user, which contains QR secret and public key.
     Init(String),
-
-    /// Awaiting BLE advert from phone.
-    Waiting,
 
     /// BLE advertisement has been received from phone, tunnel is being established
     Connecting,
@@ -129,12 +126,10 @@ pub struct HybridEvent {
 
 #[derive(Clone, Debug)]
 pub enum HybridState {
-    /// The FIDO string to be displayed to the user, which contains QR secret
+    /// Awaiting BLE advert from phone. Content is the FIDO string to be displayed to the user, which contains QR secret
     /// and public key.
     Init(String),
 
-    /// Awaiting BLE advert from phone.
-    Waiting,
     /// BLE advertisement has been received from phone, tunnel is being established
     Connecting,
 
@@ -149,7 +144,6 @@ impl From<HybridStateInternal> for HybridState {
     fn from(value: HybridStateInternal) -> Self {
         match value {
             HybridStateInternal::Init(qr_code) => HybridState::Init(qr_code),
-            HybridStateInternal::Waiting => HybridState::Waiting,
             HybridStateInternal::Connecting => HybridState::Connecting,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::UserCancelled => HybridState::UserCancelled,
@@ -246,7 +240,6 @@ pub(super) mod test {
             DummyHybridStateStream {
                 states: vec![
                     HybridStateInternal::Init(qr_code),
-                    HybridStateInternal::Waiting,
                     HybridStateInternal::Connecting,
                     HybridStateInternal::Completed(response.into()),
                 ],

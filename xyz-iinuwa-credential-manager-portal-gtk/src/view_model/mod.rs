@@ -217,11 +217,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                     .await
                                     .unwrap();
                             }
-                            HybridState::Waiting => {
-                                tx.send(BackgroundEvent::HybridQrStateChanged(state))
-                                    .await
-                                    .unwrap();
-                            }
                             HybridState::Connecting => {
                                 tx.send(BackgroundEvent::HybridQrStateChanged(state))
                                     .await
@@ -343,7 +338,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .await
                                 .unwrap();
                         }
-                        HybridState::Waiting => {}
                         HybridState::Connecting => {
                             self.hybrid_qr_code_data = None;
                             self.tx_update
@@ -431,11 +425,8 @@ pub enum HybridState {
     #[default]
     Idle,
 
-    /// QR code flow is starting
+    /// QR code flow is starting, awaiting QR code scan and BLE advert from phone.
     Started(String),
-
-    /// QR code is being displayed, awaiting QR code scan and BLE advert from phone.
-    Waiting,
 
     /// BLE advert received, connecting to caBLE tunnel with shared secret.
     Connecting,
@@ -457,7 +448,6 @@ impl From<crate::credential_service::hybrid::HybridState> for HybridState {
             crate::credential_service::hybrid::HybridState::Init(qr_code) => {
                 HybridState::Started(qr_code)
             }
-            crate::credential_service::hybrid::HybridState::Waiting => HybridState::Waiting,
             crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
             crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
             crate::credential_service::hybrid::HybridState::UserCancelled => {
