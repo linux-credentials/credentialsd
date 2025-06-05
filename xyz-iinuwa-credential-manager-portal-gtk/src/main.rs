@@ -15,7 +15,7 @@ mod window;
 use std::{error::Error, sync::Arc};
 
 use crate::credential_service::{
-    hybrid::InternalHybridHandler, usb::LocalUsbHandler, CredentialService, InProcessServer,
+    hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
 };
 
 #[tokio::main]
@@ -32,17 +32,17 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let credential_service =
-        CredentialService::new(InternalHybridHandler::new(), LocalUsbHandler {});
+        CredentialService::new(InternalHybridHandler::new(), InProcessUsbHandler {});
     print!("Starting credential service...\t");
     let (mut cred_server, cred_mgr, cred_client) = InProcessServer::new(credential_service);
-    // let cred_server = Arc::new(Mutex::new(cred_server));
     tokio::spawn(async move {
         cred_server.run().await;
     });
     println!(" ✅");
 
-    // this one
     print!("Starting GUI thread...\t");
+    // this allows the D-Bus service to signal to the GUI to draw a window for
+    // executing the credential flow.
     let (dbus_to_gui_tx, dbus_to_gui_rx) = async_std::channel::unbounded();
     gui::start_gui_thread(dbus_to_gui_rx, Arc::new(cred_client));
     println!(" ✅");
