@@ -222,6 +222,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                     .await
                                     .unwrap();
                             }
+                            HybridState::Connected => {
+                                tx.send(BackgroundEvent::HybridQrStateChanged(state))
+                                    .await
+                                    .unwrap();
+                            }
                             HybridState::Completed => {
                                 tx.send(BackgroundEvent::HybridQrStateChanged(state))
                                     .await
@@ -345,6 +350,13 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .await
                                 .unwrap();
                         }
+                        HybridState::Connected => {
+                            self.hybrid_qr_code_data = None;
+                            self.tx_update
+                                .send(ViewUpdate::HybridConnected)
+                                .await
+                                .unwrap();
+                        }
                         HybridState::Completed => {
                             self.hybrid_qr_code_data = None;
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
@@ -381,6 +393,7 @@ pub enum ViewUpdate {
 
     HybridNeedsQrCode(String),
     HybridConnecting,
+    HybridConnected,
 }
 
 pub enum BackgroundEvent {
@@ -431,10 +444,9 @@ pub enum HybridState {
     /// BLE advert received, connecting to caBLE tunnel with shared secret.
     Connecting,
 
-    /*  I don't think is necessary to signal.
-       /// Connected to device via caBLE tunnel.
-       Connected,
-    */
+    /// Connected to device via caBLE tunnel.
+    Connected,
+
     /// Credential received over tunnel.
     Completed,
 
@@ -449,6 +461,7 @@ impl From<crate::credential_service::hybrid::HybridState> for HybridState {
                 HybridState::Started(qr_code)
             }
             crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
+            crate::credential_service::hybrid::HybridState::Connected => HybridState::Connected,
             crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
             crate::credential_service::hybrid::HybridState::UserCancelled => {
                 HybridState::UserCancelled

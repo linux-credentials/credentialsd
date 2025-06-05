@@ -111,6 +111,9 @@ pub(super) enum HybridStateInternal {
     /// BLE advertisement has been received from phone, tunnel is being established
     Connecting,
 
+    /// Hybrid tunnel has been established
+    Connected,
+
     /// Authenticator data
     Completed(AuthenticatorResponse),
 
@@ -133,6 +136,9 @@ pub enum HybridState {
     /// BLE advertisement has been received from phone, tunnel is being established
     Connecting,
 
+    /// Tunnel is established, waiting for user to release credential on their device.
+    Connected,
+
     /// Authenticator data
     Completed,
 
@@ -145,6 +151,7 @@ impl From<HybridStateInternal> for HybridState {
         match value {
             HybridStateInternal::Init(qr_code) => HybridState::Init(qr_code),
             HybridStateInternal::Connecting => HybridState::Connecting,
+            HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::UserCancelled => HybridState::UserCancelled,
         }
