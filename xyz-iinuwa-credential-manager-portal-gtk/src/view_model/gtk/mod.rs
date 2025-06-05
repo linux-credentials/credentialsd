@@ -162,9 +162,17 @@ impl ViewModel {
                                     view_model.set_qr_code_visible(false);
                                     _ = view_model.qr_code_paintable().take();
                                     view_model.set_prompt(
-                                        "Device connected. Follow the instructions on your device",
+                                        "Connecting to your device. Make sure both devices are near each other and have Bluetooth enabled.",
                                     );
                                     view_model.set_qr_spinner_visible(true);
+                                }
+                                ViewUpdate::HybridConnected => {
+                                    view_model.set_qr_code_visible(false);
+                                    _ = view_model.qr_code_paintable().take();
+                                    view_model.set_prompt(
+                                        "Device connected. Follow the instructions on your device",
+                                    );
+                                    view_model.set_qr_spinner_visible(false);
                                 }
                                 ViewUpdate::Completed => {
                                     view_model.set_qr_spinner_visible(false);
