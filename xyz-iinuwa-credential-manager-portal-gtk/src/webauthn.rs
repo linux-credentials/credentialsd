@@ -11,7 +11,6 @@ use libwebauthn::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
-use zbus::zvariant::{DeserializeDict, Type};
 
 use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
@@ -75,7 +74,7 @@ pub(crate) struct MakeCredentialOptions {
     #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
     #[serde(default)]
     pub timeout: Option<Duration>,
-    #[serde(rename = "excludedCredentials")]
+    #[serde(rename = "excludeCredentials")]
     pub excluded_credentials: Option<Vec<CredentialDescriptor>>,
     #[serde(rename = "authenticatorSelection")]
     pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
@@ -197,8 +196,7 @@ pub(crate) struct GetCredentialExtensions {
     pub prf: Option<Prf>,
 }
 
-#[derive(Debug, Deserialize, Type)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-credential-descriptor
 pub(crate) struct CredentialDescriptor {
     /// Type of the public key credential the caller is referring to.
@@ -250,8 +248,7 @@ impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
     }
 }
 
-#[derive(Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Deserialize)]
 /// https://www.w3.org/TR/webauthn-3/#dictionary-authenticatorSelection
 pub(crate) struct AuthenticatorSelectionCriteria {
     // /// https://www.w3.org/TR/webauthn-3/#enum-attachment
@@ -259,15 +256,16 @@ pub(crate) struct AuthenticatorSelectionCriteria {
     // pub authenticator_attachment: Option<String>,
     //
     /// https://www.w3.org/TR/webauthn-3/#enum-residentKeyRequirement
-    #[zvariant(rename = "residentKey")]
+    #[serde(rename = "residentKey")]
     pub resident_key: Option<String>,
 
     // Implied by resident_key == "required", deprecated in webauthn
     // https://www.w3.org/TR/webauthn-3/#enum-residentKeyRequirement
-    // #[zvariant(rename = "requireResidentKey")]
-    // require_resident_key: Option<bool>,
+    #[serde(rename = "requireResidentKey")]
+    pub require_resident_key: Option<bool>,
+
     /// https://www.w3.org/TR/webauthn-3/#enumdef-userverificationrequirement
-    #[zvariant(rename = "userVerification")]
+    #[serde(rename = "userVerification")]
     pub user_verification: Option<String>,
 }
 
