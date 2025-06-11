@@ -72,8 +72,8 @@ function serializeRequest(options) {
   if (clone.publicKey.user) {
     clone.publicKey.user.id = serializeBytes(clone.publicKey.user.id)
   }
-  if (clone.publicKey.excludedCredentials) {
-    for (const cred in clone.publicKey.excludedCredentials) {
+  if (clone.publicKey.excludeCredentials) {
+    for (const cred of clone.publicKey.excludeCredentials) {
       cred.id = serializeBytes(cred.id)
     }
   }
