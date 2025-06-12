@@ -33,6 +33,7 @@ where
     providers: Vec<Provider>,
 
     usb_pin_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
+    usb_cred_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -61,6 +62,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
             selected_credential: None,
             providers: Vec::new(),
             usb_pin_tx: None,
+            usb_cred_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
             hybrid_linked_state: HybridState::default(),
@@ -278,7 +280,14 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         "Credential selected: {:?}. Current Device: {:?}",
                         cred_id, self.selected_device
                     );
+                    // TODO: Do we still need this?
                     self.selected_credential = Some(cred_id.clone());
+
+                    if let Some(cred_tx) = self.usb_cred_tx.take() {
+                        if cred_tx.lock().await.send(cred_id.clone()).await.is_err() {
+                            error!("Failed to send selected credential to device");
+                        }
+                    }
                     self.tx_update
                         .send(ViewUpdate::SelectCredential(cred_id))
                         .await
@@ -327,6 +336,13 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .unwrap();
                         }
                         UsbState::Idle | UsbState::Waiting => {}
+                        UsbState::SelectCredential { creds, cred_tx } => {
+                            let _ = self.usb_cred_tx.insert(Arc::new(Mutex::new(cred_tx)));
+                            self.tx_update
+                                .send(ViewUpdate::SetCredentials(creds))
+                                .await
+                                .unwrap();
+                        }
                     }
                 }
                 Event::Background(BackgroundEvent::HybridQrStateChanged(state)) => {
@@ -409,9 +425,9 @@ pub enum Event {
 
 #[derive(Clone, Debug, Default)]
 pub struct Credential {
-    id: String,
-    name: String,
-    username: Option<String>,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) username: Option<String>,
 }
 
 #[derive(Debug, Default)]

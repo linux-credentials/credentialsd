@@ -240,6 +240,27 @@ pub(crate) enum CredentialResponse {
     GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
 }
 
+impl CredentialResponse {
+    pub(crate) fn from_make_credential(
+        response: &MakeCredentialResponse,
+        transports: &[&str],
+        modality: &str,
+    ) -> CredentialResponse {
+        CredentialResponse::CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal::new(
+            response.clone(),
+            transports.iter().map(|s| s.to_string()).collect(),
+            modality.to_string(),
+        ))
+    }
+
+    pub(crate) fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
+        CredentialResponse::GetPublicKeyCredentialResponse(GetAssertionResponseInternal::new(
+            assertion.clone(),
+            modality.to_string(),
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct MakeCredentialResponseInternal {
     ctap: MakeCredentialResponse,

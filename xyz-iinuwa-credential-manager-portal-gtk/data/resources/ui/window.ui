@@ -173,7 +173,7 @@
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Credentials</property>
+                        <property name="label">Choose credential</property>
                       </object>
                     </child>
                     <child>

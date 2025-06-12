@@ -17,10 +17,7 @@ use libwebauthn::{
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
-    dbus::{
-        CredentialRequest, CredentialResponse, GetAssertionResponseInternal,
-        MakeCredentialResponseInternal,
-    },
+    dbus::{CredentialRequest, CredentialResponse},
     view_model::{Device, Transport},
 };
 
@@ -132,7 +129,22 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
-                    let response = hybrid_response.as_cred_response(&["hybrid"], "cross-platform");
+                    let response = match hybrid_response {
+                        AuthenticatorResponse::CredentialCreated(make_credential_response) => {
+                            CredentialResponse::from_make_credential(
+                                make_credential_response,
+                                &["hybrid"],
+                                "cross-platform",
+                            )
+                        }
+                        AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
+                            CredentialResponse::from_get_assertion(
+                                // TODO: Implement credential selection for hybrid
+                                &get_assertion_response.assertions[0],
+                                "cross-platform",
+                            )
+                        }
+                    };
                     let mut cred_response = cred_response.lock().unwrap();
                     cred_response.replace(response);
                 }
@@ -163,9 +175,8 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(UsbEvent { state })) => {
                 if let UsbStateInternal::Completed(response) = &state {
-                    let response = response.as_cred_response(&["usb"], "cross-platform");
                     let mut cred_response = cred_response.lock().unwrap();
-                    cred_response.replace(response);
+                    cred_response.replace(response.clone());
                 }
                 Poll::Ready(Some(state.into()))
             }
@@ -178,32 +189,6 @@ where
 enum AuthenticatorResponse {
     CredentialCreated(MakeCredentialResponse),
     CredentialsAsserted(GetAssertionResponse),
-}
-impl AuthenticatorResponse {
-    fn as_cred_response(&self, transports: &[&str], modality: &str) -> CredentialResponse {
-        match self {
-            AuthenticatorResponse::CredentialCreated(make_response) => {
-                CredentialResponse::CreatePublicKeyCredentialResponse(
-                    MakeCredentialResponseInternal::new(
-                        make_response.clone(),
-                        transports.iter().map(|s| s.to_string()).collect(),
-                        modality.to_string(),
-                    ),
-                )
-            }
-            AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions })
-                if assertions.len() == 1 =>
-            {
-                CredentialResponse::GetPublicKeyCredentialResponse(
-                    GetAssertionResponseInternal::new(assertions[0].clone(), modality.to_string()),
-                )
-            }
-            AuthenticatorResponse::CredentialsAsserted(GetAssertionResponse { assertions }) => {
-                assert!(!assertions.is_empty());
-                todo!("need to support selection from multiple credentials");
-            }
-        }
-    }
 }
 
 impl From<MakeCredentialResponse> for AuthenticatorResponse {
@@ -298,9 +283,7 @@ mod test {
             origin: Some("webauthn.io".to_string()),
             is_same_origin: Some(true),
             r#type: "public-key".to_string(),
-            public_key: Some(CreatePublicKeyCredentialRequest {
-                request_json: request_json,
-            }),
+            public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
         }
         .try_into_ctap2_request()
         .unwrap();

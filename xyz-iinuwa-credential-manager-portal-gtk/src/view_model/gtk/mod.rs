@@ -302,6 +302,7 @@ impl ViewModel {
     }
 
     fn select_credential(&self, cred_id: String) {
+        // todo: Do we still need this?
         self.set_selected_credential(cred_id);
     }
 

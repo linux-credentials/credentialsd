@@ -1,8 +1,10 @@
 use std::time::Duration;
 
 use async_stream::stream;
+use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_lite::Stream;
 use libwebauthn::{
+    ops::webauthn::GetAssertionResponse,
     transport::{hid::HidDevice, Device},
     webauthn::{Error as WebAuthnError, WebAuthn},
     UxUpdate,
@@ -10,9 +12,12 @@ use libwebauthn::{
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use crate::dbus::CredentialRequest;
+use crate::{
+    dbus::{CredentialRequest, GetAssertionResponseInternal},
+    view_model::Credential,
+};
 
-use super::AuthenticatorResponse;
+use super::{AuthenticatorResponse, CredentialResponse};
 
 pub(crate) trait UsbHandler {
     fn start(
@@ -31,6 +36,7 @@ impl InProcessUsbHandler {
     ) -> Result<(), String> {
         let mut state = UsbStateInternal::Idle;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
+        let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
         loop {
             tracing::debug!("current usb state: {:?}", state);
@@ -109,9 +115,32 @@ impl InProcessUsbHandler {
                         Some(Ok(UsbUvMessage::NeedsUserPresence)) => {
                             Ok(UsbStateInternal::NeedsUserPresence)
                         }
-                        Some(Ok(UsbUvMessage::ReceivedCredential(response))) => {
-                            Ok(UsbStateInternal::Completed(response.clone()))
-                        }
+                        Some(Ok(UsbUvMessage::ReceivedCredentials(response))) => match response {
+                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
+                                Ok(UsbStateInternal::Completed(
+                                    CredentialResponse::from_make_credential(
+                                        &make_credential_response,
+                                        &["usb"],
+                                        "cross-platform",
+                                    ),
+                                ))
+                            }
+                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
+                                if get_assertion_response.assertions.len() == 1 {
+                                    Ok(UsbStateInternal::Completed(
+                                        CredentialResponse::from_get_assertion(
+                                            &get_assertion_response.assertions[0],
+                                            "cross-platform",
+                                        ),
+                                    ))
+                                } else {
+                                    Ok(UsbStateInternal::SelectCredential {
+                                        response: get_assertion_response,
+                                        cred_tx: cred_tx.clone(),
+                                    })
+                                }
+                            }
+                        },
                         Some(Err(err)) => Err(err.clone()),
                         None => Err("Channel disconnected".to_string()),
                     }
@@ -140,13 +169,68 @@ impl InProcessUsbHandler {
                             Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
                         }
                         UsbUvMessage::NeedsUserPresence => Ok(UsbStateInternal::NeedsUserPresence),
-                        UsbUvMessage::ReceivedCredential(response) => {
-                            Ok(UsbStateInternal::Completed(response.clone()))
-                        }
+                        UsbUvMessage::ReceivedCredentials(response) => match response {
+                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
+                                Ok(UsbStateInternal::Completed(
+                                    CredentialResponse::from_make_credential(
+                                        &make_credential_response,
+                                        &["usb"],
+                                        "cross-platform",
+                                    ),
+                                ))
+                            }
+                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
+                                if get_assertion_response.assertions.len() == 1 {
+                                    Ok(UsbStateInternal::Completed(
+                                        CredentialResponse::from_get_assertion(
+                                            &get_assertion_response.assertions[0],
+                                            "cross-platform",
+                                        ),
+                                    ))
+                                } else {
+                                    Ok(UsbStateInternal::SelectCredential {
+                                        response: get_assertion_response,
+                                        cred_tx: cred_tx.clone(),
+                                    })
+                                }
+                            }
+                        },
                     },
                     None => Err("USB UV handler channel closed".to_string()),
                 },
                 UsbStateInternal::Completed(_) => Ok(prev_usb_state),
+                UsbStateInternal::SelectCredential {
+                    response,
+                    cred_tx: _,
+                } => match cred_rx.recv().await {
+                    Some(cred_id) => {
+                        let assertion = response
+                            .assertions
+                            .iter()
+                            .find(|c| {
+                                c.credential_id
+                                    .as_ref()
+                                    .map(|c| URL_SAFE_NO_PAD.encode(&c.id) == cred_id)
+                                    .unwrap_or_default()
+                            })
+                            .cloned();
+                        match assertion {
+                            Some(assertion) => Ok(UsbStateInternal::Completed(
+                                CredentialResponse::GetPublicKeyCredentialResponse(
+                                    GetAssertionResponseInternal::new(
+                                        assertion,
+                                        "cross-platform".to_string(),
+                                    ),
+                                ),
+                            )),
+                            None => Err("Selected credential not found.".to_string()),
+                        }
+                    }
+                    None => {
+                        tracing::debug!("cred channel closed before receiving cred from client.");
+                        Err("Cred channel disconnected".to_string())
+                    }
+                },
             };
             state = next_usb_state?;
             tx.send(state.clone())
@@ -219,7 +303,7 @@ async fn notify_ceremony_completed(
     response: AuthenticatorResponse,
 ) {
     signal_tx
-        .send(Ok(UsbUvMessage::ReceivedCredential(response)))
+        .send(Ok(UsbUvMessage::ReceivedCredentials(response)))
         .await
         .unwrap();
 }
@@ -278,8 +362,14 @@ pub(super) enum UsbStateInternal {
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
 
+    // Multiple credentials have been found and the user has to select which to use
+    SelectCredential {
+        response: GetAssertionResponse,
+        cred_tx: mpsc::Sender<String>,
+    },
+
     /// USB tapped, received credential
-    Completed(AuthenticatorResponse),
+    Completed(CredentialResponse),
     // TODO: implement cancellation
     // This isn't actually sent from the server.
     //UserCancelled,
@@ -324,6 +414,13 @@ pub enum UsbState {
     // When we encounter multiple devices, we let all of them blink and continue
     // with the one that was tapped.
     SelectingDevice,
+
+    // Multiple credentials have been found and the user has to select which to use
+    // List of user-identities to decide which to use.
+    SelectCredential {
+        creds: Vec<Credential>,
+        cred_tx: mpsc::Sender<String>,
+    },
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -346,6 +443,32 @@ impl From<UsbStateInternal> for UsbState {
             UsbStateInternal::Completed(_) => UsbState::Completed,
             // UsbStateInternal::UserCancelled => UsbState:://UserCancelled,
             UsbStateInternal::SelectingDevice(_) => UsbState::SelectingDevice,
+            UsbStateInternal::SelectCredential { response, cred_tx } => {
+                UsbState::SelectCredential {
+                    creds: response
+                        .assertions
+                        .iter()
+                        .map(|x| Credential {
+                            id: x
+                                .credential_id
+                                .as_ref()
+                                .map(|i| URL_SAFE_NO_PAD.encode(&i.id))
+                                .unwrap_or_else(|| String::from("<unknown>")),
+                            name: x
+                                .user
+                                .as_ref()
+                                .and_then(|u| u.name.clone())
+                                .unwrap_or_else(|| String::from("<unknown>")),
+                            username: x
+                                .user
+                                .as_ref()
+                                .map(|u| u.display_name.clone())
+                                .unwrap_or_default(),
+                        })
+                        .collect(),
+                    cred_tx,
+                }
+            }
         }
     }
 }
@@ -408,5 +531,5 @@ enum UsbUvMessage {
         attempts_left: Option<u32>,
     },
     NeedsUserPresence,
-    ReceivedCredential(AuthenticatorResponse),
+    ReceivedCredentials(AuthenticatorResponse),
 }
