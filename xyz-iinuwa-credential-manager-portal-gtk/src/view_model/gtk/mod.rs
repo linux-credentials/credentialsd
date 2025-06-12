@@ -258,7 +258,11 @@ impl ViewModel {
                 .orientation(gtk::Orientation::Horizontal)
                 .build();
             let icon = gtk::Image::builder().icon_name(icon_name).build();
-            let label = gtk::Label::builder().label(credential.name()).build();
+            let mut display_label = credential.name().to_string();
+            if let Some(username) = credential.username() {
+                display_label += &format!(" ({username})");
+            }
+            let label = gtk::Label::builder().label(display_label).build();
             b.append(&icon);
             b.append(&label);
 
