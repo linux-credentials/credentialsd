@@ -210,7 +210,15 @@ impl InProcessUsbHandler {
                             .find(|c| {
                                 c.credential_id
                                     .as_ref()
-                                    .map(|c| URL_SAFE_NO_PAD.encode(&c.id) == cred_id)
+                                    .map(|c| {
+                                        // In order to not expose the credential ID to the untrusted UI component,
+                                        // we hashed it, before sending it. So we have to re-hash all our credential
+                                        // IDs to identify the selected one.
+                                        URL_SAFE_NO_PAD.encode(ring::digest::digest(
+                                            &ring::digest::SHA256,
+                                            &c.id,
+                                        )) == cred_id
+                                    })
                                     .unwrap_or_default()
                             })
                             .cloned();
@@ -452,8 +460,14 @@ impl From<UsbStateInternal> for UsbState {
                             id: x
                                 .credential_id
                                 .as_ref()
-                                .map(|i| URL_SAFE_NO_PAD.encode(&i.id))
-                                .unwrap_or_else(|| String::from("<unknown>")),
+                                .map(|i| {
+                                    // In order to not expose the credential ID to the untrusted UI components,
+                                    // we hash and then encode it into a String.
+                                    URL_SAFE_NO_PAD
+                                        .encode(ring::digest::digest(&ring::digest::SHA256, &i.id))
+                                })
+                                .unwrap(),
+
                             name: x
                                 .user
                                 .as_ref()
