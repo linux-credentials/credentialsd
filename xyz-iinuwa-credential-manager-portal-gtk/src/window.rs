@@ -163,9 +163,6 @@ impl ExampleApplicationWindow {
                     .and_downcast_ref::<DeviceObject>()
                     .expect("selected device to exist at notify");
                 match d.transport().try_into() {
-                    // TODO: Can multiple resident_keys exist on USB for same origin?
-                    //       If so, we need to transition this to choose_credential as well.
-                    //       For now, we'll skip it.
                     Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
                     Ok(Transport::HybridQr) => stack.set_visible_child_name("hybrid_qr"),
                     _ => {}
