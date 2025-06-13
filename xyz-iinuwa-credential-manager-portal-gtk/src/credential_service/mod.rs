@@ -139,7 +139,10 @@ where
                         }
                         AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
                             CredentialResponse::from_get_assertion(
-                                // TODO: Implement credential selection for hybrid
+                                // When doing hybrid, the authenticator is capable of displaying it's own UI.
+                                // So we assume here, it only ever returns one assertion.
+                                // In case this doesn't hold true, we have to implement credential selection here,
+                                // as is done for USB.
                                 &get_assertion_response.assertions[0],
                                 "cross-platform",
                             )
