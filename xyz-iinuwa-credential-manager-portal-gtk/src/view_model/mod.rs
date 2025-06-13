@@ -28,7 +28,6 @@ where
     // This includes devices like platform authenticator, USB, hybrid
     devices: Vec<Device>,
     selected_device: Option<Device>,
-    selected_credential: Option<String>,
 
     providers: Vec<Provider>,
 
@@ -59,7 +58,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
-            selected_credential: None,
             providers: Vec::new(),
             usb_pin_tx: None,
             usb_cred_tx: None,
@@ -154,11 +152,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     todo!();
                 }
             };
-            // Remove the attribute below when we implement cancellation for at least one transport.
-            #[allow(unreachable_code)]
-            {
-                self.selected_credential = None;
-            }
         }
 
         // start discovery for newly selected device
@@ -280,18 +273,12 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         "Credential selected: {:?}. Current Device: {:?}",
                         cred_id, self.selected_device
                     );
-                    // TODO: Do we still need this?
-                    self.selected_credential = Some(cred_id.clone());
 
                     if let Some(cred_tx) = self.usb_cred_tx.take() {
                         if cred_tx.lock().await.send(cred_id.clone()).await.is_err() {
                             error!("Failed to send selected credential to device");
                         }
                     }
-                    self.tx_update
-                        .send(ViewUpdate::SelectCredential(cred_id))
-                        .await
-                        .unwrap();
                 }
 
                 Event::Background(BackgroundEvent::UsbPressed) => {
@@ -400,7 +387,6 @@ pub enum ViewUpdate {
     SetDevices(Vec<Device>),
     SetCredentials(Vec<Credential>),
     WaitingForDevice(Device),
-    SelectCredential(String),
     UsbNeedsPin { attempts_left: Option<u32> },
     UsbNeedsUserVerification { attempts_left: Option<u32> },
     UsbNeedsUserPresence,

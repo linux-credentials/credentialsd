@@ -40,9 +40,6 @@ mod imp {
         pub selected_device: RefCell<Option<DeviceObject>>,
 
         #[property(get, set)]
-        pub selected_credential: RefCell<Option<String>>,
-
-        #[property(get, set)]
         pub usb_pin_entry_visible: RefCell<bool>,
 
         #[property(get, set)]
@@ -123,9 +120,6 @@ impl ViewModel {
                                 ViewUpdate::SelectingDevice => view_model.selecting_device(),
                                 ViewUpdate::WaitingForDevice(device) => {
                                     view_model.waiting_for_device(&device)
-                                }
-                                ViewUpdate::SelectCredential(cred_id) => {
-                                    view_model.select_credential(cred_id)
                                 }
                                 ViewUpdate::UsbNeedsPin { attempts_left } => {
                                     let prompt = match attempts_left {
@@ -298,16 +292,10 @@ impl ViewModel {
         }
         let device_object: DeviceObject = device.into();
         self.set_selected_device(device_object);
-        self.set_selected_credential("");
     }
 
     fn selecting_device(&self) {
         self.set_prompt("Multiple devices found. Please select with which to proceed.");
-    }
-
-    fn select_credential(&self, cred_id: String) {
-        // todo: Do we still need this?
-        self.set_selected_credential(cred_id);
     }
 
     pub async fn send_thingy(&self) {

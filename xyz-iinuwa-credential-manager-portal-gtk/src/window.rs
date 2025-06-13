@@ -183,27 +183,6 @@ impl ExampleApplicationWindow {
             }
         ));
 
-        view_model.connect_selected_credential_notify(clone!(
-            #[weak]
-            stack,
-            move |vm| {
-                let c = vm.selected_credential();
-                if c.is_none() || c.unwrap().is_empty() {
-                    return;
-                }
-
-                let d = vm.selected_device();
-                let d = d
-                    .and_downcast_ref::<DeviceObject>()
-                    .expect("selected device to exist at notify");
-                match d.transport().try_into() {
-                    Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
-                    Ok(Transport::HybridQr) => stack.set_visible_child_name("hybrid_qr"),
-                    _ => {}
-                };
-            }
-        ));
-
         view_model.connect_completed_notify(clone!(
             #[weak]
             stack,
