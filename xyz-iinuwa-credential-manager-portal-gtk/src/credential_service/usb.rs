@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use async_stream::stream;
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -6,7 +6,10 @@ use futures_lite::Stream;
 use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
     proto::CtapError,
-    transport::{hid::HidDevice, Device},
+    transport::{
+        hid::{channel::HidChannelHandle, HidDevice},
+        Device,
+    },
     webauthn::{Error as WebAuthnError, WebAuthn},
     UxUpdate,
 };
@@ -71,38 +74,46 @@ impl InProcessUsbHandler {
                     }
                 }
                 UsbStateInternal::SelectingDevice(hid_devices) => {
+                    let expected_answers = hid_devices.len();
                     let (blinking_tx, mut blinking_rx) =
-                        tokio::sync::mpsc::channel::<Option<HidDevice>>(hid_devices.len());
-                    let mut expected_answers = hid_devices.len();
-                    for mut device in hid_devices {
+                        tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
+                    let mut channel_map = HashMap::new();
+                    let (setup_tx, mut setup_rx) =
+                        tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(
+                            expected_answers,
+                        );
+                    for (idx, mut device) in hid_devices.into_iter().enumerate() {
+                        let stx = setup_tx.clone();
                         let tx = blinking_tx.clone();
                         tokio::spawn(async move {
+                            let dev = device.clone();
+
                             let res = match device.channel().await {
-                                Ok((ref mut channel, _)) => channel
-                                    .blink_and_wait_for_user_presence(Duration::from_secs(300))
-                                    .await
-                                    .map_err(|err| {
-                                        format!(
+                                Ok((ref mut channel, _)) => {
+                                    let cancel_handle = channel.get_handle();
+                                    stx.send((idx, dev, cancel_handle)).await.unwrap();
+                                    drop(stx);
+
+                                    let was_selected = channel
+                                        .blink_and_wait_for_user_presence(Duration::from_secs(300))
+                                        .await;
+                                    match was_selected {
+                                        Ok(true) => Ok(Some(idx)),
+                                        Ok(false) => Ok(None),
+                                        Err(err) => Err(format!(
                                             "Failed to send wink request to authenticator: {:?}",
                                             err
-                                        )
-                                    })
-                                    .and_then(|blinking| {
-                                        if blinking {
-                                            Ok(())
-                                        } else {
-                                            Err("Authenticator was not able to blink".to_string())
-                                        }
-                                    }),
+                                        )),
+                                    }
+                                }
                                 Err(err) => Err(format!(
                                     "Failed to create channel for USB authenticator: {:?}",
                                     err
                                 )),
                             }
                             .inspect_err(|err| tracing::warn!(err))
-                            .ok();
-
-                            if let Err(err) = tx.send(res.map(|_| device)).await {
+                            .unwrap_or_default(); // In case of error, we also send `None`
+                            if let Err(err) = tx.send(res).await {
                                 tracing::error!(
                                     "Failed to send notification of wink response: {:?}",
                                     err,
@@ -110,20 +121,29 @@ impl InProcessUsbHandler {
                             }
                         });
                     }
+                    drop(setup_tx);
+                    // Receiving all cancel handles
+                    while let Some((idx, device, handle)) = setup_rx.recv().await {
+                        channel_map.insert(idx, (device, handle));
+                    }
+
+                    tracing::info!("Waiting for user interaction");
+                    drop(blinking_tx);
                     let mut state = UsbStateInternal::Idle;
                     while let Some(msg) = blinking_rx.recv().await {
-                        expected_answers -= 1;
                         match msg {
-                            Some(device) => {
+                            Some(idx) => {
+                                let (device, _handle) = channel_map.remove(&idx).unwrap();
+                                tracing::info!("User selected device {device:?}.");
+                                for (_key, (device, handle)) in channel_map.into_iter() {
+                                    tracing::info!("Cancelling device {device:?}.");
+                                    handle.cancel_ongoing_operation().await;
+                                }
                                 state = UsbStateInternal::Connected(device);
                                 break;
                             }
                             None => {
-                                if expected_answers == 0 {
-                                    break;
-                                } else {
-                                    continue;
-                                }
+                                continue;
                             }
                         }
                     }
