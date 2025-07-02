@@ -405,12 +405,14 @@ def _cose_verify(cose_key: bytes, signature: bytes, data: bytes):
 
         cose_crv = cred_pub_key[COSE_EC2_CRV]
         if cose_crv == COSE_CRV_P256:
-            crv = ec.SECP2561R1
+            crv = ec.SECP256R1()
             alg = ec.ECDSA(hashes.SHA256())
         else:
             raise Exception(f"Unsupported COSE ECDSA curve specified: {crv}")
 
-        signing_key = ec.EllipticCurvePublicNumbers(crv, x, y).public_key()
+        # WebAuthn uses uncompressed points only.
+        pub_key_bytes = bytes(b'\x04' + x + y)
+        signing_key = ec.EllipticCurvePublicKey.from_encoded_point(crv, pub_key_bytes)
         signing_key.verify(signature, data, alg)
     elif cose_alg == COSE_ALG_EDDSA:
         if kty != COSE_KTY_OKP:
