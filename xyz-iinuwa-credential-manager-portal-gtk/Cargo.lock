@@ -831,7 +831,7 @@ dependencies = [
  "heapless-bytes",
  "iso7816",
  "serde",
- "serde-indexed",
+ "serde-indexed 0.1.1",
  "serde_bytes",
  "serde_repr",
 ]
@@ -1928,7 +1928,7 @@ dependencies = [
 [[package]]
 name = "libwebauthn"
 version = "0.1.2"
-source = "git+https://github.com/linux-credentials/libwebauthn?rev=528af8de3adfbc329b6bd6dca7bf48714e674f96#528af8de3adfbc329b6bd6dca7bf48714e674f96"
+source = "git+https://github.com/linux-credentials/libwebauthn?rev=c61492dcc66cc53b33e9d3eb3377017019332964#c61492dcc66cc53b33e9d3eb3377017019332964"
 dependencies = [
  "aes",
  "async-trait",
@@ -1955,7 +1955,7 @@ dependencies = [
  "p256",
  "rand 0.8.5",
  "serde",
- "serde-indexed",
+ "serde-indexed 0.2.0",
  "serde_bytes",
  "serde_cbor",
  "serde_derive",
@@ -2945,6 +2945,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-indexed"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f68cf7478db8b81abcf71b6d195a34a4891bd3d39868731c4d73194d74ec7a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "serde-xml-rs"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3101,17 +3112,16 @@ checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
 
 [[package]]
 name = "snow"
-version = "0.10.0-alpha.1"
+version = "0.10.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e55510cf1cf5094776adcdc1141531281f3a7e3f4840c02f0495b489b766f7aa"
+checksum = "7c689cc478c547a02061bbf874efca827c63ef1112ad396957411326742dccc8"
 dependencies = [
  "aes-gcm",
  "blake2",
- "byteorder",
  "chacha20poly1305",
  "curve25519-dalek",
+ "getrandom 0.3.2",
  "p256",
- "rand_core 0.6.4",
  "ring",
  "rustc_version",
  "sha2",
