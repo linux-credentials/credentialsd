@@ -199,7 +199,7 @@ pub enum Error {
     AuthenticatorError,
     NoCredentials,
     PinAttemptsExhausted,
-    UserVerficiationAttemptsExhausted,
+    // TODO: We may want to hide the details on this variant from the public API.
     Internal(String),
 }
 

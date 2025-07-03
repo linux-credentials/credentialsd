@@ -221,7 +221,6 @@ impl InProcessUsbHandler {
                     },
                     None => Err(Error::Internal("USB UV handler channel closed".to_string())),
                 },
-                UsbStateInternal::Completed(_) => Ok(prev_usb_state),
                 UsbStateInternal::SelectCredential {
                     response,
                     cred_tx: _,
@@ -264,14 +263,13 @@ impl InProcessUsbHandler {
                         ))
                     }
                 },
+                UsbStateInternal::Completed(_) => break Ok(()),
+                UsbStateInternal::Failed(err) => break Err(err),
             };
-            state = next_usb_state?;
+            state = next_usb_state.map_or_else(|err| UsbStateInternal::Failed(err), |s| s);
             tx.send(state.clone()).await.map_err(|_| {
                 Error::Internal("USB state channel receiver closed prematurely".to_string())
             })?;
-            if let UsbStateInternal::Completed(_) = state {
-                break Ok(());
-            }
         }
     }
 }
@@ -330,6 +328,7 @@ async fn handle_events(
                 }
             }
             .map_err(|err| match err {
+                WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 _ => Error::AuthenticatorError,
             });
@@ -378,6 +377,10 @@ pub(super) enum UsbStateInternal {
     /// Awaiting FIDO USB device to be plugged in.
     Waiting,
 
+    /// When we encounter multiple devices, we let all of them blink and continue
+    /// with the one that was tapped.
+    SelectingDevice(Vec<HidDevice>),
+
     /// USB device connected, prompt user to tap
     Connected(HidDevice),
 
@@ -388,14 +391,12 @@ pub(super) enum UsbStateInternal {
     },
 
     /// The device needs on-device user verification.
-    NeedsUserVerification {
-        attempts_left: Option<u32>,
-    },
+    NeedsUserVerification { attempts_left: Option<u32> },
 
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
 
-    // Multiple credentials have been found and the user has to select which to use
+    /// Multiple credentials have been found and the user has to select which to use
     SelectCredential {
         response: GetAssertionResponse,
         cred_tx: mpsc::Sender<String>,
@@ -403,13 +404,12 @@ pub(super) enum UsbStateInternal {
 
     /// USB tapped, received credential
     Completed(CredentialResponse),
+
+    /// There was an error while interacting with the authenticator.
+    Failed(Error),
     // TODO: implement cancellation
     // This isn't actually sent from the server.
     //UserCancelled,
-
-    // When we encounter multiple devices, we let all of them blink and continue
-    // with the one that was tapped.
-    SelectingDevice(Vec<HidDevice>),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -421,6 +421,10 @@ pub enum UsbState {
 
     /// Awaiting FIDO USB device to be plugged in.
     Waiting,
+
+    // When we encounter multiple devices, we let all of them blink and continue
+    // with the one that was tapped.
+    SelectingDevice,
 
     /// USB device connected, prompt user to tap
     Connected,
@@ -438,16 +442,9 @@ pub enum UsbState {
 
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
-
-    /// USB tapped, received credential
-    Completed,
     // TODO: implement cancellation
     // This isn't actually sent from the server.
     //UserCancelled,
-
-    // When we encounter multiple devices, we let all of them blink and continue
-    // with the one that was tapped.
-    SelectingDevice,
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
@@ -455,6 +452,12 @@ pub enum UsbState {
         creds: Vec<Credential>,
         cred_tx: mpsc::Sender<String>,
     },
+
+    /// USB tapped, received credential
+    Completed,
+
+    /// Interaction with the authenticator failed.
+    Failed(Error),
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -509,6 +512,7 @@ impl From<UsbStateInternal> for UsbState {
                     cred_tx,
                 }
             }
+            UsbStateInternal::Failed(err) => UsbState::Failed(err),
         }
     }
 }
@@ -532,14 +536,6 @@ async fn handle_usb_updates(
                 }
             }
             UxUpdate::PinRequired(pin_update) => {
-                if pin_update.attempts_left.is_some_and(|num| num <= 1) {
-                    // TODO: cancel authenticator operation
-                    // Err("No more PIN attempts allowed. Select a different authenticator or try again later.".to_string())
-                    if let Err(err) = signal_tx.send(Err(Error::PinAttemptsExhausted)).await {
-                        tracing::error!("Authenticator cannot process anymore PIN requests, but we cannot relay the message to credential service: {:?}", err);
-                    }
-                    continue;
-                }
                 let (pin_tx, mut pin_rx) = mpsc::channel(1);
                 if let Err(err) = signal_tx
                     .send(Ok(UsbUvMessage::NeedsPin {
