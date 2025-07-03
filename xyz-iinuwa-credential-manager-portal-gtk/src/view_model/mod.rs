@@ -235,11 +235,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     }
                 }
 
-                Event::Background(BackgroundEvent::UsbPressed) => {
-                    println!("UsbPressed");
-                }
                 Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
-                    // TODO: do we need to store the USB state?
                     match state {
                         UsbState::Connected => {
                             info!("Found USB device")
@@ -283,6 +279,10 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .send(ViewUpdate::SetCredentials(creds))
                                 .await
                                 .unwrap();
+                        }
+                        // TODO: Provide more specific error messages using the wrapped Error.
+                        UsbState::Failed(_) => {
+                            self.tx_update.send(ViewUpdate::Failed).await.unwrap()
                         }
                     }
                 }
@@ -361,7 +361,6 @@ pub enum ViewUpdate {
 }
 
 pub enum BackgroundEvent {
-    UsbPressed,
     UsbStateChanged(UsbState),
     HybridQrStateChanged(HybridState),
 }
