@@ -180,19 +180,21 @@ impl InProcessUsbHandler {
                 UsbStateInternal::NeedsPin { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
                 | UsbStateInternal::NeedsUserPresence => match signal_rx.recv().await {
-                    Some(msg) => match msg? {
-                        UsbUvMessage::NeedsPin {
+                    Some(msg) => match msg {
+                        Ok(UsbUvMessage::NeedsPin {
                             attempts_left,
                             pin_tx,
-                        } => Ok(UsbStateInternal::NeedsPin {
+                        }) => Ok(UsbStateInternal::NeedsPin {
                             attempts_left,
                             pin_tx,
                         }),
-                        UsbUvMessage::NeedsUserVerification { attempts_left } => {
+                        Ok(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
                             Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
                         }
-                        UsbUvMessage::NeedsUserPresence => Ok(UsbStateInternal::NeedsUserPresence),
-                        UsbUvMessage::ReceivedCredentials(response) => match response {
+                        Ok(UsbUvMessage::NeedsUserPresence) => {
+                            Ok(UsbStateInternal::NeedsUserPresence)
+                        }
+                        Ok(UsbUvMessage::ReceivedCredentials(response)) => match response {
                             AuthenticatorResponse::CredentialCreated(make_credential_response) => {
                                 Ok(UsbStateInternal::Completed(
                                     CredentialResponse::from_make_credential(
@@ -218,6 +220,7 @@ impl InProcessUsbHandler {
                                 }
                             }
                         },
+                        Err(err) => Err(err),
                     },
                     None => Err(Error::Internal("USB UV handler channel closed".to_string())),
                 },

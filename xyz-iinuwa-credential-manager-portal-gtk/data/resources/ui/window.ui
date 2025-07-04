@@ -219,6 +219,13 @@
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkLabel">
+                        <binding name="label">
+                          <lookup name="prompt">
+                            <lookup name="view-model">
+                              ExampleApplicationWindow
+                            </lookup>
+                          </lookup>
+                        </binding>
                         <property name="label">Something went wrong while retrieving a credential. Please try again later or use a different authenticator.</property>
                       </object>
                     </child>
