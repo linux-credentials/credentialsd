@@ -194,7 +194,7 @@ impl ExampleApplicationWindow {
             #[weak]
             stack,
             move |vm| {
-                if vm.completed() {
+                if vm.failed() {
                     stack.set_visible_child_name("failed");
                 }
             }

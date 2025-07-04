@@ -175,9 +175,10 @@ impl ViewModel {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_completed(true);
                                 }
-                                ViewUpdate::Failed => {
+                                ViewUpdate::Failed(error_msg) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_failed(true);
+                                    view_model.set_prompt(error_msg);
                                 }
                             }
                         }

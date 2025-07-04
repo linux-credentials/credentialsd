@@ -10,7 +10,9 @@ use async_std::{
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::credential_service::{CredentialServiceClient, UsbState};
+use crate::credential_service::{
+    CredentialServiceClient, Error as CredentialServiceError, UsbState,
+};
 
 #[derive(Debug)]
 pub(crate) struct ViewModel<C>
@@ -281,8 +283,16 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .unwrap();
                         }
                         // TODO: Provide more specific error messages using the wrapped Error.
-                        UsbState::Failed(_) => {
-                            self.tx_update.send(ViewUpdate::Failed).await.unwrap()
+                        UsbState::Failed(err) => {
+                            let error_msg = String::from(match err {
+                                CredentialServiceError::NoCredentials => "No matching credentials found on this authenticator.",
+                                CredentialServiceError::PinAttemptsExhausted => "No more PIN attempts allowed. Try removing your device and plugging it back in.",
+                                CredentialServiceError::AuthenticatorError | CredentialServiceError::Internal(_) => "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                            });
+                            self.tx_update
+                                .send(ViewUpdate::Failed(error_msg))
+                                .await
+                                .unwrap()
                         }
                     }
                 }
@@ -323,7 +333,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         }
                         HybridState::Failed => {
                             self.hybrid_qr_code_data = None;
-                            self.tx_update.send(ViewUpdate::Failed).await.unwrap();
+                            self.tx_update.send(ViewUpdate::Failed(String::from("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
                         }
                     };
                 }
@@ -357,7 +367,7 @@ pub enum ViewUpdate {
     HybridConnected,
 
     Completed,
-    Failed,
+    Failed(String),
 }
 
 pub enum BackgroundEvent {
