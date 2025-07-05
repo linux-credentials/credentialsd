@@ -9,10 +9,10 @@ use gtk::{
 };
 use gtk::{prelude::*, Picture};
 
-use crate::application::ExampleApplication;
+use super::application::ExampleApplication;
+use super::{device::DeviceObject, ViewModel};
 use crate::config::{APP_ID, PROFILE};
-use crate::view_model::gtk::{device::DeviceObject, ViewModel};
-use crate::view_model::Transport;
+use crate::gui::view_model::Transport;
 
 mod imp {
     use gtk::Picture;

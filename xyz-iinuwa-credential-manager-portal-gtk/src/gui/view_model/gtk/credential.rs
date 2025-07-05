@@ -47,19 +47,19 @@ impl CredentialObject {
     }
 }
 
-impl From<crate::view_model::Credential> for CredentialObject {
-    fn from(value: crate::view_model::Credential) -> Self {
+impl From<crate::gui::view_model::Credential> for CredentialObject {
+    fn from(value: crate::gui::view_model::Credential) -> Self {
         Self::new(&value.id, &value.name, &value.username)
     }
 }
 
-impl From<&crate::view_model::Credential> for CredentialObject {
-    fn from(value: &crate::view_model::Credential) -> Self {
+impl From<&crate::gui::view_model::Credential> for CredentialObject {
+    fn from(value: &crate::gui::view_model::Credential) -> Self {
         Self::new(&value.id, &value.name, &value.username)
     }
 }
 
-impl From<CredentialObject> for crate::view_model::Credential {
+impl From<CredentialObject> for crate::gui::view_model::Credential {
     fn from(value: CredentialObject) -> Self {
         Self {
             id: value.id(),

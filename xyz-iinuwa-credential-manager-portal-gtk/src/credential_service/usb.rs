@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 
 use crate::{
     dbus::{CredentialRequest, GetAssertionResponseInternal},
-    view_model::Credential,
+    gui::view_model::Credential,
 };
 
 use super::{AuthenticatorResponse, CredentialResponse, Error};

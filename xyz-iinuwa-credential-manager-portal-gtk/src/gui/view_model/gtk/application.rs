@@ -6,10 +6,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
+use super::{window::ExampleApplicationWindow, ViewModel};
 use crate::config::{APP_ID, PKGDATADIR, PROFILE, VERSION};
-use crate::view_model::gtk::ViewModel;
-use crate::view_model::{ViewEvent, ViewUpdate};
-use crate::window::ExampleApplicationWindow;
+use crate::gui::view_model::{ViewEvent, ViewUpdate};
 
 mod imp {
     use super::*;

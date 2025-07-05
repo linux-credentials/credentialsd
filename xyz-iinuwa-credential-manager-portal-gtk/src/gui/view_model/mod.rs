@@ -31,15 +31,13 @@ where
     devices: Vec<Device>,
     selected_device: Option<Device>,
 
-    providers: Vec<Provider>,
-
+    // providers: Vec<Provider>,
     usb_pin_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
     usb_cred_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
-
-    hybrid_linked_state: HybridState,
+    // hybrid_linked_state: HybridState,
 }
 
 impl<C: CredentialServiceClient + Send> ViewModel<C> {
@@ -60,51 +58,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
-            providers: Vec::new(),
             usb_pin_tx: None,
             usb_cred_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
-            hybrid_linked_state: HybridState::default(),
         }
-    }
-    fn start_authentication(&self) {} // open page
-    fn cancel_authentication(&self) {}
-
-    fn start_fingerprint_authentication(&self) {
-        todo!("not implemented");
-    }
-    fn cancel_fingerprint_authentication(&self) {}
-
-    fn start_hybrid_qr_authentication(&self) {}
-    fn cancel_hybrid_qr_authentication(&self) {
-        todo!("not implemented");
-    }
-
-    fn start_hybrid_linked_authentication(&self) {
-        todo!("not implemented");
-    }
-    fn cancel_hybrid_linked_authentication(&self) {
-        todo!("not implemented");
-    }
-
-    // Can this be used for internal uv method too?
-    fn start_usb_authentication(&self) {
-        todo!("not implemented");
-    }
-    fn cancel_usb_authentication(&self) {
-        todo!("not implemented");
-    }
-    fn send_usb_device_pin(&self) {
-        todo!("not implemented");
-    }
-
-    fn select_uv_method(&self) {
-        todo!("not implemented");
-    }
-
-    fn finish_authentication(&self) {
-        todo!("not implemented");
     }
 
     async fn update_title(&mut self) {
@@ -396,7 +354,7 @@ pub enum FingerprintSensorState {
 #[derive(Debug)]
 pub enum CredentialType {
     Passkey,
-    Password,
+    // Password,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -464,10 +422,6 @@ pub enum Transport {
     Internal,
     Nfc,
     Usb,
-}
-
-pub enum Error {
-    ConversionError,
 }
 
 impl TryInto<Transport> for String {

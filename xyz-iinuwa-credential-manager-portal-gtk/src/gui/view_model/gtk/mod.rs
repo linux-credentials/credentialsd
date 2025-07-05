@@ -1,7 +1,10 @@
+mod application;
 pub mod credential;
 pub mod device;
+mod window;
 
 use async_std::channel::{Receiver, Sender};
+use gettextrs::{gettext, LocaleCategory};
 use glib::clone;
 use gtk::gdk::Texture;
 use gtk::gdk_pixbuf::Pixbuf;
@@ -12,12 +15,15 @@ use gtk::subclass::prelude::*;
 use qrcode::QrCode;
 use tracing::debug;
 
-use self::credential::CredentialObject;
-use self::device::DeviceObject;
+use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
+use application::ExampleApplication;
 
 use super::Transport;
 use super::{Credential, Device};
 use super::{ViewEvent, ViewUpdate};
+
+use self::credential::CredentialObject;
+use self::device::DeviceObject;
 
 mod imp {
     use std::cell::RefCell;
@@ -51,7 +57,7 @@ mod imp {
         #[property(get, set)]
         pub failed: RefCell<bool>,
 
-        // pub(super) vm: RefCell<Option<crate::view_model::ViewModel>>,
+        // pub(super) vm: RefCell<Option<crate::gui::view_model::ViewModel>>,
         pub(super) rx: RefCell<Option<Receiver<ViewUpdate>>>,
         pub(super) tx: RefCell<Option<Sender<ViewEvent>>>,
         // hybrid_qr_state: HybridState,
@@ -336,4 +342,23 @@ impl ViewModel {
         let tx = self.get_sender();
         tx.send(event).await.unwrap();
     }
+}
+
+pub fn start_gtk_app(
+    tx_event: async_std::channel::Sender<ViewEvent>,
+    rx_update: async_std::channel::Receiver<ViewUpdate>,
+) {
+    // Prepare i18n
+    gettextrs::setlocale(LocaleCategory::LcAll, "");
+    gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
+    gettextrs::textdomain(GETTEXT_PACKAGE).expect("Unable to switch to the text domain");
+
+    if glib::application_name().is_none() {
+        glib::set_application_name(&gettext("Credential Manager"));
+    }
+    let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
+    gio::resources_register(&res);
+
+    let app = ExampleApplication::new(tx_event, rx_update);
+    app.run();
 }

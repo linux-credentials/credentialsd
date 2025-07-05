@@ -1,16 +1,13 @@
+pub mod view_model;
+
 use std::thread;
 
 use async_std::channel::Receiver;
-use gettextrs::{gettext, LocaleCategory};
-use gtk::{gio, glib};
 use tokio::sync::oneshot;
 
-use crate::application::ExampleApplication;
-use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
-use crate::{
-    credential_service::CredentialServiceClient,
-    view_model::{self, Operation, ViewEvent, ViewUpdate},
-};
+use crate::credential_service::CredentialServiceClient;
+
+use view_model::{Operation, ViewEvent, ViewUpdate};
 
 pub struct ViewRequest {
     pub operation: Operation,
@@ -45,27 +42,8 @@ fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(client: C, reques
         println!("event loop ended?");
     });
 
-    start_gtk_app(tx_event, rx_update);
+    view_model::gtk::start_gtk_app(tx_event, rx_update);
 
     async_std::task::block_on(event_loop.cancel());
     response_tx.send(()).unwrap();
-}
-
-fn start_gtk_app(
-    tx_event: async_std::channel::Sender<ViewEvent>,
-    rx_update: async_std::channel::Receiver<ViewUpdate>,
-) {
-    // Prepare i18n
-    gettextrs::setlocale(LocaleCategory::LcAll, "");
-    gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
-    gettextrs::textdomain(GETTEXT_PACKAGE).expect("Unable to switch to the text domain");
-
-    if glib::application_name().is_none() {
-        glib::set_application_name(&gettext("Credential Manager"));
-    }
-    let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
-    gio::resources_register(&res);
-
-    let app = ExampleApplication::new(tx_event, rx_update);
-    app.run();
 }
