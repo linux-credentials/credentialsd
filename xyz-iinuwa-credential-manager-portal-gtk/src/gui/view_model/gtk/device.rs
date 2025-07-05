@@ -5,7 +5,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use crate::view_model::Transport;
+use crate::gui::view_model::Transport;
 
 mod imp {
     use super::*;
@@ -62,21 +62,21 @@ fn transport_name(transport: &Transport) -> &'static str {
         // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
     }
 }
-impl From<crate::view_model::Device> for DeviceObject {
-    fn from(value: crate::view_model::Device) -> Self {
+impl From<crate::gui::view_model::Device> for DeviceObject {
+    fn from(value: crate::gui::view_model::Device) -> Self {
         let name = transport_name(&value.transport);
         Self::new(&value.id, &value.transport, name)
     }
 }
 
-impl From<&crate::view_model::Device> for DeviceObject {
-    fn from(value: &crate::view_model::Device) -> Self {
+impl From<&crate::gui::view_model::Device> for DeviceObject {
+    fn from(value: &crate::gui::view_model::Device) -> Self {
         let name = transport_name(&value.transport);
         Self::new(&value.id, &value.transport, name)
     }
 }
 
-impl TryFrom<DeviceObject> for crate::view_model::Device {
+impl TryFrom<DeviceObject> for crate::gui::view_model::Device {
     type Error = String;
 
     fn try_from(value: DeviceObject) -> Result<Self, Self::Error> {
