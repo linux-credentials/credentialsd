@@ -40,6 +40,8 @@ impl InProcessUsbHandler {
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
         let mut failures = 0;
+        // act on current USB USB state, send state changes to the stream, and
+        // loop until a credential or error is returned.
         loop {
             tracing::debug!("current usb state: {:?}", state);
             let prev_usb_state = state;
@@ -177,6 +179,9 @@ impl InProcessUsbHandler {
                         None => Err(Error::Internal("Channel disconnected".to_string())),
                     }
                 }
+                // TODO: This match arm does basically the same thing as above, we
+                // should refactor this so we don't have to update things in two
+                // places.
                 UsbStateInternal::NeedsPin { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
                 | UsbStateInternal::NeedsUserPresence => match signal_rx.recv().await {
