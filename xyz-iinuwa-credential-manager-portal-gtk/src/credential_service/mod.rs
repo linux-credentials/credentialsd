@@ -196,10 +196,18 @@ enum AuthenticatorResponse {
 
 #[derive(Debug, Clone)]
 pub enum Error {
+    /// Some unknown error with the authenticator occurred.
     AuthenticatorError,
+    /// No matching credentials were found on the device.
     NoCredentials,
+    /// Too many incorrect PIN attempts, and authenticator must be removed and
+    /// reinserted to continue any more PIN attempts.
+    ///
+    /// Note that this is different than exhausting the PIN count that fully
+    /// locks out the device.
     PinAttemptsExhausted,
     // TODO: We may want to hide the details on this variant from the public API.
+    /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
 }
 
