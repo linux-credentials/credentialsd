@@ -34,6 +34,205 @@ pub(crate) trait UsbHandler {
 pub struct InProcessUsbHandler {}
 
 impl InProcessUsbHandler {
+    async fn process_idle_waiting(
+        failures: &mut usize,
+        prev_usb_state: &UsbStateInternal,
+    ) -> Result<UsbStateInternal, Error> {
+        match libwebauthn::transport::hid::list_devices().await {
+            Ok(mut hid_devices) => {
+                if hid_devices.is_empty() {
+                    let state = UsbStateInternal::Waiting;
+                    Ok(state)
+                } else if hid_devices.len() == 1 {
+                    Ok(UsbStateInternal::Connected(hid_devices.swap_remove(0)))
+                } else {
+                    Ok(UsbStateInternal::SelectingDevice(hid_devices))
+                }
+            }
+            Err(err) => {
+                *failures += 1;
+                if *failures == 5 {
+                    Err(Error::Internal(format!(
+                        "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
+                        err
+                    )))
+                } else {
+                    tracing::warn!(
+                        "Failed to list USB authenticators: {:?}. Throttling USB state updates",
+                        err
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    Ok(prev_usb_state.clone())
+                }
+            }
+        }
+    }
+
+    async fn process_selecting_device(
+        hid_devices: Vec<HidDevice>,
+    ) -> Result<UsbStateInternal, Error> {
+        let expected_answers = hid_devices.len();
+        let (blinking_tx, mut blinking_rx) =
+            tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
+        let mut channel_map = HashMap::new();
+        let (setup_tx, mut setup_rx) =
+            tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(expected_answers);
+        for (idx, mut device) in hid_devices.into_iter().enumerate() {
+            let stx = setup_tx.clone();
+            let tx = blinking_tx.clone();
+            tokio::spawn(async move {
+                let dev = device.clone();
+
+                let res = match device.channel().await {
+                    Ok((ref mut channel, _)) => {
+                        let cancel_handle = channel.get_handle();
+                        stx.send((idx, dev, cancel_handle)).await.unwrap();
+                        drop(stx);
+
+                        let was_selected = channel
+                            .blink_and_wait_for_user_presence(Duration::from_secs(300))
+                            .await;
+                        match was_selected {
+                            Ok(true) => Ok(Some(idx)),
+                            Ok(false) => Ok(None),
+                            Err(err) => Err(format!(
+                                "Failed to send wink request to authenticator: {:?}",
+                                err
+                            )),
+                        }
+                    }
+                    Err(err) => Err(format!(
+                        "Failed to create channel for USB authenticator: {:?}",
+                        err
+                    )),
+                }
+                .inspect_err(|err| tracing::warn!(err))
+                .unwrap_or_default(); // In case of error, we also send `None`
+                if let Err(err) = tx.send(res).await {
+                    tracing::error!("Failed to send notification of wink response: {:?}", err,);
+                }
+            });
+        }
+        drop(setup_tx);
+        // Receiving all cancel handles
+        while let Some((idx, device, handle)) = setup_rx.recv().await {
+            channel_map.insert(idx, (device, handle));
+        }
+
+        tracing::info!("Waiting for user interaction");
+        drop(blinking_tx);
+        let mut state = UsbStateInternal::Idle;
+        while let Some(msg) = blinking_rx.recv().await {
+            match msg {
+                Some(idx) => {
+                    let (device, _handle) = channel_map.remove(&idx).unwrap();
+                    tracing::info!("User selected device {device:?}.");
+                    for (_key, (device, handle)) in channel_map.into_iter() {
+                        tracing::info!("Cancelling device {device:?}.");
+                        handle.cancel_ongoing_operation().await;
+                    }
+                    state = UsbStateInternal::Connected(device);
+                    break;
+                }
+                None => {
+                    continue;
+                }
+            }
+        }
+        Ok(state)
+    }
+
+    async fn process_select_credential(
+        response: GetAssertionResponse,
+        cred_rx: &mut Receiver<String>,
+    ) -> Result<UsbStateInternal, Error> {
+        match cred_rx.recv().await {
+            Some(cred_id) => {
+                let assertion = response
+                    .assertions
+                    .iter()
+                    .find(|c| {
+                        c.credential_id
+                            .as_ref()
+                            .map(|c| {
+                                // In order to not expose the credential ID to the untrusted UI component,
+                                // we hashed it, before sending it. So we have to re-hash all our credential
+                                // IDs to identify the selected one.
+                                URL_SAFE_NO_PAD
+                                    .encode(ring::digest::digest(&ring::digest::SHA256, &c.id))
+                                    == cred_id
+                            })
+                            .unwrap_or_default()
+                    })
+                    .cloned();
+                match assertion {
+                    Some(assertion) => Ok(UsbStateInternal::Completed(
+                        CredentialResponse::GetPublicKeyCredentialResponse(
+                            GetAssertionResponseInternal::new(
+                                assertion,
+                                "cross-platform".to_string(),
+                            ),
+                        ),
+                    )),
+                    None => Err(Error::NoCredentials),
+                }
+            }
+            None => {
+                tracing::debug!("cred channel closed before receiving cred from client.");
+                Err(Error::Internal(
+                    "Cred channel disconnected prematurely".to_string(),
+                ))
+            }
+        }
+    }
+
+    async fn process_user_interaction(
+        signal_rx: &mut Receiver<Result<UsbUvMessage, Error>>,
+        cred_tx: &Sender<String>,
+    ) -> Result<UsbStateInternal, Error> {
+        match signal_rx.recv().await {
+            Some(msg) => match msg {
+                Ok(UsbUvMessage::NeedsPin {
+                    attempts_left,
+                    pin_tx,
+                }) => Ok(UsbStateInternal::NeedsPin {
+                    attempts_left,
+                    pin_tx,
+                }),
+                Ok(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
+                    Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
+                }
+                Ok(UsbUvMessage::NeedsUserPresence) => Ok(UsbStateInternal::NeedsUserPresence),
+                Ok(UsbUvMessage::ReceivedCredentials(response)) => match response {
+                    AuthenticatorResponse::CredentialCreated(make_credential_response) => Ok(
+                        UsbStateInternal::Completed(CredentialResponse::from_make_credential(
+                            &make_credential_response,
+                            &["usb"],
+                            "cross-platform",
+                        )),
+                    ),
+                    AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
+                        if get_assertion_response.assertions.len() == 1 {
+                            Ok(UsbStateInternal::Completed(
+                                CredentialResponse::from_get_assertion(
+                                    &get_assertion_response.assertions[0],
+                                    "cross-platform",
+                                ),
+                            ))
+                        } else {
+                            Ok(UsbStateInternal::SelectCredential {
+                                response: get_assertion_response,
+                                cred_tx: cred_tx.clone(),
+                            })
+                        }
+                    }
+                },
+                Err(err) => Err(err),
+            },
+            None => Err(Error::Internal("USB UV handler channel closed".to_string())),
+        }
+    }
+
     async fn process(
         tx: Sender<UsbStateInternal>,
         cred_request: CredentialRequest,
@@ -50,104 +249,10 @@ impl InProcessUsbHandler {
             let prev_usb_state = state;
             let next_usb_state = match prev_usb_state {
                 UsbStateInternal::Idle | UsbStateInternal::Waiting => {
-                    match libwebauthn::transport::hid::list_devices().await {
-                        Ok(mut hid_devices) => {
-                            if hid_devices.is_empty() {
-                                let state = UsbStateInternal::Waiting;
-                                Ok(state)
-                            } else if hid_devices.len() == 1 {
-                                Ok(UsbStateInternal::Connected(hid_devices.swap_remove(0)))
-                            } else {
-                                Ok(UsbStateInternal::SelectingDevice(hid_devices))
-                            }
-                        }
-                        Err(err) => {
-                            failures += 1;
-                            if failures == 5 {
-                                Err(Error::Internal(format!("Failed to list USB authenticators: {:?}. Cancelling USB state updates.", err)))
-                            } else {
-                                tracing::warn!("Failed to list USB authenticators: {:?}. Throttling USB state updates", err);
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                                Ok(prev_usb_state)
-                            }
-                        }
-                    }
+                    Self::process_idle_waiting(&mut failures, &prev_usb_state).await
                 }
                 UsbStateInternal::SelectingDevice(hid_devices) => {
-                    let expected_answers = hid_devices.len();
-                    let (blinking_tx, mut blinking_rx) =
-                        tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
-                    let mut channel_map = HashMap::new();
-                    let (setup_tx, mut setup_rx) =
-                        tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(
-                            expected_answers,
-                        );
-                    for (idx, mut device) in hid_devices.into_iter().enumerate() {
-                        let stx = setup_tx.clone();
-                        let tx = blinking_tx.clone();
-                        tokio::spawn(async move {
-                            let dev = device.clone();
-
-                            let res = match device.channel().await {
-                                Ok((ref mut channel, _)) => {
-                                    let cancel_handle = channel.get_handle();
-                                    stx.send((idx, dev, cancel_handle)).await.unwrap();
-                                    drop(stx);
-
-                                    let was_selected = channel
-                                        .blink_and_wait_for_user_presence(Duration::from_secs(300))
-                                        .await;
-                                    match was_selected {
-                                        Ok(true) => Ok(Some(idx)),
-                                        Ok(false) => Ok(None),
-                                        Err(err) => Err(format!(
-                                            "Failed to send wink request to authenticator: {:?}",
-                                            err
-                                        )),
-                                    }
-                                }
-                                Err(err) => Err(format!(
-                                    "Failed to create channel for USB authenticator: {:?}",
-                                    err
-                                )),
-                            }
-                            .inspect_err(|err| tracing::warn!(err))
-                            .unwrap_or_default(); // In case of error, we also send `None`
-                            if let Err(err) = tx.send(res).await {
-                                tracing::error!(
-                                    "Failed to send notification of wink response: {:?}",
-                                    err,
-                                );
-                            }
-                        });
-                    }
-                    drop(setup_tx);
-                    // Receiving all cancel handles
-                    while let Some((idx, device, handle)) = setup_rx.recv().await {
-                        channel_map.insert(idx, (device, handle));
-                    }
-
-                    tracing::info!("Waiting for user interaction");
-                    drop(blinking_tx);
-                    let mut state = UsbStateInternal::Idle;
-                    while let Some(msg) = blinking_rx.recv().await {
-                        match msg {
-                            Some(idx) => {
-                                let (device, _handle) = channel_map.remove(&idx).unwrap();
-                                tracing::info!("User selected device {device:?}.");
-                                for (_key, (device, handle)) in channel_map.into_iter() {
-                                    tracing::info!("Cancelling device {device:?}.");
-                                    handle.cancel_ongoing_operation().await;
-                                }
-                                state = UsbStateInternal::Connected(device);
-                                break;
-                            }
-                            None => {
-                                continue;
-                            }
-                        }
-                    }
-                    Ok(state)
+                    Self::process_selecting_device(hid_devices).await
                 }
                 UsbStateInternal::Connected(device) => {
                     let signal_tx2 = signal_tx.clone();
@@ -155,146 +260,21 @@ impl InProcessUsbHandler {
                     tokio::spawn(async move {
                         handle_events(&cred_request, device, &signal_tx2).await;
                     });
-                    match signal_rx.recv().await {
-                        Some(Ok(UsbUvMessage::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        })) => Ok(UsbStateInternal::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        }),
-                        Some(Ok(UsbUvMessage::NeedsUserVerification { attempts_left })) => {
-                            Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
-                        }
-                        Some(Ok(UsbUvMessage::NeedsUserPresence)) => {
-                            Ok(UsbStateInternal::NeedsUserPresence)
-                        }
-                        Some(Ok(UsbUvMessage::ReceivedCredentials(response))) => match response {
-                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
-                                Ok(UsbStateInternal::Completed(
-                                    CredentialResponse::from_make_credential(
-                                        &make_credential_response,
-                                        &["usb"],
-                                        "cross-platform",
-                                    ),
-                                ))
-                            }
-                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
-                                if get_assertion_response.assertions.len() == 1 {
-                                    Ok(UsbStateInternal::Completed(
-                                        CredentialResponse::from_get_assertion(
-                                            &get_assertion_response.assertions[0],
-                                            "cross-platform",
-                                        ),
-                                    ))
-                                } else {
-                                    Ok(UsbStateInternal::SelectCredential {
-                                        response: get_assertion_response,
-                                        cred_tx: cred_tx.clone(),
-                                    })
-                                }
-                            }
-                        },
-                        Some(Err(err)) => Err(err.clone()),
-                        None => Err(Error::Internal("Channel disconnected".to_string())),
-                    }
+                    Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
-                // TODO: This match arm does basically the same thing as above, we
-                // should refactor this so we don't have to update things in two
-                // places.
                 UsbStateInternal::NeedsPin { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
-                | UsbStateInternal::NeedsUserPresence => match signal_rx.recv().await {
-                    Some(msg) => match msg {
-                        Ok(UsbUvMessage::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        }) => Ok(UsbStateInternal::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        }),
-                        Ok(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
-                            Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
-                        }
-                        Ok(UsbUvMessage::NeedsUserPresence) => {
-                            Ok(UsbStateInternal::NeedsUserPresence)
-                        }
-                        Ok(UsbUvMessage::ReceivedCredentials(response)) => match response {
-                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
-                                Ok(UsbStateInternal::Completed(
-                                    CredentialResponse::from_make_credential(
-                                        &make_credential_response,
-                                        &["usb"],
-                                        "cross-platform",
-                                    ),
-                                ))
-                            }
-                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
-                                if get_assertion_response.assertions.len() == 1 {
-                                    Ok(UsbStateInternal::Completed(
-                                        CredentialResponse::from_get_assertion(
-                                            &get_assertion_response.assertions[0],
-                                            "cross-platform",
-                                        ),
-                                    ))
-                                } else {
-                                    Ok(UsbStateInternal::SelectCredential {
-                                        response: get_assertion_response,
-                                        cred_tx: cred_tx.clone(),
-                                    })
-                                }
-                            }
-                        },
-                        Err(err) => Err(err),
-                    },
-                    None => Err(Error::Internal("USB UV handler channel closed".to_string())),
-                },
+                | UsbStateInternal::NeedsUserPresence => {
+                    Self::process_user_interaction(&mut signal_rx, &cred_tx).await
+                }
                 UsbStateInternal::SelectCredential {
                     response,
                     cred_tx: _,
-                } => match cred_rx.recv().await {
-                    Some(cred_id) => {
-                        let assertion = response
-                            .assertions
-                            .iter()
-                            .find(|c| {
-                                c.credential_id
-                                    .as_ref()
-                                    .map(|c| {
-                                        // In order to not expose the credential ID to the untrusted UI component,
-                                        // we hashed it, before sending it. So we have to re-hash all our credential
-                                        // IDs to identify the selected one.
-                                        URL_SAFE_NO_PAD.encode(ring::digest::digest(
-                                            &ring::digest::SHA256,
-                                            &c.id,
-                                        )) == cred_id
-                                    })
-                                    .unwrap_or_default()
-                            })
-                            .cloned();
-                        match assertion {
-                            Some(assertion) => Ok(UsbStateInternal::Completed(
-                                CredentialResponse::GetPublicKeyCredentialResponse(
-                                    GetAssertionResponseInternal::new(
-                                        assertion,
-                                        "cross-platform".to_string(),
-                                    ),
-                                ),
-                            )),
-                            None => Err(Error::NoCredentials),
-                        }
-                    }
-                    None => {
-                        tracing::debug!("cred channel closed before receiving cred from client.");
-                        Err(Error::Internal(
-                            "Cred channel disconnected prematurely".to_string(),
-                        ))
-                    }
-                },
+                } => Self::process_select_credential(response, &mut cred_rx).await,
                 UsbStateInternal::Completed(_) => break Ok(()),
                 UsbStateInternal::Failed(err) => break Err(err),
             };
-            state = next_usb_state.map_or_else(|err| UsbStateInternal::Failed(err), |s| s);
+            state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
             tx.send(state.clone()).await.map_err(|_| {
                 Error::Internal("USB state channel receiver closed prematurely".to_string())
             })?;
