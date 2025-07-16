@@ -10,7 +10,7 @@ use libwebauthn::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
@@ -54,6 +54,19 @@ pub(crate) fn create_attestation_object(
                     cbor_writer.write_bytes(cert).unwrap();
                 }
             }
+        }
+        AttestationStatement::U2F {
+            signature,
+            certificate,
+        } => {
+            cbor_writer.write_text("fido-u2f").unwrap();
+            cbor_writer.write_text("attStmt").unwrap();
+            cbor_writer.write_map_start(2).unwrap();
+            cbor_writer.write_text("x5c").unwrap();
+            cbor_writer.write_array_start(1).unwrap();
+            cbor_writer.write_bytes(certificate).unwrap();
+            cbor_writer.write_text("sig").unwrap();
+            cbor_writer.write_bytes(signature).unwrap();
         }
         AttestationStatement::None => {
             cbor_writer.write_text("none").unwrap();
@@ -318,6 +331,10 @@ impl TryFrom<PublicKeyCredentialParameters> for CoseKeyType {
 #[derive(Debug, PartialEq)]
 pub(crate) enum AttestationStatement {
     None,
+    U2F {
+        signature: Vec<u8>,
+        certificate: Vec<u8>,
+    },
     Packed {
         algorithm: CoseKeyAlgorithmIdentifier,
         signature: Vec<u8>,
@@ -344,6 +361,16 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
                         .iter()
                         .map(|c| c.as_ref().to_vec())
                         .collect(),
+                })
+            }
+            Ctap2AttestationStatement::FidoU2F(att_stmt) => {
+                if att_stmt.certificates.len() != 1 {
+                    error!("fido-u2f attestation statement has to have one certificate, but we received {}!", att_stmt.certificates.len());
+                    return Err(Error::InvalidState);
+                }
+                Ok(Self::U2F {
+                    signature: att_stmt.signature.as_ref().to_vec(),
+                    certificate: att_stmt.certificates[0].to_vec(),
                 })
             }
             _ => {
