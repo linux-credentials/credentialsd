@@ -42,20 +42,6 @@ mod imp {
     #[gtk::template_callbacks]
     impl ExampleApplicationWindow {
         #[template_callback]
-        fn handle_button_clicked(&self, _: &gtk::Button) {
-            println!("clicked");
-            let view_model = &self.view_model.borrow();
-            let view_model = view_model.as_ref().unwrap();
-            glib::spawn_future_local(clone!(
-                #[weak]
-                view_model,
-                async move {
-                    view_model.send_thingy().await;
-                }
-            ));
-        }
-
-        #[template_callback]
         fn handle_usb_pin_entered(&self, entry: &gtk::PasswordEntry) {
             let view_model = &self.view_model.borrow();
             let view_model = view_model.as_ref().unwrap();

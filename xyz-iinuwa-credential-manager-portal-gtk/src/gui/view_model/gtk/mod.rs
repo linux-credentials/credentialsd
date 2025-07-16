@@ -312,10 +312,6 @@ impl ViewModel {
         self.set_prompt("Multiple devices found. Please select with which to proceed.");
     }
 
-    pub async fn send_thingy(&self) {
-        self.send_event(ViewEvent::ButtonClicked).await;
-    }
-
     pub async fn send_usb_device_pin(&self, pin: String) {
         self.send_event(ViewEvent::UsbPinEntered(pin)).await;
     }

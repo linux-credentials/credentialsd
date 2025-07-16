@@ -168,9 +168,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     self.update_title().await;
                     self.update_devices().await;
                 }
-                Event::View(ViewEvent::ButtonClicked) => {
-                    println!("Got it!")
-                }
                 Event::View(ViewEvent::DeviceSelected(id)) => {
                     self.select_device(&id).await;
                     println!("Selected device {id}");
@@ -302,7 +299,6 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
 
 pub enum ViewEvent {
     Initiated,
-    ButtonClicked,
     DeviceSelected(String),
     CredentialSelected(String),
     UsbPinEntered(String),
