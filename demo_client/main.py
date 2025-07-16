@@ -189,13 +189,13 @@ if __name__ == "__main__":
     main()
 
 class VerificationTests(unittest.TestCase):
-    def test_1(self):
+    def test_create_credential(self):
         response = {
             'id': 'owBYoufBWYDUOeNB9dZs9x6GlEPiS8ziKnI_9YVq9RpkwwYsxelm66HOP2usfy-SaV8NE5nJVWDIMvS0W-x9BYtN4AmHZVY33GW2rdfLpeBruuh4jDXgYdnHtZC0IyDIKZiOTzSzyoQih8F-VLcTmqQl7SVHgf-xAh-6TxAJMccROZyIsili1OOnv3WSE7374c2Sw9At0ILaSiTmvC7MtZfnj9hhnAFMFobCJvainepVBn3HAlDo22486wkPqW2D5N00XYXK',
             'rawId': 'owBYoufBWYDUOeNB9dZs9x6GlEPiS8ziKnI_9YVq9RpkwwYsxelm66HOP2usfy-SaV8NE5nJVWDIMvS0W-x9BYtN4AmHZVY33GW2rdfLpeBruuh4jDXgYdnHtZC0IyDIKZiOTzSzyoQih8F-VLcTmqQl7SVHgf-xAh-6TxAJMccROZyIsili1OOnv3WSE7374c2Sw9At0ILaSiTmvC7MtZfnj9hhnAFMFobCJvainepVBn3HAlDo22486wkPqW2D5N00XYXK',
             'response': {
                 'attestationObject': 'o2NmbXRmcGFja2VkZ2F0dFN0bXSjY2FsZyZjc2lnWEcwRQIgIQ1ReuY8bt2QPrmsZGqphT3hwTJ4Ar2zd3RevRXelHYCIQDiSKGGo5mUqsWP43B6TgxcWby0M1ucBkwOQTS4E6Dt-mN4NWOBWQKqMIICpjCCAkygAwIBAgIUfWe3F4mJfmOVopPF8mmAKxBb0igwCgYIKoZIzj0EAwIwLTERMA8GA1UECgwIU29sb0tleXMxCzAJBgNVBAYTAkNIMQswCQYDVQQDDAJGMTAgFw0yMTA1MjMwMDUyMDBaGA8yMDcxMDUxMTAwNTIwMFowgYMxCzAJBgNVBAYTAlVTMREwDwYDVQQKDAhTb2xvS2V5czEiMCAGA1UECwwZQXV0aGVudGljYXRvciBBdHRlc3RhdGlvbjE9MDsGA1UEAww0U29sbyAyIE5GQytVU0ItQSA4NjUyQUJFOUZCRDg0ODEwQTg0MEQ2RkM0NDJBOEMyQyBCMTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABArSyTVT7sDxX0rom6XoIcg8qwMStGV3SjoGRNMqHBSAh2sr4EllUzA1F8yEX5XvUPN_M6DQlqEFGw18UodOjBqjgfAwge0wHQYDVR0OBBYEFBiTdxTWyNCRuzSieBflmHPSJbS1MB8GA1UdIwQYMBaAFEFrtkvvohkN5GJf_SkElrmCKbT4MAkGA1UdEwQCMAAwCwYDVR0PBAQDAgTwMDIGCCsGAQUFBwEBBCYwJDAiBggrBgEFBQcwAoYWaHR0cDovL2kuczJwa2kubmV0L2YxLzAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8vYy5zMnBraS5uZXQvcjEvMCEGCysGAQQBguUcAQEEBBIEEIZSq-n72EgQqEDW_EQqjCwwEwYLKwYBBAGC5RwCAQEEBAMCBDAwCgYIKoZIzj0EAwIDSAAwRQIgMsLnUg5Px2FehxIUNiaey8qeT1FGtlJ1s3LEUGOks-8CIQDNEv5aupDvYxn2iqWSNysv4qpdoqSMytRQ7ctfuJDWN2hhdXRoRGF0YVkBJ6N5pvbur7mlXjeMEYA04nUeaC-rny0wqxPSElWGzhlHRQAAADmGUqvp-9hIEKhA1vxEKowsAMajAFii58FZgNQ540H11mz3HoaUQ-JLzOIqcj_1hWr1GmTDBizF6Wbroc4_a6x_L5JpXw0TmclVYMgy9LRb7H0Fi03gCYdlVjfcZbat18ul4Gu66HiMNeBh2ce1kLQjIMgpmI5PNLPKhCKHwX5UtxOapCXtJUeB_7ECH7pPEAkxxxE5nIiyKWLU46e_dZITvfvhzZLD0C3QgtpKJOa8Lsy1l-eP2GGcAUwWhsIm9qKd6lUGfccCUOjbbjzrCQ-pbYPk3TRdhcqkAQEDJyAGIVggzFQIxv1GYCb7CZXbKR8VRTWiRCbceHYcsBNx-lOg9Xk',
-                'clientDataJSON': '{"type":"webauthn.create","challenge":"j-dyF8Xcw5lY2YFJ260ywg","origin":"xyz.iinuwa.credentials.CredentialManager:local","crossOrigin":true}',
+                'clientDataJSON': 'eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiai1keUY4WGN3NWxZMllGSjI2MHl3ZyIsIm9yaWdpbiI6Inh5ei5paW51d2EuY3JlZGVudGlhbHMuQ3JlZGVudGlhbE1hbmFnZXI6bG9jYWwiLCJjcm9zc09yaWdpbiI6dHJ1ZX0',
                 'transports': ['usb']
             }
         }
@@ -235,7 +235,7 @@ class VerificationTests(unittest.TestCase):
             "rawId":"owBYojOVzZU-pjscj82gQAHvhUDTMgzQtTcQjyBpzHT-bqLwtLF2OOJDoskE18lOn2-1-SV-b7nCvn5s5Uq2KhBt1Q9kFVBUsb8jBl959BY3KWTg2rgjpN9nB5uIWTEFXfAWo0qIYGGVhXLyEbvu72Lq_W0wlccoKlxWrP349qN9OG2RTaGrgNjxTo1LqnSVc9S6D1zD7mop5KQ_9FZEjA5jABAquwFMAuO4ongyujnpoAfyAlB6UZ_JDmDFCkuN598q_LAu",
             "response": {
                 "authenticatorData":"o3mm9u6vuaVeN4wRgDTidR5oL6ufLTCrE9ISVYbOGUcFAAAAXA",
-                "clientDataJSON":"{\"type\":\"webauthn.get\",\"challenge\":\"Z16OhkVPywn9276J6wtGfg\",\"origin\":\"https://example.com\",\"crossOrigin\":true}",
+                "clientDataJSON":"eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWjE2T2hrVlB5d245Mjc2SjZ3dEdmZyIsIm9yaWdpbiI6Imh0dHBzOi8vZXhhbXBsZS5jb20iLCJjcm9zc09yaWdpbiI6dHJ1ZX0",
                 "signature":"9frQigpe0p8NGwWc9Ikve9RlOZbcmz6S-JVDaPde-dxS-sPRFLGDA3ekh0j294MqaejRudzTw5uggh1IU2lJCQ",
                 "userHandle": None
             }
