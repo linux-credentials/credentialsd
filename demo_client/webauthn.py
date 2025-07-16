@@ -72,7 +72,7 @@ def verify_create_response(response, create_request, expected_origin):
     if alg not in (p['alg'] for p in create_request['pubKeyCredParams']):
         raise Exception("Public key algorithm not in list of accepted key types. Rejecting.")
 
-    # testing explicitly for ECDSA algorithm
+    # verify parameters for supported algorithms
     if alg == COSE_ALG_ECDSA:
         if kty != COSE_KTY_EC2:
             raise Exception(f"Invalid key type specified: expected {COSE_KTY_EC2} (EC2), received {kty}")
@@ -110,7 +110,7 @@ def verify_create_response(response, create_request, expected_origin):
                 assert(signing_cert.version == x509.Version.v3)
                 try:
                     fido_oid = signing_cert.extensions.get_extension_for_oid(x509.ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4"))
-                    assert(fido_oid.critical == False)
+                    assert(fido_oid.critical is False)
                     cert_aaguid_der = fido_oid.value.value
                     # strip first two header bytes for OCTET STRING of length 16
                     assert(cert_aaguid_der[:2] == b'\x04\x10')
@@ -119,7 +119,7 @@ def verify_create_response(response, create_request, expected_origin):
                 except x509.ExtensionNotFound:
                     # no FIDO OID found in cert.
                     pass
-                assert(signing_cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value.ca == False)
+                assert(signing_cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS).value.ca is False)
                 signing_key = signing_cert.public_key()
                 signing_key.verify(sig, att_payload, ec.ECDSA(hashes.SHA256()))
             if len(att_stmt['x5c']) > 1:
