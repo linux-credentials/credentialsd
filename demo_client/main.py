@@ -273,3 +273,54 @@ class VerificationTests(unittest.TestCase):
         self.assertFalse(auth_data.has_flag('BS'))
         self.assertTrue(auth_data.sign_count > user['sign_count'])
 
+    def test_create_u2f_credential(self):
+        response = {
+            "authenticatorAttachment": "cross-platform",
+            "clientExtensionResults": {},
+            "id": "8Z2O7MxWhWcsq-zTyIR9OyoNA1ofnI_ziy9rlYozMXcASsPXQrqVUpXj1npkzWOIk6yOggjifTqmmR9ZA40m-6NbS839cCwGoT2cVmk4p3OWPlJihf3mUnSmzFF7pG2i",
+            "rawId": "8Z2O7MxWhWcsq-zTyIR9OyoNA1ofnI_ziy9rlYozMXcASsPXQrqVUpXj1npkzWOIk6yOggjifTqmmR9ZA40m-6NbS839cCwGoT2cVmk4p3OWPlJihf3mUnSmzFF7pG2i",
+            "response": {
+                "attestationObject": "o2NmbXRoZmlkby11MmZnYXR0U3RtdKJjeDVjgVkBajCCAWYwggELoAMCAQICCQDXlUm9GmcXTzAKBggqhkjOPQQDAjAXMRUwEwYDVQQDDAxGVCBGSURPIDAyMDAwIBcNMTcwNjIwMDAwMDAwWhgPMjA0MDA1MDEwMDAwMDBaMB8xHTAbBgNVBAMMFEZUIEZJRE8gMDQzMDAxMzNDOEE4MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEwM5MKwCmMRqFZN566_vb0GTGXH0wheSKiFuW0RrZ4OiaJ54sWNwHk2T32_0bKNZoNpTVW-qdT20ct-7pSS4FAaM2MDQwHQYDVR0OBBYEFPS2SmjDNOkBuOI8bmbmhmwxkx9dMBMGCysGAQQBguUcAgEBBAQDAgQwMAoGCCqGSM49BAMCA0kAMEYCIQDBlBimyW9sqGmbrLVWd1_AZ8YI853FCCJqoQErPpycZwIhAI3TJELH-8dpmz2rMjiTj6GiAvADI8-66V7KQUU1pIbZY3NpZ1hHMEUCIF7uI9QLd_yXYO5kRPFeUoTT1tK0tG7QyLGhs8jJwDpwAiEAn5ziPC29usTomlIp0MTtfA2BBFG8m1a2AmbtMS9oUgxoYXV0aERhdGFY5MRs74KtG1Rkd1kdAIsIdZ7D5tLstPOUdL_qaWmSXQO3QQAAAAAAAAAAAAAAAAAAAAAAAAAAAGDxnY7szFaFZyyr7NPIhH07Kg0DWh-cj_OLL2uVijMxdwBKw9dCupVSlePWemTNY4iTrI6CCOJ9OqaZH1kDjSb7o1tLzf1wLAahPZxWaTinc5Y-UmKF_eZSdKbMUXukbaKlAQIDJiABIVggQkUpSzzmmP4dXgLiqF_pP21_VcZp67f9PI4hkW8LPYYiWCCRt8YKHemm81ciPROkIqAK7Q7HFQR-epQARhfKIx8aLw",
+                "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiTFN3WFRJUnpMRnNMM2lTcmc3Z2owcm9selZ4bFVKMUd3Q3FEMHR1NnJ4ayIsIm9yaWdpbiI6Imh0dHBzOi8vZGVtby55dWJpY28uY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+                "transports": ["usb"],
+                "authenticatorData": "xGzvgq0bVGR3WR0Aiwh1nsPm0uy085R0v-ppaZJdA7dBAAAAAAAAAAAAAAAAAAAAAAAAAAAAYPGdjuzMVoVnLKvs08iEfTsqDQNaH5yP84sva5WKMzF3AErD10K6lVKV49Z6ZM1jiJOsjoII4n06ppkfWQONJvujW0vN_XAsBqE9nFZpOKdzlj5SYoX95lJ0psxRe6RtoqUBAgMmIAEhWCBCRSlLPOaY_h1eAuKoX-k_bX9Vxmnrt_08jiGRbws9hiJYIJG3xgod6abzVyI9E6QioArtDscVBH56lABGF8ojHxov",
+                "publicKey": "pQECAyYgASFYIEJFKUs85pj-HV4C4qhf6T9tf1XGaeu3_TyOIZFvCz2GIlggkbfGCh3ppvNXIj0TpCKgCu0OxxUEfnqUAEYXyiMfGi8",
+                "publicKeyAlgorithm": -7
+            }
+        }
+        challenge = 'LSwXTIRzLFsL3iSrg7gj0rolzVxlUJ1GwCqD0tu6rxk'
+        create_options = {
+            "attestation": "direct",
+            "authenticatorSelection": {
+                "authenticatorAttachment": "cross-platform",
+                "requireResidentKey": False,
+                "residentKey": "discouraged",
+                "userVerification": "discouraged"
+            },
+            "challenge": challenge,
+            "excludeCredentials": [],
+            "pubKeyCredParams": [
+                {
+                    "alg": -7,
+                    "type": "public-key"
+                },
+                {
+                    "alg": -257,
+                    "type": "public-key"
+                }
+            ],
+            "rp": {
+                "id": "demo.yubico.com",
+                "name": "Yubico Demo"
+            },
+            "timeout": 600000,
+            "user": {
+                "displayName": "qwelvy",
+                "id": "NfF0j0oEdzdAkGD1kxrQCzw-X6ryVIpcAISt8RoToxU",
+                "name": "qwelvy"
+            }
+        }
+
+        origin = "https://demo.yubico.com"
+        auth_data = webauthn.verify_create_response(response, create_options, origin)
+        self.assertEqual(response['id'], util.b64_encode(auth_data.cred_id))

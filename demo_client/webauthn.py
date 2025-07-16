@@ -92,7 +92,7 @@ def verify_create_response(response, create_request, expected_origin):
     #     pass
 
     # Determine the attestation statement format by performing a USASCII case-sensitive match on fmt against the set of supported WebAuthn Attestation Statement Format Identifier values. An up-to-date list of registered WebAuthn Attestation Statement Format Identifier values is maintained in the IANA "WebAuthn Attestation Statement Format Identifiers" registry [IANA-WebAuthn-Registries] established by [RFC8809].
-    supported_att_fmts = ['none', 'packed']
+    supported_att_fmts = ['none', 'packed', 'fido-u2f']
     fmt = attestation['fmt']
     if fmt not in supported_att_fmts:
         raise Exception(f"Unsupported attestation format: {fmt}")
@@ -138,6 +138,60 @@ def verify_create_response(response, create_request, expected_origin):
                 pub_key_bytes = cred_pub_key[COSE_OKP_PUBLIC_KEY]
                 signing_key = Ed25519PublicKey.from_public_bytes(pub_key_bytes.tobytes())
                 signing_key.verify(sig, att_payload)
+    elif fmt == 'fido-u2f':
+        # Verify that attStmt is valid CBOR conforming to the syntax defined above and perform CBOR decoding on it to extract the contained fields.
+        x5c = att_stmt['x5c']
+        sig = att_stmt['sig']
+        # FIDO U2F only supports P-256 keys
+        crv = cred_pub_key[COSE_OKP_CRV]
+        if alg != COSE_ALG_ECDSA or crv != COSE_CRV_P256:
+            raise Exception("Invalid FIDO U2F public key: expected P-256 key")
+
+        # Check that x5c has exactly one element and let attCert be that element. Let certificate public key be the public key conveyed by attCert.
+        if len(x5c) != 1:
+            raise Exception(f"Expected a single attestation certificate in fido-u2f attestation, received {len(x5c)}")
+        att_cert = x5c[0]
+        signing_cert = x509.load_der_x509_certificate(att_cert.tobytes())
+        signing_key = signing_cert.public_key()
+
+        # If certificate public key is not an Elliptic Curve (EC) public key over the P-256 curve, terminate this algorithm and return an appropriate error.
+        if not isinstance(signing_key, ec.EllipticCurvePublicKey) or not signing_key.curve.name == ec.SECP256R1.name:
+            raise Exception("Signing key for FIDO U2F attestation is not a valid P-256 public key.")
+
+        # Extract the claimed rpIdHash from authenticatorData, and the claimed credentialId and credentialPublicKey from authenticatorData.attestedCredentialData.
+        expected_rp_id_hash, cred_pub_key
+        credential_id = auth_data.cred_id
+
+        # Convert the COSE_KEY formatted credentialPublicKey (see Section 7 of [RFC9052]) to Raw ANSI X9.62 public key format
+        # (see ALG_KEY_ECC_X962_RAW in Section 3.6.2 Public Key Representation Formats of [FIDO-Registry]).
+        #
+        #     Let x be the value corresponding to the "-2" key (representing x coordinate) in credentialPublicKey, and confirm its size to be of 32 bytes.
+        #     If size differs or "-2" key is not found, terminate this algorithm and return an appropriate error.
+        #
+        #     Let y be the value corresponding to the "-3" key (representing y coordinate) in credentialPublicKey, and confirm its size to be of 32 bytes.
+        #     If size differs or "-3" key is not found, terminate this algorithm and return an appropriate error.
+        #
+        #     Let publicKeyU2F be the concatenation 0x04 || x || y.
+        #
+        #     Note: This signifies uncompressed ECC key format.
+        x = cred_pub_key.get(COSE_EC2_X)
+        y = cred_pub_key.get(COSE_EC2_Y)
+        if not x or not y or len(x) != 32 or len(y) != 32:
+            raise Exception("Invalid P-256 public key specified")
+        public_key_u2f = b"\x04" + x + y
+
+        # Let verificationData be the concatenation of (0x00 || rpIdHash || clientDataHash || credentialId || publicKeyU2F) (see Section 4.3 of [FIDO-U2F-Message-Formats]).
+        verification_data = b"\x00" + expected_rp_id_hash + client_data_hash + credential_id + public_key_u2f
+
+        # Verify the sig using verificationData and the certificate public key
+        # per section 4.1.4 of [SEC1] with SHA-256 as the hash function used in step two.
+        signing_key = signing_cert.public_key()
+        signing_key.verify(sig, verification_data, ec.ECDSA(hashes.SHA256()))
+
+        # Optionally, inspect x5c and consult externally provided knowledge to determine whether attStmt conveys a Basic or AttCA attestation.
+            # Skip
+
+        # If successful, return implementation-specific values representing attestation type Basic, AttCA or uncertainty, and attestation trust path x5c.
     else:
         raise Exception("We shouldn't be able to get here")
     # Note: Each attestation statement format specifies its own verification procedure. See § 8 Defined Attestation Statement Formats for the initially-defined formats, and [IANA-WebAuthn-Registries] for the up-to-date list.
