@@ -16,7 +16,10 @@ use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialUserEntity,
 };
 use ring::digest;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
+use zbus::object_server::SignalEmitter;
+use zbus::zvariant::{OwnedValue, Value, LE};
 use zbus::{
     connection::{self, Connection},
     fdo, interface,
@@ -25,6 +28,7 @@ use zbus::{
 };
 
 use crate::credential_service::CredentialManagementClient;
+use crate::gui::view_model::ViewUpdate;
 use crate::gui::ViewRequest;
 use crate::model::{CredentialType, Operation};
 use crate::webauthn::{
@@ -187,7 +191,34 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
             signal_unknown_credential: false,
         })
     }
+
+    async fn initiate_event_stream(&self) -> fdo::Result<()> {
+        todo!()
+    }
+    async fn select_device(&self, device_id: String) -> fdo::Result<()> {
+        todo!()
+    }
+    async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
+        todo!()
+    }
+    async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
+        todo!()
+    }
+
+    async fn send_state_update(
+        &self,
+        #[zbus(signal_emitter)]
+        emitter: SignalEmitter<'_>,
+        update: ClientUpdate,
+    ) -> fdo::Result<()> {
+        emitter.state_changed(update).await?;
+        Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn state_changed(emitter: &SignalEmitter<'_>, update: ClientUpdate) -> zbus::Result<()>;
 }
+
 
 async fn execute_flow<C: CredentialManagementClient>(
     gui_tx: &async_std::channel::Sender<ViewRequest>,
@@ -766,6 +797,137 @@ pub struct GetClientCapabilitiesResponse {
     signal_all_accepted_credentials: bool,
     signal_current_user_details: bool,
     signal_unknown_credential: bool,
+}
+
+/// Updates to send to the client
+#[derive(Serialize, Deserialize, Type)]
+pub enum ClientUpdate {
+    SetTitle(OwnedValue),
+    SetDevices(OwnedValue),
+    SetCredentials(OwnedValue),
+
+    WaitingForDevice(OwnedValue),
+    SelectingDevice(OwnedValue),
+
+    UsbNeedsPin(OwnedValue),
+    UsbNeedsUserVerification(OwnedValue),
+    UsbNeedsUserPresence(OwnedValue),
+
+    HybridNeedsQrCode(OwnedValue),
+    HybridConnecting(OwnedValue),
+    HybridConnected(OwnedValue),
+
+    Completed(OwnedValue),
+    Failed(OwnedValue),
+}
+
+impl TryFrom<ClientUpdate> for ViewUpdate {
+    type Error = zbus::zvariant::Error;
+    fn try_from(value: ClientUpdate) -> std::result::Result<ViewUpdate, Self::Error> {
+        match value {
+            ClientUpdate::SetTitle(v) => v.try_into().map(|title| Self::SetTitle(title)),
+            ClientUpdate::SetDevices(v) => {
+                let dbus_devices: Vec<Device> = Value::<'_>::from(v).try_into()?;
+                let devices: std::result::Result<Vec<crate::model::Device>, zbus::zvariant::Error> = dbus_devices
+                    .into_iter()
+                    .map(|d| d.try_into()
+                        .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize devices".to_string()))
+                    )
+                    .collect();
+                Ok(Self::SetDevices(devices?))
+            },
+            ClientUpdate::SetCredentials(v) => {
+                let dbus_credentials: Vec<Credential> = Value::<'_>::from(v).try_into()?;
+                let credentials: std::result::Result<Vec<crate::model::Credential>, zbus::zvariant::Error> = dbus_credentials
+                    .into_iter()
+                    .map(|creds| creds.try_into()
+                        .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize credentials".to_string()))
+                    )
+                    .collect();
+                Ok(Self::SetCredentials(credentials?))
+            },
+
+            ClientUpdate::WaitingForDevice(v) => {
+                let dbus_device: Device = Value::<'_>::from(v).try_into()?;
+                let device: crate::model::Device = dbus_device
+                    .try_into()
+                    .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize device".to_string()))?;
+                Ok(Self::WaitingForDevice(device))
+            },
+            ClientUpdate::SelectingDevice(_) => Ok(Self::SelectingDevice),
+
+            ClientUpdate::UsbNeedsPin(v) => v.try_into().map(|x: i32| {
+                let attempts_left = if x == -1 { None } else { Some(x as u32) };
+                Self::UsbNeedsPin { attempts_left }
+            }),
+            ClientUpdate::UsbNeedsUserVerification(v) => v.try_into().map(|x: i32| {
+                let attempts_left = if x == -1 { None } else { Some(x as u32) };
+                Self::UsbNeedsUserVerification { attempts_left }
+            }),
+            ClientUpdate::UsbNeedsUserPresence(_) => Ok(Self::UsbNeedsUserPresence),
+
+            ClientUpdate::HybridNeedsQrCode(v) => v.try_into().map(|qr_code_data| Self::HybridNeedsQrCode(qr_code_data)),
+            ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
+            ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
+
+            ClientUpdate::Completed(_) => Ok(Self::Completed),
+            ClientUpdate::Failed(v) => v.try_into().map(|error_msg| Self::Failed(error_msg)),
+        }
+    }
+}
+
+#[derive(SerializeDict, DeserializeDict, Type)]
+struct Credential {
+    id: String,
+    name: String,
+    username: String,
+}
+
+impl From<Credential> for crate::model::Credential {
+    fn from(value: Credential) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            username: if value.username.is_empty() { None } else { Some(value.username) }
+        }
+    }
+}
+
+impl TryFrom<Value<'_>> for Credential {
+    type Error = zbus::zvariant::Error;
+    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
+        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
+        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
+        let credential: Credential = encoded.deserialize()?.0;
+        Ok(credential)
+    }
+}
+
+#[derive(SerializeDict, DeserializeDict, Type)]
+struct Device {
+    id: String,
+    transport: String,
+}
+
+impl TryFrom<Value<'_>> for Device {
+    type Error = zbus::zvariant::Error;
+    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
+        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
+        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
+        let device: Device = encoded.deserialize()?.0;
+        Ok(device)
+    }
+}
+
+impl TryFrom<Device> for crate::model::Device {
+    type Error = ();
+    fn try_from(value: Device) -> std::result::Result<Self, Self::Error> {
+        let transport = value.transport.try_into().map_err(|_| ())?;
+        Ok(Self {
+            id: value.id,
+            transport,
+        })
+    }
 }
 
 fn format_client_data_json(

@@ -7,6 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -298,6 +299,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
     DeviceSelected(String),
@@ -305,6 +307,7 @@ pub enum ViewEvent {
     UsbPinEntered(String),
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle(String),
     SetDevices(Vec<Device>),
