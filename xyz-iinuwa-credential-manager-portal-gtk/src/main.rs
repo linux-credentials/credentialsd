@@ -5,6 +5,7 @@ mod cose;
 mod credential_service;
 mod dbus;
 mod gui;
+mod model;
 mod serde;
 mod webauthn;
 

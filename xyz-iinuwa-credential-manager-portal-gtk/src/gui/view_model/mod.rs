@@ -13,6 +13,7 @@ use tracing::{error, info};
 use crate::credential_service::{
     CredentialServiceClient, Error as CredentialServiceError, UsbState,
 };
+use crate::model::{Credential, Device, Operation, Transport};
 
 #[derive(Debug)]
 pub(crate) struct ViewModel<C>
@@ -334,30 +335,6 @@ pub enum Event {
     View(ViewEvent),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Credential {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) username: Option<String>,
-}
-
-#[derive(Debug, Default)]
-pub enum FingerprintSensorState {
-    #[default]
-    Idle,
-}
-
-#[derive(Debug)]
-pub enum CredentialType {
-    Passkey,
-    // Password,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Device {
-    pub id: String,
-    pub transport: Transport,
-}
 
 #[derive(Clone, Debug, Default)]
 pub enum HybridState {
@@ -400,69 +377,3 @@ impl From<crate::credential_service::hybrid::HybridState> for HybridState {
         }
     }
 }
-
-#[derive(Debug)]
-pub enum Operation {
-    Create { cred_type: CredentialType },
-    Get { cred_types: Vec<CredentialType> },
-}
-
-#[derive(Debug, Default)]
-pub struct Provider;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Transport {
-    Ble,
-    HybridLinked,
-    HybridQr,
-    Internal,
-    Nfc,
-    Usb,
-}
-
-impl TryInto<Transport> for String {
-    type Error = String;
-
-    fn try_into(self) -> Result<Transport, String> {
-        let value: &str = self.as_ref();
-        value.try_into()
-    }
-}
-
-impl TryInto<Transport> for &str {
-    type Error = String;
-
-    fn try_into(self) -> Result<Transport, String> {
-        match self {
-            "BLE" => Ok(Transport::Ble),
-            "HybridLinked" => Ok(Transport::HybridLinked),
-            "HybridQr" => Ok(Transport::HybridQr),
-            "Internal" => Ok(Transport::Internal),
-            "NFC" => Ok(Transport::Nfc),
-            "USB" => Ok(Transport::Usb),
-            _ => Err(format!("Unrecognized transport: {}", self.to_owned())),
-        }
-    }
-}
-
-impl From<Transport> for String {
-    fn from(val: Transport) -> Self {
-        val.as_str().to_string()
-    }
-}
-
-impl Transport {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Transport::Ble => "BLE",
-            Transport::HybridLinked => "HybridLinked",
-            Transport::HybridQr => "HybridQr",
-            Transport::Internal => "Internal",
-            Transport::Nfc => "NFC",
-            Transport::Usb => "USB",
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct UserVerificationMethod;

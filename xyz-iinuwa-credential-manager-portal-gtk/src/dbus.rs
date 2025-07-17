@@ -25,10 +25,8 @@ use zbus::{
 };
 
 use crate::credential_service::CredentialManagementClient;
-use crate::gui::{
-    view_model::{CredentialType, Operation},
-    ViewRequest,
-};
+use crate::gui::ViewRequest;
+use crate::model::{CredentialType, Operation};
 use crate::webauthn::{
     self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
 };

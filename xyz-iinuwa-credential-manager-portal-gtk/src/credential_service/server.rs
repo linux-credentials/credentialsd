@@ -7,7 +7,7 @@ use futures_lite::Stream;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::dbus::{CredentialRequest, CredentialResponse};
-use crate::gui::view_model::Device;
+use crate::model::Device;
 
 use super::hybrid::{HybridHandler, HybridState};
 use super::usb::{UsbHandler, UsbState};

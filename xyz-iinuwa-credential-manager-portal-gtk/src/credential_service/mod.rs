@@ -18,7 +18,7 @@ use libwebauthn::{
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
     dbus::{CredentialRequest, CredentialResponse},
-    gui::view_model::{Device, Transport},
+    model::{Device, Transport},
 };
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};

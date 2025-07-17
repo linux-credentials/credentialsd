@@ -6,8 +6,9 @@ use async_std::channel::Receiver;
 use tokio::sync::oneshot;
 
 use crate::credential_service::CredentialServiceClient;
+use crate::model::Operation;
 
-use view_model::{Operation, ViewEvent, ViewUpdate};
+use view_model::{ViewEvent, ViewUpdate};
 
 pub struct ViewRequest {
     pub operation: Operation,
