@@ -1928,7 +1928,7 @@ dependencies = [
 [[package]]
 name = "libwebauthn"
 version = "0.1.2"
-source = "git+https://github.com/linux-credentials/libwebauthn?rev=21995110e729cb83f3cd5ff3ece4c42315fe8bd3#21995110e729cb83f3cd5ff3ece4c42315fe8bd3"
+source = "git+https://github.com/linux-credentials/libwebauthn?rev=e73c76b5826801907340396b0fd9bd7dfb0f5760#e73c76b5826801907340396b0fd9bd7dfb0f5760"
 dependencies = [
  "aes",
  "async-trait",

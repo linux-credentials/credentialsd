@@ -10,7 +10,7 @@ use libwebauthn::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
@@ -363,16 +363,10 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
                         .collect(),
                 })
             }
-            Ctap2AttestationStatement::FidoU2F(att_stmt) => {
-                if att_stmt.certificates.len() != 1 {
-                    error!("fido-u2f attestation statement has to have one certificate, but we received {}!", att_stmt.certificates.len());
-                    return Err(Error::InvalidState);
-                }
-                Ok(Self::U2F {
-                    signature: att_stmt.signature.as_ref().to_vec(),
-                    certificate: att_stmt.certificates[0].to_vec(),
-                })
-            }
+            Ctap2AttestationStatement::FidoU2F(att_stmt) => Ok(Self::U2F {
+                signature: att_stmt.signature.as_ref().to_vec(),
+                certificate: att_stmt.certificate.to_vec(),
+            }),
             _ => {
                 debug!("Unsupported attestation type: {:?}", value);
                 Err(Error::NotSupported)

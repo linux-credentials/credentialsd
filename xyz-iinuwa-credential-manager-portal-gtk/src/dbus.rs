@@ -9,7 +9,7 @@ use libwebauthn::ops::webauthn::{
     Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
     GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
     MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialResponse,
-    MakeCredentialsRequestExtensions, UserVerificationRequirement,
+    MakeCredentialsRequestExtensions, ResidentKeyRequirement, UserVerificationRequirement,
 };
 use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
@@ -351,30 +351,34 @@ impl CreateCredentialRequest {
         let other_options =
             serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
                 .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
-        let (require_resident_key, user_verification) = if let Some(authenticator_selection) =
-            other_options.authenticator_selection
-        {
-            let is_authenticator_storage_capable = true;
-            let require_resident_key = authenticator_selection
-                .resident_key
-                .map(|r| r == "required" || (r == "preferred" && is_authenticator_storage_capable))
-                .or(authenticator_selection.require_resident_key) // fallback to authenticator_selection.require_resident_key == true for WebAuthn Level 1
-                .unwrap_or_default();
+        let (resident_key, user_verification) =
+            if let Some(authenticator_selection) = other_options.authenticator_selection {
+                let resident_key = match authenticator_selection.resident_key.as_deref() {
+                    Some("required") => Some(ResidentKeyRequirement::Required),
+                    Some("preferred") => Some(ResidentKeyRequirement::Preferred),
+                    Some("discouraged") => Some(ResidentKeyRequirement::Discouraged),
+                    Some(_) => None,
+                    // legacy webauthn-1 member
+                    None if authenticator_selection.require_resident_key == Some(true) => {
+                        Some(ResidentKeyRequirement::Required)
+                    }
+                    None => None,
+                };
 
-            let user_verification = authenticator_selection
-                .user_verification
-                .map(|uv| match uv.as_ref() {
-                    "required" => UserVerificationRequirement::Required,
-                    "preferred" => UserVerificationRequirement::Preferred,
-                    "discouraged" => UserVerificationRequirement::Discouraged,
-                    _ => todo!("This should be fixed in the future"),
-                })
-                .unwrap_or(UserVerificationRequirement::Preferred);
+                let user_verification = authenticator_selection
+                    .user_verification
+                    .map(|uv| match uv.as_ref() {
+                        "required" => UserVerificationRequirement::Required,
+                        "preferred" => UserVerificationRequirement::Preferred,
+                        "discouraged" => UserVerificationRequirement::Discouraged,
+                        _ => todo!("This should be fixed in the future"),
+                    })
+                    .unwrap_or(UserVerificationRequirement::Preferred);
 
-            (require_resident_key, user_verification)
-        } else {
-            (false, UserVerificationRequirement::Preferred)
-        };
+                (resident_key, user_verification)
+            } else {
+                (None, UserVerificationRequirement::Preferred)
+            };
         let extensions = if let Some(incoming_extensions) = other_options.extensions {
             let extensions = MakeCredentialsRequestExtensions {
                 cred_props: incoming_extensions.cred_props,
@@ -465,7 +469,7 @@ impl CreateCredentialRequest {
 
                 relying_party: rp,
                 user,
-                require_resident_key,
+                resident_key,
                 user_verification,
                 algorithms,
                 exclude,
