@@ -6,9 +6,9 @@ use async_std::channel::Receiver;
 use tokio::sync::oneshot;
 
 use crate::credential_service::CredentialServiceClient;
-use crate::model::Operation;
+use crate::model::{Operation, ViewUpdate};
 
-use view_model::{ViewEvent, ViewUpdate};
+use view_model::ViewEvent;
 
 pub struct ViewRequest {
     pub operation: Operation,
@@ -47,4 +47,39 @@ fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(client: C, reques
 
     async_std::task::block_on(event_loop.cancel());
     response_tx.send(()).unwrap();
+}
+
+trait GuiClient {
+    /// Mark the GUI as ready to receive events from credential service.
+    /// Returns a queue of updates for updating the GUI state.
+    async fn initiate_event_stream(&self) -> Result<Receiver<ViewUpdate>, ()>;
+
+    /// Select a authenticator or transport to interact with a credential.
+    async fn select_device(&self, device_id: String) -> Result<(), ()>;
+
+    /// Send the client PIN to an authenticator.
+    async fn enter_client_pin(&self, pin: String) -> Result<(), ()>;
+
+    /// Confirm user's credential selection when an authenticator returns multiple credentials.
+    async fn select_credential(&self, credential_id: String) -> Result<(), ()>;
+}
+
+struct InProcessGuiClient {}
+
+impl GuiClient for InProcessGuiClient {
+    async fn initiate_event_stream(&self) -> Result<Receiver<ViewUpdate>, ()> {
+        todo!()
+    }
+
+    async fn select_device(&self, device_id: String) -> Result<(), ()> {
+        todo!()
+    }
+
+    async fn enter_client_pin(&self, pin: String) -> Result<(), ()> {
+        todo!()
+    }
+
+    async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+        todo!()
+    }
 }

@@ -3,11 +3,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::dbus::{CredentialRequest, CredentialResponse};
-use crate::model::Device;
+use crate::model::{BackgroundEvent, Device};
 
 use super::hybrid::{HybridHandler, HybridState};
 use super::usb::{UsbHandler, UsbState};
@@ -74,10 +74,20 @@ pub trait CredentialServiceClient {
 
     fn get_hybrid_credential(
         &self,
-    ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> + Send;
+        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> + Send;
+    ) -> impl Future<Output = Result<(), ()>> + Send;
     fn get_usb_credential(
+        &mut self,
+        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> + Send;
+    ) -> impl Future<Output = Result<(), ()>> + Send;
+    fn initiate_event_stream(
+        &mut self,
+    ) -> impl Future<Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()>>;
+    fn enter_client_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
+    fn select_credential(
         &self,
-    ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> + Send;
+        credential_id: String,
+    ) -> impl Future<Output = Result<(), ()>> + Send;
 }
 
 pub trait CredentialManagementClient {
@@ -144,6 +154,9 @@ pub struct InProcessClient {
         InProcessServerRequest,
         oneshot::Sender<InProcessServerResponse>,
     )>,
+    bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
+    bg_event_rx: Option<mpsc::Receiver<BackgroundEvent>>,
+    usb_pin_tx: Option<tokio::sync::mpsc::Sender<String>>,
 }
 
 impl InProcessClient {
@@ -177,25 +190,84 @@ impl CredentialServiceClient for InProcessClient {
         }
     }
 
-    async fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>> {
+    async fn get_hybrid_credential(&self) -> Result<(), ()> {
         let response = self
             .send(ServiceRequest::GetHybridCredential)
             .await
             .unwrap();
-        if let ServiceResponse::GetHybridCredential(stream) = response {
-            stream
+        if let ServiceResponse::GetHybridCredential(mut stream) = response {
+            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
+                while let Some(hybrid_state) = stream.next().await {
+                    if let Some(tx) = tx_weak.upgrade() {
+                        match hybrid_state {
+                            HybridState::Completed | HybridState::Failed => {
+                                tx.send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
+                                    .await
+                                    .unwrap();
+                                break;
+                            }
+                            _ => tx
+                                .send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
+                                .await
+                                .unwrap(),
+                        };
+                    }
+                }
+            };
+            Ok(())
         } else {
             panic!("Unable to get hybrid credential");
         }
     }
 
-    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send>> {
+    async fn get_usb_credential(&mut self) -> Result<(), ()> {
         let response = self.send(ServiceRequest::GetUsbCredential).await.unwrap();
-        if let ServiceResponse::GetUsbCredential(stream) = response {
-            stream
+        if let ServiceResponse::GetUsbCredential(mut stream) = response {
+            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
+                while let Some(state) = stream.next().await {
+                    if let Some(tx) = tx_weak.upgrade() {
+                        tx.send(BackgroundEvent::UsbStateChanged((&state).into()))
+                            .await
+                            .unwrap();
+                        match state {
+                            UsbState::NeedsPin { pin_tx, .. } => {
+                                let _ = self.usb_pin_tx.insert(pin_tx);
+                            }
+                            UsbState::Completed | UsbState::Failed(_) => {
+                                break;
+                            }
+                            _ => {}
+                        };
+                    }
+                }
+            };
+            Ok(())
         } else {
             panic!("Unable to get usb credential");
         }
+    }
+
+    async fn initiate_event_stream(
+        &mut self,
+    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()> {
+        Ok(Box::pin(async_stream::stream! {
+            while let Some(ref mut rx) = self.bg_event_rx {
+                while let Some(bg_event) = rx.recv().await {
+                    yield bg_event
+                }
+            }
+        }))
+    }
+
+    async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+        if let Some(pin_tx) = self.usb_pin_tx.take() {
+            pin_tx.send(pin).await.unwrap();
+        }
+        Ok(())
+    }
+
+    async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+        todo!();
     }
 }
 
@@ -204,16 +276,33 @@ impl CredentialServiceClient for Arc<InProcessClient> {
         InProcessClient::get_available_public_key_devices(self)
     }
 
-    fn get_hybrid_credential(
-        &self,
-    ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> {
+    fn get_hybrid_credential(&self) -> impl Future<Output = Result<(), ()>> {
+        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> {
         InProcessClient::get_hybrid_credential(self)
     }
 
-    fn get_usb_credential(
-        &self,
-    ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> {
-        InProcessClient::get_usb_credential(self)
+    async fn get_usb_credential(
+        &mut self,
+        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> {
+    ) -> Result<(), ()> {
+        let client = Arc::get_mut(self).ok_or(())?;
+        InProcessClient::get_usb_credential(client).await
+    }
+
+    async fn initiate_event_stream(
+        &mut self,
+    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()> {
+        let client = Arc::get_mut(self).ok_or(())?;
+        InProcessClient::initiate_event_stream(client).await
+    }
+
+    async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+        let client = Arc::get_mut(self).ok_or(())?;
+        InProcessClient::enter_client_pin(client, pin).await
+    }
+
+    fn select_credential(&self, credential_id: String) -> impl Future<Output = Result<(), ()>> {
+        InProcessClient::select_credential(self, credential_id)
     }
 }
 
@@ -241,7 +330,12 @@ where
         let mgr_tx = tx.clone();
         let mgr = InProcessManager { tx: mgr_tx };
         let client_tx = tx.clone();
-        let client = InProcessClient { tx: client_tx };
+        let client = InProcessClient {
+            tx: client_tx,
+            bg_event_tx: None,
+            bg_event_rx: None,
+            usb_pin_tx: None,
+        };
         (Self { svc, rx }, mgr, client)
     }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,9 +28,8 @@ use zbus::{
 };
 
 use crate::credential_service::CredentialManagementClient;
-use crate::gui::view_model::ViewUpdate;
 use crate::gui::ViewRequest;
-use crate::model::{CredentialType, Operation};
+use crate::model::{CredentialType, Operation, ViewUpdate};
 use crate::webauthn::{
     self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
 };
@@ -50,15 +49,27 @@ pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 
             CredentialManager {
                 app_lock: lock,
                 manager_client,
+                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
             },
         )?
         .build()
         .await
 }
 
+enum SignalState {
+    /// No state
+    Idle,
+    /// Waiting for client to signal that it's ready to receive events.
+    /// Holds a cache of events to send once the client connects.
+    Pending(VecDeque<BackgroundEvent>),
+    /// Client is actively receiving messages.
+    Active,
+}
+
 struct CredentialManager<C: CredentialManagementClient> {
     app_lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>>,
     manager_client: C,
+    signal_state: Arc<AsyncMutex<SignalState>>,
 }
 
 #[interface(name = "xyz.iinuwa.credentials.CredentialManagerUi1")]
@@ -192,8 +203,22 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
         })
     }
 
-    async fn initiate_event_stream(&self) -> fdo::Result<()> {
-        todo!()
+    async fn initiate_event_stream(
+        &self,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        let mut signal_state = self.signal_state.lock().await;
+        match *signal_state {
+            SignalState::Idle => {}
+            SignalState::Pending(ref mut pending) => {
+                for msg in pending.into_iter() {
+                    emitter.state_changed(msg).await?;
+                }
+            }
+            SignalState::Active => {}
+        };
+        *signal_state = SignalState::Active;
+        Ok(())
     }
     async fn select_device(&self, device_id: String) -> fdo::Result<()> {
         todo!()
@@ -207,18 +232,31 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
 
     async fn send_state_update(
         &self,
-        #[zbus(signal_emitter)]
-        emitter: SignalEmitter<'_>,
-        update: ClientUpdate,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        update: BackgroundEvent,
     ) -> fdo::Result<()> {
-        emitter.state_changed(update).await?;
+        let mut signal_state = self.signal_state.lock().await;
+        match *signal_state {
+            SignalState::Idle => {
+                let pending = VecDeque::from([update]);
+                *signal_state = SignalState::Pending(pending);
+            }
+            SignalState::Pending(ref mut pending) => {
+                pending.push_back(update);
+            }
+            SignalState::Active => {
+                emitter.state_changed(&update).await?;
+            }
+        };
         Ok(())
     }
 
     #[zbus(signal)]
-    async fn state_changed(emitter: &SignalEmitter<'_>, update: ClientUpdate) -> zbus::Result<()>;
+    async fn state_changed(
+        emitter: &SignalEmitter<'_>,
+        update: &BackgroundEvent,
+    ) -> zbus::Result<()>;
 }
-
 
 async fn execute_flow<C: CredentialManagementClient>(
     gui_tx: &async_std::channel::Sender<ViewRequest>,
@@ -828,32 +866,44 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
             ClientUpdate::SetTitle(v) => v.try_into().map(|title| Self::SetTitle(title)),
             ClientUpdate::SetDevices(v) => {
                 let dbus_devices: Vec<Device> = Value::<'_>::from(v).try_into()?;
-                let devices: std::result::Result<Vec<crate::model::Device>, zbus::zvariant::Error> = dbus_devices
-                    .into_iter()
-                    .map(|d| d.try_into()
-                        .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize devices".to_string()))
-                    )
-                    .collect();
+                let devices: std::result::Result<Vec<crate::model::Device>, zbus::zvariant::Error> =
+                    dbus_devices
+                        .into_iter()
+                        .map(|d| {
+                            d.try_into().map_err(|_| {
+                                zbus::zvariant::Error::Message(
+                                    "Could not deserialize devices".to_string(),
+                                )
+                            })
+                        })
+                        .collect();
                 Ok(Self::SetDevices(devices?))
-            },
+            }
             ClientUpdate::SetCredentials(v) => {
                 let dbus_credentials: Vec<Credential> = Value::<'_>::from(v).try_into()?;
-                let credentials: std::result::Result<Vec<crate::model::Credential>, zbus::zvariant::Error> = dbus_credentials
+                let credentials: std::result::Result<
+                    Vec<crate::model::Credential>,
+                    zbus::zvariant::Error,
+                > = dbus_credentials
                     .into_iter()
-                    .map(|creds| creds.try_into()
-                        .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize credentials".to_string()))
-                    )
+                    .map(|creds| {
+                        creds.try_into().map_err(|_| {
+                            zbus::zvariant::Error::Message(
+                                "Could not deserialize credentials".to_string(),
+                            )
+                        })
+                    })
                     .collect();
                 Ok(Self::SetCredentials(credentials?))
-            },
+            }
 
             ClientUpdate::WaitingForDevice(v) => {
                 let dbus_device: Device = Value::<'_>::from(v).try_into()?;
-                let device: crate::model::Device = dbus_device
-                    .try_into()
-                    .map_err(|_| zbus::zvariant::Error::Message("Could not deserialize device".to_string()))?;
+                let device: crate::model::Device = dbus_device.try_into().map_err(|_| {
+                    zbus::zvariant::Error::Message("Could not deserialize device".to_string())
+                })?;
                 Ok(Self::WaitingForDevice(device))
-            },
+            }
             ClientUpdate::SelectingDevice(_) => Ok(Self::SelectingDevice),
 
             ClientUpdate::UsbNeedsPin(v) => v.try_into().map(|x: i32| {
@@ -866,7 +916,9 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
             }),
             ClientUpdate::UsbNeedsUserPresence(_) => Ok(Self::UsbNeedsUserPresence),
 
-            ClientUpdate::HybridNeedsQrCode(v) => v.try_into().map(|qr_code_data| Self::HybridNeedsQrCode(qr_code_data)),
+            ClientUpdate::HybridNeedsQrCode(v) => v
+                .try_into()
+                .map(|qr_code_data| Self::HybridNeedsQrCode(qr_code_data)),
             ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
             ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
 
@@ -888,7 +940,11 @@ impl From<Credential> for crate::model::Credential {
         Self {
             id: value.id,
             name: value.name,
-            username: if value.username.is_empty() { None } else { Some(value.username) }
+            username: if value.username.is_empty() {
+                None
+            } else {
+                Some(value.username)
+            },
         }
     }
 }
@@ -927,6 +983,86 @@ impl TryFrom<Device> for crate::model::Device {
             id: value.id,
             transport,
         })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+enum HybridState {
+    /// Default state, not listening for hybrid transport.
+    Idle(OwnedValue),
+
+    /// QR code flow is starting, awaiting QR code scan and BLE advert from phone.
+    Started(OwnedValue),
+
+    /// BLE advert received, connecting to caBLE tunnel with shared secret.
+    Connecting(OwnedValue),
+
+    /// Connected to device via caBLE tunnel.
+    Connected(OwnedValue),
+
+    /// Credential received over tunnel.
+    Completed(OwnedValue),
+
+    // This isn't actually sent from the server.
+    UserCancelled(OwnedValue),
+
+    /// Failed to receive a credential
+    Failed(OwnedValue),
+}
+
+impl TryFrom<HybridState> for crate::model::HybridState {
+    type Error = zbus::zvariant::Error;
+    fn try_from(value: HybridState) -> std::result::Result<Self, Self::Error> {
+        match value {
+            HybridState::Idle(_) => Ok(Self::Idle),
+            HybridState::Started(value) => value.try_into().map(Self::Started),
+            HybridState::Connecting(_) => Ok(Self::Connecting),
+            HybridState::Connected(_) => Ok(Self::Connected),
+            HybridState::Completed(_) => Ok(Self::Completed),
+            HybridState::UserCancelled(_) => Ok(Self::UserCancelled),
+            HybridState::Failed(_) => Ok(Self::Failed),
+        }
+    }
+}
+
+/// Used to de-/serialize state D-Bus and model::UsbState.
+#[derive(Serialize, Deserialize, Type)]
+enum UsbState {
+    Idle(OwnedValue),
+    Waiting(OwnedValue),
+    SelectingDevice(OwnedValue),
+    Connected(OwnedValue),
+    NeedsPin(OwnedValue), /* {
+                              attempts_left: Option<u32>,
+                          },
+                          */
+    NeedsUserVerification(OwnedValue), /* {
+                                           attempts_left: Option<u32>,
+                                       },*/
+
+    NeedsUserPresence(OwnedValue),
+    //UserCancelled,
+    SelectCredential(OwnedValue), /* {
+                                      creds: Vec<Credential>,
+                                  },*/
+    Completed(OwnedValue),
+    // Failed(crate::credential_service::Error),
+    Failed(OwnedValue),
+}
+
+#[derive(Serialize, Deserialize, Type)]
+enum BackgroundEvent {
+    UsbStateChanged(OwnedValue),
+    HybridStateChanged(OwnedValue),
+}
+
+impl TryFrom<Value<'_>> for UsbState {
+    type Error = zbus::zvariant::Error;
+    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
+        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
+        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
+        let obj: Self = encoded.deserialize()?.0;
+        Ok(obj)
     }
 }
 

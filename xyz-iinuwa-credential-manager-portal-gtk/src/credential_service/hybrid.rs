@@ -1,11 +1,10 @@
 use core::panic;
 use std::fmt::Debug;
 
-use crate::dbus::CredentialRequest;
 use async_stream::stream;
 use futures_lite::Stream;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Sender};
 use tracing::{debug, error};
 
 use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
@@ -13,7 +12,10 @@ use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOpe
 use libwebauthn::transport::{Channel, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use super::{AuthenticatorResponse, Error};
+use crate::dbus::CredentialRequest;
+use crate::model::Error;
+
+use super::AuthenticatorResponse;
 
 pub(crate) trait HybridHandler {
     fn start(

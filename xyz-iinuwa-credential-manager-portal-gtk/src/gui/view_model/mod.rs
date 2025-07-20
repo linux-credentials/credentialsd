@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::credential_service::{
-    CredentialServiceClient, Error as CredentialServiceError, UsbState,
+use crate::credential_service::CredentialServiceClient;
+use crate::model::{
+    BackgroundEvent, Credential, Device, Error, HybridState, Operation, Transport, UsbState,
+    ViewUpdate,
 };
-use crate::model::{Credential, Device, Operation, Transport};
 
 #[derive(Debug)]
 pub(crate) struct ViewModel<C>
@@ -24,7 +25,6 @@ where
     credential_service: Arc<Mutex<C>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
-    bg_update: Sender<BackgroundEvent>,
     bg_event: Receiver<BackgroundEvent>,
     title: String,
     operation: Operation,
@@ -34,7 +34,6 @@ where
     selected_device: Option<Device>,
 
     // providers: Vec<Provider>,
-    usb_pin_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
     usb_cred_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
@@ -54,13 +53,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
             credential_service: Arc::new(Mutex::new(credential_service)),
             rx_event,
             tx_update,
-            bg_update,
             bg_event,
             operation,
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
-            usb_pin_tx: None,
             usb_cred_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
@@ -96,7 +93,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
 
     pub(crate) async fn select_device(&mut self, id: &str) {
         let device = self.devices.iter().find(|d| d.id == id).unwrap();
-        println!("{:?}", device);
+        tracing::debug!("Device selected: {:?}", device);
 
         // Handle previous device
         if let Some(prev_device) = self.selected_device.replace(device.clone()) {
@@ -119,35 +116,12 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
         // start discovery for newly selected device
         match device.transport {
             Transport::Usb => {
-                let cred_service = self.credential_service.clone();
-                let tx = self.bg_update.clone();
-                let mut stream = {
-                    let cred_service = cred_service.lock().await;
-                    cred_service.get_usb_credential().await
-                };
-                async_std::task::spawn(async move {
-                    // TODO: add cancellation
-                    while let Some(usb_state) = stream.next().await {
-                        // forward to background event loop
-                        tx.send(BackgroundEvent::UsbStateChanged(usb_state))
-                            .await
-                            .unwrap();
-                    }
-                });
+                let mut cred_service = self.credential_service.lock().await;
+                cred_service.get_usb_credential().await.unwrap();
             }
             Transport::HybridQr => {
-                let tx = self.bg_update.clone();
-                let cred_service = self.credential_service.clone();
-                let mut stream = cred_service.lock().await.get_hybrid_credential().await;
-                async_std::task::spawn(async move {
-                    while let Some(state) = stream.next().await {
-                        // forward to background event loop
-                        tx.send(BackgroundEvent::HybridQrStateChanged(state.into()))
-                            .await
-                            .unwrap();
-                    }
-                    tracing::debug!("Broke out of hybrid QR state stream");
-                });
+                let mut cred_service = self.credential_service.lock().await;
+                cred_service.get_hybrid_credential().await.unwrap();
             }
             _ => {
                 todo!()
@@ -175,10 +149,10 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    if let Some(pin_tx) = self.usb_pin_tx.take() {
-                        if pin_tx.lock().await.send(pin).await.is_err() {
-                            error!("Failed to send pin to device");
-                        }
+                    let cred_service = self.credential_service.clone();
+                    let mut cred_service = cred_service.lock().await;
+                    if cred_service.enter_client_pin(pin).await.is_err() {
+                        error!("Failed to send pin to device");
                     }
                 }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
@@ -200,11 +174,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                             info!("Found USB device")
                         }
 
-                        UsbState::NeedsPin {
-                            attempts_left,
-                            pin_tx,
-                        } => {
-                            let _ = self.usb_pin_tx.insert(Arc::new(Mutex::new(pin_tx)));
+                        UsbState::NeedsPin { attempts_left } => {
                             self.tx_update
                                 .send(ViewUpdate::UsbNeedsPin { attempts_left })
                                 .await
@@ -232,8 +202,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                                 .unwrap();
                         }
                         UsbState::Idle | UsbState::Waiting => {}
-                        UsbState::SelectCredential { creds, cred_tx } => {
-                            let _ = self.usb_cred_tx.insert(Arc::new(Mutex::new(cred_tx)));
+                        UsbState::SelectCredential { creds } => {
                             self.tx_update
                                 .send(ViewUpdate::SetCredentials(creds))
                                 .await
@@ -242,9 +211,9 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         // TODO: Provide more specific error messages using the wrapped Error.
                         UsbState::Failed(err) => {
                             let error_msg = String::from(match err {
-                                CredentialServiceError::NoCredentials => "No matching credentials found on this authenticator.",
-                                CredentialServiceError::PinAttemptsExhausted => "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                                CredentialServiceError::AuthenticatorError | CredentialServiceError::Internal(_) => "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                                Error::NoCredentials => "No matching credentials found on this authenticator.",
+                                Error::PinAttemptsExhausted => "No more PIN attempts allowed. Try removing your device and plugging it back in.",
+                                Error::AuthenticatorError | Error::Internal(_) => "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
                             });
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))
@@ -307,61 +276,9 @@ pub enum ViewEvent {
     UsbPinEntered(String),
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum ViewUpdate {
-    SetTitle(String),
-    SetDevices(Vec<Device>),
-    SetCredentials(Vec<Credential>),
-
-    WaitingForDevice(Device),
-    SelectingDevice,
-
-    UsbNeedsPin { attempts_left: Option<u32> },
-    UsbNeedsUserVerification { attempts_left: Option<u32> },
-    UsbNeedsUserPresence,
-
-    HybridNeedsQrCode(String),
-    HybridConnecting,
-    HybridConnected,
-
-    Completed,
-    Failed(String),
-}
-
-pub enum BackgroundEvent {
-    UsbStateChanged(UsbState),
-    HybridQrStateChanged(HybridState),
-}
-
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
-}
-
-
-#[derive(Clone, Debug, Default)]
-pub enum HybridState {
-    /// Default state, not listening for hybrid transport.
-    #[default]
-    Idle,
-
-    /// QR code flow is starting, awaiting QR code scan and BLE advert from phone.
-    Started(String),
-
-    /// BLE advert received, connecting to caBLE tunnel with shared secret.
-    Connecting,
-
-    /// Connected to device via caBLE tunnel.
-    Connected,
-
-    /// Credential received over tunnel.
-    Completed,
-
-    // This isn't actually sent from the server.
-    UserCancelled,
-
-    /// Failed to receive a credential
-    Failed,
 }
 
 impl From<crate::credential_service::hybrid::HybridState> for HybridState {

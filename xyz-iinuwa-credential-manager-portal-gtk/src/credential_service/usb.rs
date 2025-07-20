@@ -19,10 +19,10 @@ use tracing::{debug, warn};
 
 use crate::{
     dbus::{CredentialRequest, GetAssertionResponseInternal},
-    model::Credential,
+    model::{Credential, Error},
 };
 
-use super::{AuthenticatorResponse, CredentialResponse, Error};
+use super::{AuthenticatorResponse, CredentialResponse};
 
 pub(crate) trait UsbHandler {
     fn start(
@@ -523,6 +523,36 @@ impl From<UsbStateInternal> for UsbState {
                 }
             }
             UsbStateInternal::Failed(err) => UsbState::Failed(err),
+        }
+    }
+}
+
+impl From<UsbState> for crate::model::UsbState {
+    fn from(value: UsbState) -> Self {
+        Self::from(&value)
+    }
+}
+impl From<&UsbState> for crate::model::UsbState {
+    fn from(value: &UsbState) -> Self {
+        match value {
+            UsbState::Idle => crate::model::UsbState::Idle,
+            UsbState::Waiting => crate::model::UsbState::Waiting,
+            UsbState::SelectingDevice => crate::model::UsbState::SelectingDevice,
+            UsbState::Connected => crate::model::UsbState::Connected,
+            UsbState::NeedsPin { attempts_left, .. } => crate::model::UsbState::NeedsPin {
+                attempts_left: *attempts_left,
+            },
+            UsbState::NeedsUserVerification { attempts_left } => {
+                crate::model::UsbState::NeedsUserVerification {
+                    attempts_left: *attempts_left,
+                }
+            }
+            UsbState::NeedsUserPresence => crate::model::UsbState::NeedsUserPresence,
+            UsbState::SelectCredential { creds, .. } => crate::model::UsbState::SelectCredential {
+                creds: creds.to_owned(),
+            },
+            UsbState::Completed => crate::model::UsbState::Completed,
+            UsbState::Failed(err) => crate::model::UsbState::Failed(err.to_owned()),
         }
     }
 }
