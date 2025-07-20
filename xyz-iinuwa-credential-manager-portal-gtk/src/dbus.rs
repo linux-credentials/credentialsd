@@ -182,7 +182,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
         Ok(GetClientCapabilitiesResponse {
             conditional_create: false,
             conditional_get: false,
-            hybrid_transport: false,
+            hybrid_transport: true,
             passkey_platform_authenticator: false,
             user_verifying_platform_authenticator: false,
             related_origins: false,
