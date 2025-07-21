@@ -796,6 +796,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1635,9 +1641,13 @@ dependencies = [
 
 [[package]]
 name = "half"
-version = "1.8.3"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
+checksum = "459196ed295495a68f7d7fe1d84f6c4b7ff0e21fe3017b2f283c6fac3ad803c9"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+]
 
 [[package]]
 name = "hash32"
@@ -1927,8 +1937,8 @@ dependencies = [
 
 [[package]]
 name = "libwebauthn"
-version = "0.1.2"
-source = "git+https://github.com/linux-credentials/libwebauthn?rev=e73c76b5826801907340396b0fd9bd7dfb0f5760#e73c76b5826801907340396b0fd9bd7dfb0f5760"
+version = "0.2.1"
+source = "git+https://github.com/linux-credentials/libwebauthn?rev=34f8a59cb1634175b8baf866e6d30d1869f5a221#34f8a59cb1634175b8baf866e6d30d1869f5a221"
 dependencies = [
  "aes",
  "async-trait",
@@ -1954,10 +1964,11 @@ dependencies = [
  "num_enum",
  "p256",
  "rand 0.8.5",
+ "rustls",
  "serde",
  "serde-indexed 0.2.0",
  "serde_bytes",
- "serde_cbor",
+ "serde_cbor_2",
  "serde_derive",
  "serde_repr",
  "sha2",
@@ -2977,10 +2988,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_cbor"
-version = "0.11.2"
+name = "serde_cbor_2"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+checksum = "34aec2709de9078e077090abd848e967abab63c9fb3fdb5d4799ad359d8d482c"
 dependencies = [
  "half",
  "serde",
@@ -3112,9 +3123,9 @@ checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
 
 [[package]]
 name = "snow"
-version = "0.10.0-beta.2"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c689cc478c547a02061bbf874efca827c63ef1112ad396957411326742dccc8"
+checksum = "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82"
 dependencies = [
  "aes-gcm",
  "blake2",

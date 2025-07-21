@@ -20,7 +20,7 @@ serde_json = "1.0.140"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
 zbus = { version = "5.5.0", default-features = false, features = ["blocking-api", "tokio"] }
-libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn", rev = "e73c76b5826801907340396b0fd9bd7dfb0f5760" }
+libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn", rev = "34f8a59cb1634175b8baf866e6d30d1869f5a221" }
 async-trait = "0.1.88"
 tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
 futures-lite = "2.6.0"
