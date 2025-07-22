@@ -1,12 +1,17 @@
+use core::panic;
 use std::fmt::Debug;
 
+use crate::dbus::CredentialRequest;
 use async_stream::stream;
 use futures_lite::Stream;
-use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
-use libwebauthn::transport::Device;
-use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tracing::{debug, error};
 
-use crate::dbus::CredentialRequest;
+use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
+use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
+use libwebauthn::transport::{Channel, Device};
+use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
 use super::{AuthenticatorResponse, Error};
 
@@ -32,7 +37,7 @@ impl HybridHandler for InternalHybridHandler {
     ) -> impl Stream<Item = HybridEvent> + Unpin + Send + Sized + 'static {
         tracing::debug!("Starting hybrid operation");
         let request = request.clone();
-        let (tx, rx) = async_std::channel::unbounded();
+        let (tx, mut rx) = mpsc::channel(16);
         tokio::spawn(async move {
             let hint = match request {
                 CredentialRequest::CreatePublicKeyCredentialRequest(_) => {
@@ -56,9 +61,14 @@ impl HybridHandler for InternalHybridHandler {
                         panic!();
                     }
                 };
-                if let Err(err) = tx.send(HybridStateInternal::Connected).await {
-                    tracing::error!("Failed to send caBLE update: {:?}", err)
-                }
+
+                let state_sender_clone = tx.clone();
+                let ux_updates_rx = channel.get_ux_update_receiver();
+                tokio::spawn(async move {
+                    handle_hybrid_updates(&state_sender_clone, ux_updates_rx).await;
+                    debug!("Reached end of Hybrid updates stream.");
+                });
+
                 tracing::debug!("Polling hybrid channel for updates.");
                 let response: Result<AuthenticatorResponse, Error> = loop {
                     match &request {
@@ -122,7 +132,7 @@ impl HybridHandler for InternalHybridHandler {
             });
         });
         Box::pin(stream! {
-            while let Ok(state) = rx.recv().await {
+            while let Some(state) = rx.recv().await {
                 yield HybridEvent { state }
             }
         })
@@ -190,6 +200,39 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::UserCancelled => HybridState::UserCancelled,
             HybridStateInternal::Failed => HybridState::Failed,
+        }
+    }
+}
+
+async fn handle_hybrid_updates(
+    state_sender: &Sender<HybridStateInternal>,
+    mut ux_update_receiver: broadcast::Receiver<CableUxUpdate>,
+) {
+    while let Ok(msg) = ux_update_receiver.recv().await {
+        debug!(?msg, "Received hybrid update");
+        let new_state: Option<HybridStateInternal> = match msg {
+            CableUxUpdate::UvUpdate(uv_update) => {
+                error!(
+                    "Received unexpected UV update in hybrid handler: {:?}",
+                    uv_update
+                );
+                None
+            }
+            CableUxUpdate::CableUpdate(cable_update) => match cable_update {
+                CableUpdate::ProximityCheck => None,
+                CableUpdate::Connecting => Some(HybridStateInternal::Connecting),
+                CableUpdate::Authenticating => Some(HybridStateInternal::Connecting),
+                CableUpdate::Connected => Some(HybridStateInternal::Connected),
+                CableUpdate::Error(transport_error) => {
+                    error!(?transport_error, "Hybrid transport error");
+                    Some(HybridStateInternal::Failed)
+                }
+            },
+        };
+        if let Some(state) = new_state {
+            if let Err(err) = state_sender.send(state.clone()).await {
+                error!({ ?err, ?state }, "Failed to send hybrid update");
+            }
         }
     }
 }
