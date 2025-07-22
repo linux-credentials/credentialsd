@@ -50,7 +50,7 @@ impl HybridHandler for InternalHybridHandler {
             };
             tokio::spawn(async move {
                 let mut channel = match device.channel().await {
-                    Ok((channel, _)) => channel,
+                    Ok(channel) => channel,
                     Err(e) => {
                         tracing::error!("Failed to open hybrid channel: {:?}", e);
                         panic!();

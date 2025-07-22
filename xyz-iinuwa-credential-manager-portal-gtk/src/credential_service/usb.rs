@@ -8,11 +8,12 @@ use libwebauthn::{
     proto::CtapError,
     transport::{
         hid::{channel::HidChannelHandle, HidDevice},
-        Device,
+        Channel, Device,
     },
     webauthn::{Error as WebAuthnError, WebAuthn},
-    UxUpdate,
+    UvUpdate,
 };
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
@@ -84,7 +85,7 @@ impl InProcessUsbHandler {
                 let dev = device.clone();
 
                 let res = match device.channel().await {
-                    Ok((ref mut channel, _)) => {
+                    Ok(ref mut channel) => {
                         let cancel_handle = channel.get_handle();
                         stx.send((idx, dev, cancel_handle)).await.unwrap();
                         drop(stx);
@@ -292,10 +293,11 @@ async fn handle_events(
         Err(err) => {
             tracing::error!("Failed to open channel to USB authenticator, cannot receive user verification events: {:?}", err);
         }
-        Ok((mut channel, state_rx)) => {
+        Ok(mut channel) => {
             let signal_tx2 = signal_tx.clone().downgrade();
+            let ux_updates_rx = channel.get_ux_update_receiver();
             tokio::spawn(async move {
-                handle_usb_updates(&signal_tx2, state_rx).await;
+                handle_usb_updates(&signal_tx2, ux_updates_rx).await;
                 debug!("Reached end of USB update task");
             });
             tracing::debug!(
@@ -527,15 +529,15 @@ impl From<UsbStateInternal> for UsbState {
 
 async fn handle_usb_updates(
     signal_tx: &WeakSender<Result<UsbUvMessage, Error>>,
-    mut state_rx: Receiver<UxUpdate>,
+    mut state_rx: broadcast::Receiver<UvUpdate>,
 ) {
-    while let Some(msg) = state_rx.recv().await {
+    while let Ok(msg) = state_rx.recv().await {
         let signal_tx = match signal_tx.upgrade() {
             Some(tx) => tx,
             None => break,
         };
         match msg {
-            UxUpdate::UvRetry { attempts_left } => {
+            UvUpdate::UvRetry { attempts_left } => {
                 if let Err(err) = signal_tx
                     .send(Ok(UsbUvMessage::NeedsUserVerification { attempts_left }))
                     .await
@@ -543,7 +545,7 @@ async fn handle_usb_updates(
                     tracing::error!("Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}", err);
                 }
             }
-            UxUpdate::PinRequired(pin_update) => {
+            UvUpdate::PinRequired(pin_update) => {
                 let (pin_tx, mut pin_rx) = mpsc::channel(1);
                 if let Err(err) = signal_tx
                     .send(Ok(UsbUvMessage::NeedsPin {
@@ -562,7 +564,7 @@ async fn handle_usb_updates(
                     None => tracing::debug!("Pin channel closed before receiving pin from client."),
                 }
             }
-            UxUpdate::PresenceRequired => {
+            UvUpdate::PresenceRequired => {
                 if let Err(err) = signal_tx.send(Ok(UsbUvMessage::NeedsUserPresence)).await {
                     tracing::error!("Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}", err);
                 }
