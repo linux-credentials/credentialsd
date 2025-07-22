@@ -1,8 +1,9 @@
 pub mod view_model;
 
+use std::sync::Arc;
 use std::thread;
 
-use async_std::channel::Receiver;
+use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 use tokio::sync::oneshot;
 
 use crate::credential_service::CredentialServiceClient;
@@ -22,6 +23,7 @@ pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + Clone 
     thread::Builder::new()
         .name("gui".into())
         .spawn(move || {
+            let client = Arc::new(AsyncMutex::new(client));
             // D-Bus received a request and needs a window open
             while let Ok(view_request) = rx.recv_blocking() {
                 run_gui(client.clone(), view_request);
@@ -30,7 +32,7 @@ pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + Clone 
         .unwrap();
 }
 
-fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(client: C, request: ViewRequest) {
+fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(client: Arc<AsyncMutex<C>>, request: ViewRequest) {
     let ViewRequest {
         operation,
         signal: response_tx,

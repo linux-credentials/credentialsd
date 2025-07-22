@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use async_std::sync::Mutex as AsyncMutex;
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
@@ -73,16 +74,14 @@ pub trait CredentialServiceClient {
     ) -> impl Future<Output = Result<Vec<Device>, ()>> + Send;
 
     fn get_hybrid_credential(
-        &self,
-        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> + Send;
+        &mut self,
     ) -> impl Future<Output = Result<(), ()>> + Send;
     fn get_usb_credential(
         &mut self,
-        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> + Send;
     ) -> impl Future<Output = Result<(), ()>> + Send;
     fn initiate_event_stream(
         &mut self,
-    ) -> impl Future<Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()>>;
+    ) -> impl Future<Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>> + Send;
     fn enter_client_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
     fn select_credential(
         &self,
@@ -155,8 +154,21 @@ pub struct InProcessClient {
         oneshot::Sender<InProcessServerResponse>,
     )>,
     bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
-    bg_event_rx: Option<mpsc::Receiver<BackgroundEvent>>,
-    usb_pin_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
+    usb_event_forwarder_task: Option<async_std::task::JoinHandle<()>>,
+    hybrid_event_forwarder_task: Option<async_std::task::JoinHandle<()>>,
+}
+
+impl Drop for InProcessClient {
+    fn drop(&mut self) {
+        if let Some(task) = self.usb_event_forwarder_task.take() {
+            async_std::task::block_on(task.cancel());
+        }
+
+        if let Some(task) = self.hybrid_event_forwarder_task.take() {
+            async_std::task::block_on(task.cancel());
+        }
+    }
 }
 
 impl InProcessClient {
@@ -190,30 +202,35 @@ impl CredentialServiceClient for InProcessClient {
         }
     }
 
-    async fn get_hybrid_credential(&self) -> Result<(), ()> {
+    async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
         let response = self
             .send(ServiceRequest::GetHybridCredential)
             .await
             .unwrap();
         if let ServiceResponse::GetHybridCredential(mut stream) = response {
             if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                while let Some(hybrid_state) = stream.next().await {
-                    if let Some(tx) = tx_weak.upgrade() {
-                        match hybrid_state {
-                            HybridState::Completed | HybridState::Failed => {
-                                tx.send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
+                let task = async_std::task::spawn(async move {
+                    while let Some(hybrid_state) = stream.next().await {
+                        if let Some(tx) = tx_weak.upgrade() {
+                            match hybrid_state {
+                                HybridState::Completed | HybridState::Failed => {
+                                    tx.send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
+                                        .await
+                                        .unwrap();
+                                    break;
+                                }
+                                _ => tx
+                                    .send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
                                     .await
-                                    .unwrap();
-                                break;
-                            }
-                            _ => tx
-                                .send(BackgroundEvent::HybridQrStateChanged(hybrid_state.into()))
-                                .await
-                                .unwrap(),
-                        };
+                                    .unwrap(),
+                            };
+                        }
                     }
+                });
+                if let Some(prev_task) = self.hybrid_event_forwarder_task.replace(task) {
+                    prev_task.cancel().await;
                 }
-            };
+            }
             Ok(())
         } else {
             panic!("Unable to get hybrid credential");
@@ -224,23 +241,31 @@ impl CredentialServiceClient for InProcessClient {
         let response = self.send(ServiceRequest::GetUsbCredential).await.unwrap();
         if let ServiceResponse::GetUsbCredential(mut stream) = response {
             if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                while let Some(state) = stream.next().await {
-                    if let Some(tx) = tx_weak.upgrade() {
-                        tx.send(BackgroundEvent::UsbStateChanged((&state).into()))
-                            .await
-                            .unwrap();
-                        match state {
-                            UsbState::NeedsPin { pin_tx, .. } => {
-                                let _ = self.usb_pin_tx.insert(pin_tx);
-                            }
-                            UsbState::Completed | UsbState::Failed(_) => {
+                let usb_pin_tx = self.usb_pin_tx.clone();
+                let task = async_std::task::spawn(async move {
+                    while let Some(state) = stream.next().await {
+                        if let Some(tx) = tx_weak.upgrade() {
+                            if tx.send(BackgroundEvent::UsbStateChanged((&state).into())).await.is_err() {
+                                tracing::debug!("Closing USB background event forwarder");
                                 break;
                             }
-                            _ => {}
-                        };
+                            match state {
+                                UsbState::NeedsPin { pin_tx, .. } => {
+                                    let mut usb_pin_tx = usb_pin_tx.lock().await;
+                                    let _ = usb_pin_tx.insert(pin_tx);
+                                }
+                                UsbState::Completed | UsbState::Failed(_) => {
+                                    break;
+                                }
+                                _ => {}
+                            };
+                        }
                     }
+                });
+                if let Some(prev_task) = self.usb_event_forwarder_task.replace(task){
+                    prev_task.cancel().await;
                 }
-            };
+            }
             Ok(())
         } else {
             panic!("Unable to get usb credential");
@@ -249,18 +274,22 @@ impl CredentialServiceClient for InProcessClient {
 
     async fn initiate_event_stream(
         &mut self,
-    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()> {
+    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
+
+        let (tx, mut rx) = mpsc::channel(32);
+        self.bg_event_tx = Some(tx);
         Ok(Box::pin(async_stream::stream! {
-            while let Some(ref mut rx) = self.bg_event_rx {
-                while let Some(bg_event) = rx.recv().await {
-                    yield bg_event
-                }
+            // TODO: we need to add a shutdown event that tells this stream
+            // to shut down when completed, failed or cancelled
+            while let Some(bg_event) = rx.recv().await {
+                yield bg_event
             }
+            tracing::debug!("event stream ended");
         }))
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-        if let Some(pin_tx) = self.usb_pin_tx.take() {
+        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
         }
         Ok(())
@@ -276,14 +305,13 @@ impl CredentialServiceClient for Arc<InProcessClient> {
         InProcessClient::get_available_public_key_devices(self)
     }
 
-    fn get_hybrid_credential(&self) -> impl Future<Output = Result<(), ()>> {
-        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> {
-        InProcessClient::get_hybrid_credential(self)
+    async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
+        let client = Arc::get_mut(self).ok_or(())?;
+        InProcessClient::get_hybrid_credential(client).await
     }
 
     async fn get_usb_credential(
         &mut self,
-        // ) -> impl Future<Output = Pin<Box<dyn Stream<Item = UsbState> + Send>>> {
     ) -> Result<(), ()> {
         let client = Arc::get_mut(self).ok_or(())?;
         InProcessClient::get_usb_credential(client).await
@@ -291,7 +319,7 @@ impl CredentialServiceClient for Arc<InProcessClient> {
 
     async fn initiate_event_stream(
         &mut self,
-    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + '_>>, ()> {
+    ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
         let client = Arc::get_mut(self).ok_or(())?;
         InProcessClient::initiate_event_stream(client).await
     }
@@ -333,8 +361,9 @@ where
         let client = InProcessClient {
             tx: client_tx,
             bg_event_tx: None,
-            bg_event_rx: None,
-            usb_pin_tx: None,
+            usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+            usb_event_forwarder_task: None,
+            hybrid_event_forwarder_task: None,
         };
         (Self { svc, rx }, mgr, client)
     }

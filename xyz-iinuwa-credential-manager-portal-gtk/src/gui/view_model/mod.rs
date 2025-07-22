@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_std::prelude::*;
 use async_std::{
     channel::{Receiver, Sender},
-    sync::Mutex,
+    sync::Mutex as AsyncMutex,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -22,7 +22,7 @@ pub(crate) struct ViewModel<C>
 where
     C: CredentialServiceClient + Send,
 {
-    credential_service: Arc<Mutex<C>>,
+    credential_service: Arc<AsyncMutex<C>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     bg_event: Receiver<BackgroundEvent>,
@@ -34,7 +34,7 @@ where
     selected_device: Option<Device>,
 
     // providers: Vec<Provider>,
-    usb_cred_tx: Option<Arc<Mutex<mpsc::Sender<String>>>>,
+    usb_cred_tx: Option<Arc<AsyncMutex<mpsc::Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -44,13 +44,13 @@ where
 impl<C: CredentialServiceClient + Send> ViewModel<C> {
     pub(crate) fn new(
         operation: Operation,
-        credential_service: C,
+        credential_service: Arc<AsyncMutex<C>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
         let (bg_update, bg_event) = async_std::channel::unbounded::<BackgroundEvent>();
         Self {
-            credential_service: Arc::new(Mutex::new(credential_service)),
+            credential_service,
             rx_event,
             tx_update,
             bg_event,
@@ -117,7 +117,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
         match device.transport {
             Transport::Usb => {
                 let mut cred_service = self.credential_service.lock().await;
-                cred_service.get_usb_credential().await.unwrap();
+                (*cred_service).get_usb_credential().await.unwrap();
             }
             Transport::HybridQr => {
                 let mut cred_service = self.credential_service.lock().await;
@@ -136,8 +136,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
 
     pub(crate) async fn start_event_loop(&mut self) {
         let view_events = self.rx_event.clone().map(Event::View);
-        let bg_events = self.bg_event.clone().map(Event::Background);
-        let mut all_events = view_events.merge(bg_events);
+        let bg_events = {
+            let mut cred_service = self.credential_service.lock().await;
+            cred_service.initiate_event_stream().await.unwrap()
+        };
+        let mut all_events = view_events.merge(bg_events.map(Event::Background));
         while let Some(event) = all_events.next().await {
             match event {
                 Event::View(ViewEvent::Initiated) => {
@@ -149,8 +152,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    let cred_service = self.credential_service.clone();
-                    let mut cred_service = cred_service.lock().await;
+                    let mut cred_service = self.credential_service.lock().await;
                     if cred_service.enter_client_pin(pin).await.is_err() {
                         error!("Failed to send pin to device");
                     }
