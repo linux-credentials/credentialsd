@@ -1,5 +1,6 @@
 pub mod hybrid;
 mod server;
+mod store;
 pub mod usb;
 
 use std::{
@@ -16,12 +17,13 @@ use libwebauthn::{
 };
 
 use crate::{
-    credential_service::{hybrid::HybridEvent, usb::UsbEvent},
+    credential_service::{hybrid::HybridEvent, store::KnownDeviceId, usb::UsbEvent},
     dbus::{CredentialRequest, CredentialResponse},
     gui::view_model::{Device, Transport},
 };
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
+use store::KnownHybridDeviceStore;
 use usb::{UsbHandler, UsbStateInternal};
 pub use {
     server::{CredentialManagementClient, CredentialServiceClient, InProcessServer},
@@ -30,8 +32,6 @@ pub use {
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
-    devices: Vec<Device>,
-
     cred_request: Mutex<Option<CredentialRequest>>,
     // Place to store data to be returned to the caller
     cred_response: Arc<Mutex<Option<CredentialResponse>>>,
@@ -46,19 +46,7 @@ where
 // <U as UsbHandler>::Stream: Unpin + Send + Sized + 'static,
 {
     pub fn new(hybrid_handler: H, usb_handler: U) -> Self {
-        let devices = vec![
-            Device {
-                id: String::from("0"),
-                transport: Transport::Usb,
-            },
-            Device {
-                id: String::from("1"),
-                transport: Transport::HybridQr,
-            },
-        ];
         Self {
-            devices,
-
             cred_request: Mutex::new(None),
             cred_response: Arc::new(Mutex::new(None)),
 
@@ -78,13 +66,40 @@ where
     }
 
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-        Ok(self.devices.to_owned())
+        let mut devices = vec![
+            Device {
+                id: String::from("0"),
+                transport: Transport::Usb,
+                label: None,
+            },
+            Device {
+                id: String::from("1"),
+                transport: Transport::HybridQr,
+                label: None,
+            },
+        ];
+
+        let known_devices = self
+            .hybrid_handler
+            .known_hybrid_devices()
+            .get_all_known_devices()
+            .await
+            .map_err(|_| ())?;
+        devices.extend(known_devices.iter().map(|(id, info)| Device {
+            id: id.clone(),
+            transport: Transport::HybridLinked,
+            label: Some(info.name.clone()),
+        }));
+        Ok(devices)
     }
 
-    fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
+    fn get_hybrid_credential(
+        &self,
+        known_device_id: Option<KnownDeviceId>,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.cred_request.lock().unwrap();
         let cred_request = guard.clone().unwrap();
-        let stream = self.hybrid_handler.start(&cred_request);
+        let stream = self.hybrid_handler.start(&cred_request, known_device_id);
         let cred_response = self.cred_response.clone();
         Box::pin(HybridStateStream {
             inner: stream,

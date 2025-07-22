@@ -6,6 +6,7 @@ use std::sync::Arc;
 use futures_lite::Stream;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::credential_service::store::KnownDeviceId;
 use crate::dbus::{CredentialRequest, CredentialResponse};
 use crate::gui::view_model::Device;
 
@@ -16,7 +17,7 @@ use super::CredentialService;
 #[allow(clippy::enum_variant_names)]
 pub enum ServiceRequest {
     GetDevices,
-    GetHybridCredential,
+    GetHybridCredential(Option<KnownDeviceId>),
     GetUsbCredential,
 }
 
@@ -74,6 +75,7 @@ pub trait CredentialServiceClient {
 
     fn get_hybrid_credential(
         &self,
+        device_id: Option<KnownDeviceId>,
     ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> + Send;
     fn get_usb_credential(
         &self,
@@ -177,9 +179,12 @@ impl CredentialServiceClient for InProcessClient {
         }
     }
 
-    async fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send>> {
+    async fn get_hybrid_credential(
+        &self,
+        device_id: Option<KnownDeviceId>,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send>> {
         let response = self
-            .send(ServiceRequest::GetHybridCredential)
+            .send(ServiceRequest::GetHybridCredential(device_id))
             .await
             .unwrap();
         if let ServiceResponse::GetHybridCredential(stream) = response {
@@ -206,8 +211,9 @@ impl CredentialServiceClient for Arc<InProcessClient> {
 
     fn get_hybrid_credential(
         &self,
+        device_id: Option<KnownDeviceId>,
     ) -> impl Future<Output = Pin<Box<dyn Stream<Item = HybridState> + Send>>> {
-        InProcessClient::get_hybrid_credential(self)
+        InProcessClient::get_hybrid_credential(self, device_id)
     }
 
     fn get_usb_credential(
@@ -252,8 +258,10 @@ where
                     let rsp = self.svc.get_available_public_key_devices().await.unwrap();
                     InProcessServerResponse::Client(ServiceResponse::GetDevices(rsp))
                 }
-                InProcessServerRequest::Client(ServiceRequest::GetHybridCredential) => {
-                    let rsp = self.svc.get_hybrid_credential();
+                InProcessServerRequest::Client(ServiceRequest::GetHybridCredential(
+                    known_device_id,
+                )) => {
+                    let rsp = self.svc.get_hybrid_credential(known_device_id);
                     InProcessServerResponse::Client(ServiceResponse::GetHybridCredential(rsp))
                 }
                 InProcessServerRequest::Client(ServiceRequest::GetUsbCredential) => {

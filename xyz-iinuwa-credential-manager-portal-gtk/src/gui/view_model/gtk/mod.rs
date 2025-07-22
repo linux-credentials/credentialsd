@@ -296,7 +296,7 @@ impl ViewModel {
             Transport::Usb => {
                 self.set_prompt("Insert your security key.");
             }
-            Transport::HybridQr => {
+            Transport::HybridQr | Transport::HybridLinked => {
                 self.set_prompt("");
             }
             Transport::Internal => {}

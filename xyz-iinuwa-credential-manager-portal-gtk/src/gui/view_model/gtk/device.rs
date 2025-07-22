@@ -51,32 +51,38 @@ impl DeviceObject {
     }
 }
 
-fn transport_name(transport: &Transport) -> &'static str {
-    match transport {
-        Transport::Ble => "A Bluetooth device",
-        Transport::Internal => "This device",
-        Transport::HybridQr => "A mobile device",
-        Transport::HybridLinked => "TODO: Linked Device",
-        Transport::Nfc => "An NFC device",
-        Transport::Usb => "A security key",
-        // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
+impl ToString for &crate::gui::view_model::Device {
+    fn to_string(&self) -> String {
+        match &self.transport {
+            Transport::Ble => "A Bluetooth device".to_string(),
+            Transport::Internal => "This device".to_string(),
+            Transport::HybridQr => "A mobile device".to_string(),
+            Transport::HybridLinked => match &self.label {
+                Some(label) => format!("{} (mobile device)", label),
+                _ => format!("{} (mobile device)", &self.id[..8]),
+            },
+            Transport::Nfc => "An NFC device".to_string(),
+            Transport::Usb => "A security key".to_string(),
+            // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password
+        }
     }
 }
+
 impl From<crate::gui::view_model::Device> for DeviceObject {
     fn from(value: crate::gui::view_model::Device) -> Self {
-        let name = transport_name(&value.transport);
-        Self::new(&value.id, &value.transport, name)
+        let name = (&value).to_string();
+        Self::new(&value.id, &value.transport, &name)
     }
 }
 
 impl From<&crate::gui::view_model::Device> for DeviceObject {
     fn from(value: &crate::gui::view_model::Device) -> Self {
-        let name = transport_name(&value.transport);
+        let name = &value.to_string();
         Self::new(&value.id, &value.transport, name)
     }
 }
 
-impl TryFrom<DeviceObject> for crate::gui::view_model::Device {
+/*impl TryFrom<DeviceObject> for crate::gui::view_model::Device {
     type Error = String;
 
     fn try_from(value: DeviceObject) -> Result<Self, Self::Error> {
@@ -84,6 +90,7 @@ impl TryFrom<DeviceObject> for crate::gui::view_model::Device {
         Ok(Self {
             id: value.id(),
             transport,
+            label: value.name().map(|name| name.to_string()),
         })
     }
-}
+}*/

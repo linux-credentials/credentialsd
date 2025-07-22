@@ -133,10 +133,19 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     }
                 });
             }
-            Transport::HybridQr => {
+            Transport::HybridQr | Transport::HybridLinked => {
                 let tx = self.bg_update.clone();
                 let cred_service = self.credential_service.clone();
-                let mut stream = cred_service.lock().await.get_hybrid_credential().await;
+                let known_device_id = match device.transport {
+                    Transport::HybridQr => None,
+                    Transport::HybridLinked => Some(device.id.clone()),
+                    _ => unreachable!(),
+                };
+                let mut stream = cred_service
+                    .lock()
+                    .await
+                    .get_hybrid_credential(known_device_id)
+                    .await;
                 async_std::task::spawn(async move {
                     while let Some(state) = stream.next().await {
                         // forward to background event loop
@@ -361,6 +370,7 @@ pub enum CredentialType {
 pub struct Device {
     pub id: String,
     pub transport: Transport,
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

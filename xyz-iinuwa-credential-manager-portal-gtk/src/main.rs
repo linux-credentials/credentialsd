@@ -27,8 +27,9 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
-    let credential_service =
-        CredentialService::new(InternalHybridHandler::new(), InProcessUsbHandler {});
+    let hybrid_handler: InternalHybridHandler = InternalHybridHandler::new().await;
+    let credential_service: CredentialService<_, InProcessUsbHandler> =
+        CredentialService::new(hybrid_handler, InProcessUsbHandler {});
     print!("Starting credential service...\t");
     let (mut cred_server, cred_mgr, cred_client) = InProcessServer::new(credential_service);
     tokio::spawn(async move {
