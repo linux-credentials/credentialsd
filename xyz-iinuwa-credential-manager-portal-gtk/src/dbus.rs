@@ -211,7 +211,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
         match *signal_state {
             SignalState::Idle => {}
             SignalState::Pending(ref mut pending) => {
-                for msg in pending.into_iter() {
+                for msg in pending.iter_mut() {
                     emitter.state_changed(msg).await?;
                 }
             }
@@ -863,7 +863,7 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
     type Error = zbus::zvariant::Error;
     fn try_from(value: ClientUpdate) -> std::result::Result<ViewUpdate, Self::Error> {
         match value {
-            ClientUpdate::SetTitle(v) => v.try_into().map(|title| Self::SetTitle(title)),
+            ClientUpdate::SetTitle(v) => v.try_into().map(Self::SetTitle),
             ClientUpdate::SetDevices(v) => {
                 let dbus_devices: Vec<Device> = Value::<'_>::from(v).try_into()?;
                 let devices: std::result::Result<Vec<crate::model::Device>, zbus::zvariant::Error> =
@@ -886,13 +886,7 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
                     zbus::zvariant::Error,
                 > = dbus_credentials
                     .into_iter()
-                    .map(|creds| {
-                        creds.try_into().map_err(|_| {
-                            zbus::zvariant::Error::Message(
-                                "Could not deserialize credentials".to_string(),
-                            )
-                        })
-                    })
+                    .map(|creds| Ok(creds.into()))
                     .collect();
                 Ok(Self::SetCredentials(credentials?))
             }
@@ -918,12 +912,12 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
 
             ClientUpdate::HybridNeedsQrCode(v) => v
                 .try_into()
-                .map(|qr_code_data| Self::HybridNeedsQrCode(qr_code_data)),
+                .map(Self::HybridNeedsQrCode),
             ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
             ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
 
             ClientUpdate::Completed(_) => Ok(Self::Completed),
-            ClientUpdate::Failed(v) => v.try_into().map(|error_msg| Self::Failed(error_msg)),
+            ClientUpdate::Failed(v) => v.try_into().map(Self::Failed),
         }
     }
 }
