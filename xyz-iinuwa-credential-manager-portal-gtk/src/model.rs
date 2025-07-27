@@ -1,10 +1,96 @@
 use serde::{Deserialize, Serialize};
+use zbus:: zvariant::{SerializeDict, Type};
+
+use crate::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) username: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CredentialRequest {
+    CreatePublicKeyCredentialRequest(MakeCredentialRequest),
+    GetPublicKeyCredentialRequest(GetAssertionRequest),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CredentialResponse {
+    CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
+    GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
+}
+
+impl CredentialResponse {
+    pub(crate) fn from_make_credential(
+        response: &MakeCredentialResponse,
+        transports: &[&str],
+        modality: &str,
+    ) -> CredentialResponse {
+        CredentialResponse::CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal::new(
+            response.clone(),
+            transports.iter().map(|s| s.to_string()).collect(),
+            modality.to_string(),
+        ))
+    }
+
+    pub(crate) fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
+        CredentialResponse::GetPublicKeyCredentialResponse(GetAssertionResponseInternal::new(
+            assertion.clone(),
+            modality.to_string(),
+        ))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MakeCredentialResponseInternal {
+    pub(crate) ctap: MakeCredentialResponse,
+    pub(crate) transport: Vec<String>,
+    pub(crate) attachment_modality: String,
+}
+
+impl MakeCredentialResponseInternal {
+    pub(crate) fn new(
+        response: MakeCredentialResponse,
+        transport: Vec<String>,
+        attachment_modality: String,
+    ) -> Self {
+        Self {
+            ctap: response,
+            transport,
+            attachment_modality,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GetAssertionResponseInternal {
+    pub(crate) ctap: Assertion,
+    pub(crate) attachment_modality: String,
+}
+
+impl GetAssertionResponseInternal {
+    pub(crate) fn new(ctap: Assertion, attachment_modality: String) -> Self {
+        Self {
+            ctap,
+            attachment_modality,
+        }
+    }
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict", rename_all = "camelCase")]
+pub struct GetClientCapabilitiesResponse {
+    pub conditional_create: bool,
+    pub conditional_get: bool,
+    pub hybrid_transport: bool,
+    pub passkey_platform_authenticator: bool,
+    pub user_verifying_platform_authenticator: bool,
+    pub related_origins: bool,
+    pub signal_all_accepted_credentials: bool,
+    pub signal_current_user_details: bool,
+    pub signal_unknown_credential: bool,
 }
 
 #[derive(Debug)]
@@ -158,9 +244,9 @@ pub enum UsbState {
     // This isn't actually sent from the server.
     //UserCancelled,
 
-    // Multiple credentials have been found and the user has to select which to use
-    // List of user-identities to decide which to use.
+    /// Multiple credentials have been found and the user has to select which to use
     SelectCredential {
+        /// List of user-identities to decide which to use.
         creds: Vec<Credential>,
     },
 
@@ -192,3 +278,4 @@ pub enum Error {
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
 }
+

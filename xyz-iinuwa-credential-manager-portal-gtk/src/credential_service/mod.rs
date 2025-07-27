@@ -17,8 +17,7 @@ use libwebauthn::{
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
-    dbus::{CredentialRequest, CredentialResponse},
-    model::{Device, Transport},
+    model::{CredentialRequest, CredentialResponse, Device, Transport},
 };
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
@@ -214,7 +213,8 @@ mod test {
 
     use crate::{
         credential_service::usb::InProcessUsbHandler,
-        dbus::{CreateCredentialRequest, CreatePublicKeyCredentialRequest, CredentialRequest},
+        dbus::{CreateCredentialRequest, CreatePublicKeyCredentialRequest},
+        model::CredentialRequest,
     };
 
     use super::{

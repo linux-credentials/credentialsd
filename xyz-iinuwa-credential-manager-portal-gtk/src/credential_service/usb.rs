@@ -17,10 +17,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use crate::{
-    dbus::{CredentialRequest, GetAssertionResponseInternal},
-    model::{Credential, Error},
-};
+use crate::model::{Credential, CredentialRequest, Error, GetAssertionResponseInternal};
 
 use super::{AuthenticatorResponse, CredentialResponse};
 

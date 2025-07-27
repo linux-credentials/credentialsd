@@ -4,15 +4,26 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use libwebauthn::{
     ops::webauthn::{CredentialProtectionPolicy, MakeCredentialLargeBlobExtension},
     proto::ctap2::{
-        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialDescriptor,
-        Ctap2PublicKeyCredentialType, Ctap2Transport,
+        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialType, Ctap2Transport,
     },
 };
+use ring::digest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
 
-use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
+use crate::{cose::{CoseKeyAlgorithmIdentifier, CoseKeyType}, model::Operation};
+
+pub use libwebauthn::ops::webauthn::{
+    Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
+    GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
+    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialResponse,
+    MakeCredentialsRequestExtensions, ResidentKeyRequirement, UserVerificationRequirement,
+};
+pub use libwebauthn::proto::ctap2::{
+    Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
+    Ctap2PublicKeyCredentialUserEntity,
+};
 
 #[derive(Debug)]
 pub enum Error {
@@ -654,4 +665,24 @@ impl GetPublicKeyCredentialResponse {
         });
         output.to_string()
     }
+}
+
+pub fn create_client_data_hash(json: &str) -> Vec<u8> {
+    digest::digest(&digest::SHA256, json.as_bytes())
+            .as_ref()
+            .to_owned()
+}
+
+pub fn format_client_data_json(
+    op: Operation,
+    challenge: &str,
+    origin: &str,
+    is_cross_origin: bool,
+) -> String {
+    let op_str = match op {
+        Operation::Create { .. } => "webauthn.create",
+        Operation::Get { .. } => "webauthn.get",
+    };
+    let cross_origin_str = if is_cross_origin { "true" } else { "false" };
+    format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
 }

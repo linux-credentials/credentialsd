@@ -12,8 +12,7 @@ use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOpe
 use libwebauthn::transport::{Channel, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use crate::dbus::CredentialRequest;
-use crate::model::Error;
+use crate::model::{CredentialRequest, Error};
 
 use super::AuthenticatorResponse;
 
@@ -250,7 +249,7 @@ pub(super) mod test {
         proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2Transport},
     };
 
-    use crate::dbus::CredentialRequest;
+    use crate::model::CredentialRequest;
 
     use super::{HybridEvent, HybridHandler, HybridStateInternal};
     #[derive(Debug)]

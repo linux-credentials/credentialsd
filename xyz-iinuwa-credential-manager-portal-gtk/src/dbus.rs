@@ -1,38 +1,56 @@
-use std::collections::{HashMap, VecDeque};
+//! This module hosts the D-Bus endpoints needed for this service.
+//!
+//! The D-Bus endpoints are structured to allow sandboxing with small component processes connected with a central broker.
+//! # Broker:
+//! The broker's main responsibility is to enforce permissions between the various components.
+//! To do that, the broker has a bunch of seemingly redundant methods that forwards to the actual
+//! implementations.
+//!
+//! The internal components should sandboxed only to have access to resources needed to fulfill the request.
+//!
+//! ## Client -> pub service -> broker -> Cred Service:
+//! These methods are called by the pub service on behalf of a client requesting credentials.
+//! The pub service must pass appropriate context for the broker to determine the client's permissions.
+//! - get_cred(options)
+//! - create_cred(options)
+//! - get_client_capabilities()
+//!
+//! ## UI -> broker -> Cred service:
+//! These methods are called by the trusted UI to interact with the credential service.
+//! - initialize_event_stream()
+//! - get_hybrid_credential()
+//! - get_usb_credential()
+//! - get_available_devices() # a device is a discrete authenticator or a group of potential authenticators accessible via a particular transport, or a credential?
+//! - send_pin()
+//! - select_credential()
+//! - cancel_request()
+//!
+//! ## Cred Service -> broker -> UI:
+//! - launch UI
+//! - send_state_changed()
+
+mod model;
+
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
-
-use base64::Engine;
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD};
-
-use libwebauthn::ops::webauthn::{
-    Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
-    GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
-    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialResponse,
-    MakeCredentialsRequestExtensions, ResidentKeyRequirement, UserVerificationRequirement,
-};
-use libwebauthn::proto::ctap2::{
-    Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
-    Ctap2PublicKeyCredentialUserEntity,
-};
-use ring::digest;
-use serde::{Deserialize, Serialize};
+use futures_lite::StreamExt;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{OwnedValue, Value, LE};
+use zbus::zvariant;
 use zbus::{
     connection::{self, Connection},
     fdo, interface,
-    zvariant::{DeserializeDict, SerializeDict, Type},
     Result,
 };
 
-use crate::credential_service::CredentialManagementClient;
+use crate::credential_service::{CredentialManagementClient, CredentialServiceClient};
 use crate::gui::ViewRequest;
-use crate::model::{CredentialType, Operation, ViewUpdate};
-use crate::webauthn::{
-    self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
-};
+use crate::model::{CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse, Operation};
+
+use self::model::{BackgroundEvent, CreateCredentialResponse, Device, GetPublicKeyCredentialResponse, CreatePublicKeyCredentialResponse, GetCredentialRequest, GetCredentialResponse};
+// TODO: This is a workaround for testing credential_service. Refactor so that
+// these private structs don't need to be exported.
+pub use self::model::{CreateCredentialRequest, CreatePublicKeyCredentialRequest};
 
 pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 'static>(
     service_name: &str,
@@ -49,7 +67,6 @@ pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 
             CredentialManager {
                 app_lock: lock,
                 manager_client,
-                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
             },
         )?
         .build()
@@ -69,9 +86,9 @@ enum SignalState {
 struct CredentialManager<C: CredentialManagementClient> {
     app_lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>>,
     manager_client: C,
-    signal_state: Arc<AsyncMutex<SignalState>>,
 }
 
+/// These are public methods that can be called by arbitrary clients to begin a credential flow.
 #[interface(name = "xyz.iinuwa.credentials.CredentialManagerUi1")]
 impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C> {
     async fn create_credential(
@@ -202,7 +219,24 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
             signal_unknown_credential: false,
         })
     }
+}
 
+struct InternalService {
+    signal_state: Arc<AsyncMutex<SignalState>>,
+}
+
+/// The following methods are for communication between the [trusted]
+/// UI and the credential service, and should not be called by arbitrary
+/// clients.
+#[interface(
+    name = "xyz.iinuwa.credentials.CredentialManagerInternal1",
+    proxy(
+        gen_blocking = false,
+        default_path = "/xyz/iinuwa/credentials/CredentialManagerInternal",
+        default_service = "xyz.iinuwa.credentials.CredentialManagerInternal",
+    )
+)]
+impl InternalService {
     async fn initiate_event_stream(
         &self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
@@ -212,7 +246,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
             SignalState::Idle => {}
             SignalState::Pending(ref mut pending) => {
                 for msg in pending.iter_mut() {
-                    emitter.state_changed(msg).await?;
+                    emitter.state_changed(msg.clone()).await?;
                 }
             }
             SignalState::Active => {}
@@ -220,6 +254,19 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
         *signal_state = SignalState::Active;
         Ok(())
     }
+
+    async fn get_available_public_key_devices(&self) -> fdo::Result<Vec<Device>> {
+        todo!()
+    }
+
+    async fn get_hybrid_credential(&self) -> fdo::Result<()> {
+        todo!()
+    }
+
+    async fn get_usb_credential(&self) -> fdo::Result<()> {
+        todo!()
+    }
+
     async fn select_device(&self, device_id: String) -> fdo::Result<()> {
         todo!()
     }
@@ -245,7 +292,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                 pending.push_back(update);
             }
             SignalState::Active => {
-                emitter.state_changed(&update).await?;
+                emitter.state_changed(update).await?;
             }
         };
         Ok(())
@@ -254,8 +301,18 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
     #[zbus(signal)]
     async fn state_changed(
         emitter: &SignalEmitter<'_>,
-        update: &BackgroundEvent,
+        update: BackgroundEvent,
     ) -> zbus::Result<()>;
+}
+
+struct UiControlService;
+
+#[interface(name = "xyz.iinuwa.credentials.UiControl1")]
+impl UiControlService {
+    fn launch_ui(&self) {}
+    fn send_state_changed(&self) {
+
+    }
 }
 
 async fn execute_flow<C: CredentialManagementClient>(
@@ -296,780 +353,60 @@ async fn execute_flow<C: CredentialManagementClient>(
     })
 }
 
-// D-Bus <-> internal types
-#[derive(Clone, Debug)]
-pub(crate) enum CredentialRequest {
-    CreatePublicKeyCredentialRequest(MakeCredentialRequest),
-    GetPublicKeyCredentialRequest(GetAssertionRequest),
+struct DbusCredentialClient<'a> {
+    proxy: InternalServiceProxy<'a>
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum CredentialResponse {
-    CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
-    GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
-}
-
-impl CredentialResponse {
-    pub(crate) fn from_make_credential(
-        response: &MakeCredentialResponse,
-        transports: &[&str],
-        modality: &str,
-    ) -> CredentialResponse {
-        CredentialResponse::CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal::new(
-            response.clone(),
-            transports.iter().map(|s| s.to_string()).collect(),
-            modality.to_string(),
-        ))
-    }
-
-    pub(crate) fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
-        CredentialResponse::GetPublicKeyCredentialResponse(GetAssertionResponseInternal::new(
-            assertion.clone(),
-            modality.to_string(),
-        ))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MakeCredentialResponseInternal {
-    ctap: MakeCredentialResponse,
-    transport: Vec<String>,
-    attachment_modality: String,
-}
-
-impl MakeCredentialResponseInternal {
-    pub(crate) fn new(
-        response: MakeCredentialResponse,
-        transport: Vec<String>,
-        attachment_modality: String,
-    ) -> Self {
-        Self {
-            ctap: response,
-            transport,
-            attachment_modality,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct GetAssertionResponseInternal {
-    ctap: Assertion,
-    attachment_modality: String,
-}
-
-impl GetAssertionResponseInternal {
-    pub(crate) fn new(ctap: Assertion, attachment_modality: String) -> Self {
-        Self {
-            ctap,
-            attachment_modality,
-        }
-    }
-}
-
-// D-Bus <-> Client types
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreateCredentialRequest {
-    pub(crate) origin: Option<String>,
-    pub(crate) is_same_origin: Option<bool>,
-    #[zvariant(rename = "type")]
-    pub(crate) r#type: String,
-    #[zvariant(rename = "publicKey")]
-    pub(crate) public_key: Option<CreatePublicKeyCredentialRequest>,
-}
-
-impl CreateCredentialRequest {
-    pub(crate) fn try_into_ctap2_request(
+impl CredentialServiceClient for DbusCredentialClient<'_> {
+    async fn get_available_public_key_devices(
         &self,
-    ) -> std::result::Result<(MakeCredentialRequest, String), webauthn::Error> {
-        if self.public_key.is_none() {
-            return Err(webauthn::Error::NotSupported);
-        }
-        let options = self.public_key.as_ref().unwrap();
+    ) -> std::result::Result<Vec<crate::model::Device>, ()> {
+        let dbus_devices = self.proxy.get_available_public_key_devices().await.map_err(|_|())?;
+        dbus_devices.into_iter().map(|d| d.try_into()).collect()
+    }
 
-        let request_value = serde_json::from_str::<serde_json::Value>(&options.request_json)
-            .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
-        let json = request_value
-            .as_object()
-            .ok_or_else(|| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
-        let challenge = json
-            .get("challenge")
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| webauthn::Error::Internal("JSON missing `challenge` field".to_string()))?
-            .to_owned();
-        let rp = json
-            .get("rp")
-            .and_then(|val| {
-                serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok()
+    async fn get_hybrid_credential(
+        &mut self,
+    ) -> std::result::Result<(), ()> {
+        self.proxy.get_hybrid_credential().await
+            .inspect_err(|err| tracing::error!("Failed to start hybrid credential flow: {err}"))
+            .map_err(|_| ())
+    }
+
+    async fn get_usb_credential(
+        &mut self,
+    ) -> std::result::Result<(), ()> {
+        self.proxy.get_hybrid_credential().await
+            .inspect_err(|err| tracing::error!("Failed to start USB credential flow: {err}"))
+            .map_err(|_| ())
+    }
+
+    async fn initiate_event_stream(
+        &mut self,
+    ) -> std::result::Result<std::pin::Pin<Box<dyn futures_lite::Stream<Item = crate::model::BackgroundEvent> + Send + 'static>>, ()> {
+        let stream = self.proxy.receive_state_changed().await
+            .map_err(|err| tracing::error!("Failed to initalize event stream: {err}"))?
+            .filter_map(|msg| {
+                msg.args().and_then(|args| args.update.try_into().map_err(|err: zvariant::Error| err.into()))
+                .inspect_err(|err| tracing::warn!("Failed to parse StateChanged signal: {err}"))
+                .ok()
             })
-            .ok_or_else(|| webauthn::Error::Internal("JSON missing `rp` field".to_string()))?;
-        let user = json
-            .get("user")
-            .ok_or(webauthn::Error::Internal(
-                "JSON missing `user` field".to_string(),
-            ))
-            .and_then(|val| {
-                serde_json::from_str::<Ctap2PublicKeyCredentialUserEntity>(&val.to_string())
-                    .map_err(|e| {
-                        let msg = format!("JSON missing `user` field: {e}");
-                        webauthn::Error::Internal(msg)
-                    })
-            })?;
-        let other_options =
-            serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
-                .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
-        let (resident_key, user_verification) =
-            if let Some(authenticator_selection) = other_options.authenticator_selection {
-                let resident_key = match authenticator_selection.resident_key.as_deref() {
-                    Some("required") => Some(ResidentKeyRequirement::Required),
-                    Some("preferred") => Some(ResidentKeyRequirement::Preferred),
-                    Some("discouraged") => Some(ResidentKeyRequirement::Discouraged),
-                    Some(_) => None,
-                    // legacy webauthn-1 member
-                    None if authenticator_selection.require_resident_key == Some(true) => {
-                        Some(ResidentKeyRequirement::Required)
-                    }
-                    None => None,
-                };
-
-                let user_verification = authenticator_selection
-                    .user_verification
-                    .map(|uv| match uv.as_ref() {
-                        "required" => UserVerificationRequirement::Required,
-                        "preferred" => UserVerificationRequirement::Preferred,
-                        "discouraged" => UserVerificationRequirement::Discouraged,
-                        _ => todo!("This should be fixed in the future"),
-                    })
-                    .unwrap_or(UserVerificationRequirement::Preferred);
-
-                (resident_key, user_verification)
-            } else {
-                (None, UserVerificationRequirement::Preferred)
-            };
-        let extensions = if let Some(incoming_extensions) = other_options.extensions {
-            let extensions = MakeCredentialsRequestExtensions {
-                cred_props: incoming_extensions.cred_props,
-                cred_blob: incoming_extensions
-                    .cred_blob
-                    .and_then(|x| URL_SAFE_NO_PAD.decode(x).ok()),
-                min_pin_length: incoming_extensions.min_pin_length,
-                cred_protect: match incoming_extensions.credential_protection_policy {
-                    Some(cred_prot_policy) => Some(CredentialProtectionExtension {
-                        policy: cred_prot_policy,
-                        enforce_policy: incoming_extensions
-                            .enforce_credential_protection_policy
-                            .unwrap_or_default(),
-                    }),
-                    None => None,
-                },
-                large_blob: incoming_extensions
-                    .large_blob
-                    .map(|x| x.support.unwrap_or_default())
-                    .unwrap_or_default(),
-                hmac_or_prf: if incoming_extensions.prf.is_some() {
-                    // CTAP currently doesn't support PRF queries at credentials.create()
-                    // So we ignore any potential value set in the request and only mark this
-                    // credential to activate HMAC for future PRF queries using credentials.get()
-                    MakeCredentialHmacOrPrfInput::Prf
-                } else {
-                    // MakeCredentialHmacOrPrfInput::Hmac is not used directly by webauthn
-                    MakeCredentialHmacOrPrfInput::None
-                },
-            };
-            Some(extensions)
-        } else {
-            None
-        };
-
-        let credential_parameters = request_value
-            .clone()
-            .get("pubKeyCredParams")
-            .ok_or_else(|| {
-                webauthn::Error::Internal(
-                    "Request JSON missing or invalid `pubKeyCredParams` key".to_string(),
-                )
-            })
-            .and_then(|val| -> std::result::Result<Vec<_>, webauthn::Error> {
-                serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string())
-                    .map_err(|e| {
-                        webauthn::Error::Internal(format!(
-                            "Request JSON missing or invalid `pubKeyCredParams` key: {e}"
-                        ))
-                    })
-            })?;
-        let algorithms = credential_parameters
-            .iter()
-            .filter_map(|p| p.try_into().ok())
-            .collect();
-        let exclude = other_options.excluded_credentials.map(|v| {
-            v.iter()
-                .map(|e| e.try_into())
-                .filter_map(|e| e.ok())
-                .collect()
-        });
-        let (origin, is_cross_origin) = match (self.origin.as_ref(), self.is_same_origin.as_ref()) {
-            (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
-            (Some(origin), None) => (origin.to_string(), true),
-            // origin should always be set on request either by client or D-Bus service,
-            // so this shouldn't be called
-            (None, _) => {
-                return Err(webauthn::Error::Internal(
-                    "Error reading origin from request".to_string(),
-                ));
-            }
-        };
-        let client_data_json = format_client_data_json(
-            Operation::Create {
-                cred_type: CredentialType::Passkey,
-            },
-            &challenge,
-            &origin,
-            is_cross_origin,
-        );
-        let client_data_hash = digest::digest(&digest::SHA256, client_data_json.as_bytes())
-            .as_ref()
-            .to_owned();
-        Ok((
-            MakeCredentialRequest {
-                hash: client_data_hash,
-                origin,
-
-                relying_party: rp,
-                user,
-                resident_key,
-                user_verification,
-                algorithms,
-                exclude,
-                extensions,
-                timeout: other_options.timeout.unwrap_or(Duration::from_secs(300)),
-            },
-            client_data_json,
-        ))
+            .boxed();
+        self.proxy.initiate_event_stream().await
+        .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
+        .and_then(|_| Ok(stream))
     }
-}
 
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreatePublicKeyCredentialRequest {
-    pub(crate) request_json: String,
-}
-
-impl CreatePublicKeyCredentialResponse {
-    fn try_from_ctap2_response(
-        response: &MakeCredentialResponseInternal,
-        client_data_json: String,
-    ) -> std::result::Result<Self, fdo::Error> {
-        let auth_data = &response.ctap.authenticator_data;
-        let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| {
-            fdo::Error::Failed("Invalid credential received from authenticator".to_string())
-        })?;
-
-        let unsigned_extensions =
-            serde_json::to_string(&response.ctap.unsigned_extensions_output).unwrap();
-        let authenticator_data_blob = auth_data.to_response_bytes().unwrap();
-        let attestation_statement =
-            (&response.ctap.attestation_statement)
-                .try_into()
-                .map_err(|_| {
-                    fdo::Error::Failed("Could not serialize attestation statement".to_string())
-                })?;
-        let attestation_object = webauthn::create_attestation_object(
-            &authenticator_data_blob,
-            &attestation_statement,
-            response.ctap.enterprise_attestation.unwrap_or(false),
-        )
-        .map_err(|_| zbus::Error::Failure("Failed to create attestation object".to_string()))?;
-        // do we need to check that the client_data_hash is the same?
-        let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
-            attested_credential.credential_id.clone(),
-            attestation_object,
-            client_data_json,
-            Some(response.transport.clone()),
-            unsigned_extensions,
-            response.attachment_modality.clone(),
-        )
-        .to_json();
-        let response = CreatePublicKeyCredentialResponse {
-            registration_response_json,
-        };
-        Ok(response)
+    async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
+        self.proxy.enter_client_pin(pin).await
+            .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
     }
-}
 
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreateCredentialResponse {
-    #[zvariant(rename = "type")]
-    r#type: String,
-    public_key: Option<CreatePublicKeyCredentialResponse>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreatePublicKeyCredentialResponse {
-    registration_response_json: String,
-}
-
-impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
-    fn from(response: CreatePublicKeyCredentialResponse) -> Self {
-        CreateCredentialResponse {
-            // TODO: Decide on camelCase or kebab-case for cred types
-            r#type: "public-key".to_string(),
-            public_key: Some(response),
-        }
-    }
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetCredentialRequest {
-    origin: Option<String>,
-    is_same_origin: Option<bool>,
-    #[zvariant(rename = "type")]
-    r#type: String,
-    #[zvariant(rename = "publicKey")]
-    public_key: Option<GetPublicKeyCredentialRequest>,
-}
-
-impl GetCredentialRequest {
-    fn try_into_ctap2_request(
+    async fn select_credential(
         &self,
-    ) -> std::result::Result<(GetAssertionRequest, String), webauthn::Error> {
-        if self.public_key.is_none() {
-            return Err(webauthn::Error::NotSupported);
-        }
-        let options = self.public_key.as_ref().unwrap();
-        let request: webauthn::GetCredentialOptions =
-            serde_json::from_str(&options.request_json)
-                .map_err(|e| webauthn::Error::Internal(format!("Invalid request JSON: {:?}", e)))?;
-        let mut allow: Vec<Ctap2PublicKeyCredentialDescriptor> = request
-            .allow_credentials
-            .iter()
-            .filter_map(|cred| {
-                if cred.cred_type == "public-key" {
-                    cred.try_into().ok()
-                } else {
-                    None
-                }
-            })
-            .collect();
-        // TODO: The allow is returning an empty list instead of either None or a list of transports.
-        // This should be investigated, but this is just a UI hint and isn't necessary to pass to the authenticator.
-        // Just removing it for now.
-        for c in allow.iter_mut() {
-            c.transports = None;
-        }
-        let (origin, is_cross_origin) = match (self.origin.as_ref(), self.is_same_origin.as_ref()) {
-            (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
-            (Some(origin), None) => (origin.to_string(), true),
-            // origin should always be set on request either by client or D-Bus service,
-            // so this shouldn't be called
-            (None, _) => {
-                return Err(webauthn::Error::Internal(
-                    "Error reading origin from request".to_string(),
-                ));
-            }
-        };
-        let client_data_json = format_client_data_json(
-            Operation::Get {
-                cred_types: vec![CredentialType::Passkey],
-            },
-            &request.challenge,
-            &origin,
-            is_cross_origin,
-        );
-        let client_data_hash = digest::digest(&digest::SHA256, client_data_json.as_bytes())
-            .as_ref()
-            .to_owned();
-        // TODO: actually calculate correct effective domain, and use fallback to related origin requests to fill this in. For now, just default to origin.
-        let user_verification = match request
-            .user_verification
-            .unwrap_or_else(|| String::from("preferred"))
-            .as_ref()
-        {
-            "required" => UserVerificationRequirement::Required,
-            "preferred" => UserVerificationRequirement::Preferred,
-            "discouraged" => UserVerificationRequirement::Discouraged,
-            _ => {
-                return Err(webauthn::Error::Internal(
-                    "Invalid user verification requirement specified".to_string(),
-                ))
-            }
-        };
-        let relying_party_id = request.rp_id.unwrap_or_else(|| {
-            let (_, effective_domain) = origin.rsplit_once('/').unwrap();
-            effective_domain.to_string()
-        });
-
-        let extensions = if let Some(incoming_extensions) = request.extensions {
-            let extensions = GetAssertionRequestExtensions {
-                cred_blob: incoming_extensions.get_cred_blob,
-                hmac_or_prf: incoming_extensions
-                    .prf
-                    .and_then(|x| {
-                        x.eval.map(|eval| {
-                            let eval = Some(eval.decode());
-                            let mut eval_by_credential = HashMap::new();
-                            if let Some(incoming_eval) = x.eval_by_credential {
-                                for (key, val) in incoming_eval.iter() {
-                                    eval_by_credential.insert(key.clone(), val.decode());
-                                }
-                            }
-                            GetAssertionHmacOrPrfInput::Prf {
-                                eval,
-                                eval_by_credential,
-                            }
-                        })
-                    })
-                    .unwrap_or_default(),
-                large_blob: incoming_extensions
-                    .large_blob
-                    // TODO: Implement GetAssertionLargeBlobExtension::Write, once libwebauthn supports it
-                    .filter(|x| x.read == Some(true))
-                    .map(|_| GetAssertionLargeBlobExtension::Read)
-                    .unwrap_or(GetAssertionLargeBlobExtension::None),
-            };
-            Some(extensions)
-        } else {
-            None
-        };
-
-        Ok((
-            GetAssertionRequest {
-                hash: client_data_hash,
-                relying_party_id,
-                user_verification,
-                allow,
-                extensions,
-                timeout: request.timeout.unwrap_or(Duration::from_secs(300)),
-            },
-            client_data_json,
-        ))
+        credential_id: String,
+    ) -> std::result::Result<(), ()> {
+        self.proxy.select_credential(credential_id).await
+            .map_err(|err| tracing::error!("Failed to select credential: {err}"))
     }
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetPublicKeyCredentialRequest {
-    pub(crate) request_json: String,
-}
-
-impl GetPublicKeyCredentialResponse {
-    fn try_from_ctap2_response(
-        response: &GetAssertionResponseInternal,
-        client_data_json: String,
-    ) -> std::result::Result<Self, fdo::Error> {
-        let authenticator_data_blob = response
-            .ctap
-            .authenticator_data
-            .to_response_bytes()
-            .unwrap();
-
-        // We can't just do this here, because we need encode all byte arrays for the JS-communication:
-        // let unsigned_extensions = response
-        //     .ctap
-        //     .unsigned_extensions_output
-        //     .as_ref()
-        //     .map(|extensions| serde_json::to_string(&extensions).unwrap());
-        let unsigned_extensions = response
-            .ctap
-            .unsigned_extensions_output
-            .as_ref()
-            .map(GetPublicKeyCredentialUnsignedExtensionsResponse::from);
-
-        let authentication_response_json = webauthn::GetPublicKeyCredentialResponse::new(
-            client_data_json,
-            response
-                .ctap
-                .credential_id
-                .as_ref()
-                .map(|c| c.id.clone().into_vec()),
-            authenticator_data_blob,
-            response.ctap.signature.clone(),
-            response.ctap.user.as_ref().map(|u| u.id.clone().into_vec()),
-            response.attachment_modality.clone(),
-            unsigned_extensions,
-        )
-        .to_json();
-
-        let response = GetPublicKeyCredentialResponse {
-            authentication_response_json,
-        };
-        Ok(response)
-    }
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetCredentialResponse {
-    #[zvariant(rename = "type")]
-    r#type: String,
-    public_key: Option<GetPublicKeyCredentialResponse>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetPublicKeyCredentialResponse {
-    authentication_response_json: String,
-}
-
-impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
-    fn from(response: GetPublicKeyCredentialResponse) -> Self {
-        GetCredentialResponse {
-            // TODO: Decide on camelCase or kebab-case for cred types
-            r#type: "public-key".to_string(),
-            public_key: Some(response),
-        }
-    }
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict", rename_all = "camelCase")]
-pub struct GetClientCapabilitiesResponse {
-    conditional_create: bool,
-    conditional_get: bool,
-    hybrid_transport: bool,
-    passkey_platform_authenticator: bool,
-    user_verifying_platform_authenticator: bool,
-    related_origins: bool,
-    signal_all_accepted_credentials: bool,
-    signal_current_user_details: bool,
-    signal_unknown_credential: bool,
-}
-
-/// Updates to send to the client
-#[derive(Serialize, Deserialize, Type)]
-pub enum ClientUpdate {
-    SetTitle(OwnedValue),
-    SetDevices(OwnedValue),
-    SetCredentials(OwnedValue),
-
-    WaitingForDevice(OwnedValue),
-    SelectingDevice(OwnedValue),
-
-    UsbNeedsPin(OwnedValue),
-    UsbNeedsUserVerification(OwnedValue),
-    UsbNeedsUserPresence(OwnedValue),
-
-    HybridNeedsQrCode(OwnedValue),
-    HybridConnecting(OwnedValue),
-    HybridConnected(OwnedValue),
-
-    Completed(OwnedValue),
-    Failed(OwnedValue),
-}
-
-impl TryFrom<ClientUpdate> for ViewUpdate {
-    type Error = zbus::zvariant::Error;
-    fn try_from(value: ClientUpdate) -> std::result::Result<ViewUpdate, Self::Error> {
-        match value {
-            ClientUpdate::SetTitle(v) => v.try_into().map(Self::SetTitle),
-            ClientUpdate::SetDevices(v) => {
-                let dbus_devices: Vec<Device> = Value::<'_>::from(v).try_into()?;
-                let devices: std::result::Result<Vec<crate::model::Device>, zbus::zvariant::Error> =
-                    dbus_devices
-                        .into_iter()
-                        .map(|d| {
-                            d.try_into().map_err(|_| {
-                                zbus::zvariant::Error::Message(
-                                    "Could not deserialize devices".to_string(),
-                                )
-                            })
-                        })
-                        .collect();
-                Ok(Self::SetDevices(devices?))
-            }
-            ClientUpdate::SetCredentials(v) => {
-                let dbus_credentials: Vec<Credential> = Value::<'_>::from(v).try_into()?;
-                let credentials: std::result::Result<
-                    Vec<crate::model::Credential>,
-                    zbus::zvariant::Error,
-                > = dbus_credentials
-                    .into_iter()
-                    .map(|creds| Ok(creds.into()))
-                    .collect();
-                Ok(Self::SetCredentials(credentials?))
-            }
-
-            ClientUpdate::WaitingForDevice(v) => {
-                let dbus_device: Device = Value::<'_>::from(v).try_into()?;
-                let device: crate::model::Device = dbus_device.try_into().map_err(|_| {
-                    zbus::zvariant::Error::Message("Could not deserialize device".to_string())
-                })?;
-                Ok(Self::WaitingForDevice(device))
-            }
-            ClientUpdate::SelectingDevice(_) => Ok(Self::SelectingDevice),
-
-            ClientUpdate::UsbNeedsPin(v) => v.try_into().map(|x: i32| {
-                let attempts_left = if x == -1 { None } else { Some(x as u32) };
-                Self::UsbNeedsPin { attempts_left }
-            }),
-            ClientUpdate::UsbNeedsUserVerification(v) => v.try_into().map(|x: i32| {
-                let attempts_left = if x == -1 { None } else { Some(x as u32) };
-                Self::UsbNeedsUserVerification { attempts_left }
-            }),
-            ClientUpdate::UsbNeedsUserPresence(_) => Ok(Self::UsbNeedsUserPresence),
-
-            ClientUpdate::HybridNeedsQrCode(v) => v
-                .try_into()
-                .map(Self::HybridNeedsQrCode),
-            ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
-            ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
-
-            ClientUpdate::Completed(_) => Ok(Self::Completed),
-            ClientUpdate::Failed(v) => v.try_into().map(Self::Failed),
-        }
-    }
-}
-
-#[derive(SerializeDict, DeserializeDict, Type)]
-struct Credential {
-    id: String,
-    name: String,
-    username: String,
-}
-
-impl From<Credential> for crate::model::Credential {
-    fn from(value: Credential) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            username: if value.username.is_empty() {
-                None
-            } else {
-                Some(value.username)
-            },
-        }
-    }
-}
-
-impl TryFrom<Value<'_>> for Credential {
-    type Error = zbus::zvariant::Error;
-    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
-        let credential: Credential = encoded.deserialize()?.0;
-        Ok(credential)
-    }
-}
-
-#[derive(SerializeDict, DeserializeDict, Type)]
-struct Device {
-    id: String,
-    transport: String,
-}
-
-impl TryFrom<Value<'_>> for Device {
-    type Error = zbus::zvariant::Error;
-    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
-        let device: Device = encoded.deserialize()?.0;
-        Ok(device)
-    }
-}
-
-impl TryFrom<Device> for crate::model::Device {
-    type Error = ();
-    fn try_from(value: Device) -> std::result::Result<Self, Self::Error> {
-        let transport = value.transport.try_into().map_err(|_| ())?;
-        Ok(Self {
-            id: value.id,
-            transport,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-enum HybridState {
-    /// Default state, not listening for hybrid transport.
-    Idle(OwnedValue),
-
-    /// QR code flow is starting, awaiting QR code scan and BLE advert from phone.
-    Started(OwnedValue),
-
-    /// BLE advert received, connecting to caBLE tunnel with shared secret.
-    Connecting(OwnedValue),
-
-    /// Connected to device via caBLE tunnel.
-    Connected(OwnedValue),
-
-    /// Credential received over tunnel.
-    Completed(OwnedValue),
-
-    // This isn't actually sent from the server.
-    UserCancelled(OwnedValue),
-
-    /// Failed to receive a credential
-    Failed(OwnedValue),
-}
-
-impl TryFrom<HybridState> for crate::model::HybridState {
-    type Error = zbus::zvariant::Error;
-    fn try_from(value: HybridState) -> std::result::Result<Self, Self::Error> {
-        match value {
-            HybridState::Idle(_) => Ok(Self::Idle),
-            HybridState::Started(value) => value.try_into().map(Self::Started),
-            HybridState::Connecting(_) => Ok(Self::Connecting),
-            HybridState::Connected(_) => Ok(Self::Connected),
-            HybridState::Completed(_) => Ok(Self::Completed),
-            HybridState::UserCancelled(_) => Ok(Self::UserCancelled),
-            HybridState::Failed(_) => Ok(Self::Failed),
-        }
-    }
-}
-
-/// Used to de-/serialize state D-Bus and model::UsbState.
-#[derive(Serialize, Deserialize, Type)]
-enum UsbState {
-    Idle(OwnedValue),
-    Waiting(OwnedValue),
-    SelectingDevice(OwnedValue),
-    Connected(OwnedValue),
-    NeedsPin(OwnedValue), /* {
-                              attempts_left: Option<u32>,
-                          },
-                          */
-    NeedsUserVerification(OwnedValue), /* {
-                                           attempts_left: Option<u32>,
-                                       },*/
-
-    NeedsUserPresence(OwnedValue),
-    //UserCancelled,
-    SelectCredential(OwnedValue), /* {
-                                      creds: Vec<Credential>,
-                                  },*/
-    Completed(OwnedValue),
-    // Failed(crate::credential_service::Error),
-    Failed(OwnedValue),
-}
-
-#[derive(Serialize, Deserialize, Type)]
-enum BackgroundEvent {
-    UsbStateChanged(OwnedValue),
-    HybridStateChanged(OwnedValue),
-}
-
-impl TryFrom<Value<'_>> for UsbState {
-    type Error = zbus::zvariant::Error;
-    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zbus::zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zbus::zvariant::to_bytes(ctx, &value)?;
-        let obj: Self = encoded.deserialize()?.0;
-        Ok(obj)
-    }
-}
-
-fn format_client_data_json(
-    op: Operation,
-    challenge: &str,
-    origin: &str,
-    is_cross_origin: bool,
-) -> String {
-    let op_str = match op {
-        Operation::Create { .. } => "webauthn.create",
-        Operation::Get { .. } => "webauthn.get",
-    };
-    let cross_origin_str = if is_cross_origin { "true" } else { "false" };
-    format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
 }
