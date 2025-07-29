@@ -8,23 +8,20 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use zbus::{
     fdo,
-    zvariant::{
-        self, DeserializeDict, OwnedValue, SerializeDict, Type, Value, LE
-    },
+    zvariant::{self, DeserializeDict, OwnedValue, SerializeDict, Type, Value, LE},
 };
 
 use crate::model::{
-    CredentialType, GetAssertionResponseInternal,
-    MakeCredentialResponseInternal, Operation, ViewUpdate
+    CredentialType, GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation,
+    ViewUpdate,
 };
 use crate::webauthn::{
-    self, GetPublicKeyCredentialUnsignedExtensionsResponse, PublicKeyCredentialParameters,
-    CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
-    GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
-    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions, ResidentKeyRequirement, UserVerificationRequirement,
-
-    Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
-    Ctap2PublicKeyCredentialUserEntity,
+    self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,
+    Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity,
+    GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
+    GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
+    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
+    PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
 };
 
 // D-Bus <-> Client types
@@ -437,7 +434,6 @@ pub struct GetPublicKeyCredentialRequest {
     pub(crate) request_json: String,
 }
 
-
 #[derive(SerializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct GetCredentialResponse {
@@ -580,9 +576,7 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
             }),
             ClientUpdate::UsbNeedsUserPresence(_) => Ok(Self::UsbNeedsUserPresence),
 
-            ClientUpdate::HybridNeedsQrCode(v) => v
-                .try_into()
-                .map(Self::HybridNeedsQrCode),
+            ClientUpdate::HybridNeedsQrCode(v) => v.try_into().map(Self::HybridNeedsQrCode),
             ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
             ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
 
@@ -737,10 +731,11 @@ impl From<ServiceError> for crate::model::Error {
             ServiceError::PinAttemptsExhausted => Self::PinAttemptsExhausted,
             // TODO: this is bogus, we should refactor to remove the tuple field
             // and let the client decide how to render the error.
-            ServiceError::Internal => Self::Internal("Something went wrong. Please try again later.".to_string()),
+            ServiceError::Internal => {
+                Self::Internal("Something went wrong. Please try again later.".to_string())
+            }
         }
     }
-
 }
 
 /// Used to de-/serialize state D-Bus and model::UsbState.
@@ -776,22 +771,36 @@ impl TryFrom<UsbState> for crate::model::UsbState {
             UsbState::Waiting(_) => Ok(Self::Waiting),
             UsbState::SelectingDevice(_) => Ok(Self::SelectingDevice),
             UsbState::Connected(_) => Ok(Self::Connected),
-            UsbState::NeedsPin(value) => value.try_into().map(|attempts_left| {
-                let attempts_left = if attempts_left < 0 { None } else { Some(attempts_left) };
+            UsbState::NeedsPin(value) => value.try_into().map(|attempts_left: i32| {
+                let attempts_left = if attempts_left < 0 {
+                    None
+                } else {
+                    Some(u32::try_from(attempts_left).unwrap())
+                };
                 Self::NeedsPin { attempts_left }
             }),
-            UsbState::NeedsUserVerification(value) => value.try_into().map(|attempts_left| {
-                let attempts_left = if attempts_left < 0 { None } else { Some(attempts_left) };
+            UsbState::NeedsUserVerification(value) => value.try_into().map(|attempts_left: i32| {
+                let attempts_left = if attempts_left < 0 {
+                    None
+                } else {
+                    Some(u32::try_from(attempts_left).unwrap())
+                };
                 Self::NeedsUserVerification { attempts_left }
             }),
             UsbState::NeedsUserPresence(_) => Ok(Self::NeedsUserPresence),
-            UsbState::SelectCredential(value) => {
-                value.try_into()
-                    .map(|creds: Vec<Credential>| creds.into_iter().map(crate::model::Credential::from).collect())
-                    .map(|creds| Self::SelectCredential { creds })
-            },
+            UsbState::SelectCredential(value) => value
+                .try_into()
+                .map(|creds: Vec<Credential>| {
+                    creds
+                        .into_iter()
+                        .map(crate::model::Credential::from)
+                        .collect()
+                })
+                .map(|creds| Self::SelectCredential { creds }),
             UsbState::Completed(_) => Ok(Self::Completed),
-            UsbState::Failed(value) => ServiceError::try_from(Value::<'_>::from(value)).map(|err| Self::Failed(err.into())),
+            UsbState::Failed(value) => {
+                ServiceError::try_from(Value::<'_>::from(value)).map(|err| Self::Failed(err.into()))
+            }
         }?;
         Ok(ret)
     }
@@ -806,4 +815,3 @@ impl TryFrom<Value<'_>> for UsbState {
         Ok(obj)
     }
 }
-
