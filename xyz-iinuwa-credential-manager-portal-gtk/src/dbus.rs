@@ -356,16 +356,28 @@ async fn execute_flow<C: CredentialManagementClient>(
     })
 }
 
-struct DbusCredentialClient<'a> {
-    proxy: InternalServiceProxy<'a>,
+pub struct DbusCredentialClient {
+    conn: Connection,
 }
 
-impl CredentialServiceClient for DbusCredentialClient<'_> {
+impl DbusCredentialClient {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+    async fn proxy(&self) -> std::result::Result<InternalServiceProxy, ()> {
+        InternalServiceProxy::new(&self.conn)
+            .await
+            .map_err(|err| tracing::error!("Failed to communicate with D-Bus service: {err}"))
+    }
+}
+
+impl CredentialServiceClient for DbusCredentialClient {
     async fn get_available_public_key_devices(
         &self,
     ) -> std::result::Result<Vec<crate::model::Device>, ()> {
         let dbus_devices = self
-            .proxy
+            .proxy()
+            .await?
             .get_available_public_key_devices()
             .await
             .map_err(|_| ())?;
@@ -373,7 +385,8 @@ impl CredentialServiceClient for DbusCredentialClient<'_> {
     }
 
     async fn get_hybrid_credential(&mut self) -> std::result::Result<(), ()> {
-        self.proxy
+        self.proxy()
+            .await?
             .get_hybrid_credential()
             .await
             .inspect_err(|err| tracing::error!("Failed to start hybrid credential flow: {err}"))
@@ -381,7 +394,8 @@ impl CredentialServiceClient for DbusCredentialClient<'_> {
     }
 
     async fn get_usb_credential(&mut self) -> std::result::Result<(), ()> {
-        self.proxy
+        self.proxy()
+            .await?
             .get_hybrid_credential()
             .await
             .inspect_err(|err| tracing::error!("Failed to start USB credential flow: {err}"))
@@ -397,7 +411,8 @@ impl CredentialServiceClient for DbusCredentialClient<'_> {
         (),
     > {
         let stream = self
-            .proxy
+            .proxy()
+            .await?
             .receive_state_changed()
             .await
             .map_err(|err| tracing::error!("Failed to initalize event stream: {err}"))?
@@ -412,7 +427,8 @@ impl CredentialServiceClient for DbusCredentialClient<'_> {
                     .ok()
             })
             .boxed();
-        self.proxy
+        self.proxy()
+            .await?
             .initiate_event_stream()
             .await
             .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
@@ -420,14 +436,16 @@ impl CredentialServiceClient for DbusCredentialClient<'_> {
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
-        self.proxy
+        self.proxy()
+            .await?
             .enter_client_pin(pin)
             .await
             .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
     }
 
     async fn select_credential(&self, credential_id: String) -> std::result::Result<(), ()> {
-        self.proxy
+        self.proxy()
+            .await?
             .select_credential(credential_id)
             .await
             .map_err(|err| tracing::error!("Failed to select credential: {err}"))

@@ -94,6 +94,7 @@ enum InProcessServerResponse {
     Management(ManagementResponse),
 }
 
+/// Used for communication from trusted UI to credential service
 pub trait CredentialServiceClient {
     fn get_available_public_key_devices(
         &self,
@@ -113,6 +114,7 @@ pub trait CredentialServiceClient {
     ) -> impl Future<Output = Result<(), ()>> + Send;
 }
 
+/// Used for communication from privileged broker to credential service
 pub trait CredentialManagementClient {
     fn init_request(
         &self,
