@@ -7,14 +7,9 @@ use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 use tokio::sync::oneshot;
 
 use crate::credential_service::CredentialServiceClient;
-use crate::model::{Operation, ViewUpdate};
+use crate::model::{Operation, ViewRequest, ViewUpdate};
 
 use view_model::ViewEvent;
-
-pub struct ViewRequest {
-    pub operation: Operation,
-    pub signal: oneshot::Sender<()>,
-}
 
 pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + 'static>(
     rx: Receiver<ViewRequest>,

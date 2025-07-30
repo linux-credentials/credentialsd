@@ -44,7 +44,8 @@ use zbus::{
 
 use crate::credential_service::{CredentialManagementClient, CredentialServiceClient};
 use crate::model::{
-    CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse, Operation,
+    CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse,
+    Operation, ViewRequest,
 };
 
 use self::model::{

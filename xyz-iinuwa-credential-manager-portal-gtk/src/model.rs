@@ -1,7 +1,15 @@
 use serde::{Deserialize, Serialize};
-use zbus:: zvariant::{SerializeDict, Type};
+use tokio::sync::oneshot;
+use zbus::zvariant::{SerializeDict, Type};
 
-use crate::webauthn::{Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse};
+use crate::webauthn::{
+    Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
+};
+
+pub struct ViewRequest {
+    pub operation: Operation,
+    pub signal: oneshot::Sender<()>,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -211,6 +219,23 @@ pub enum HybridState {
     Failed,
 }
 
+impl From<crate::credential_service::hybrid::HybridState> for HybridState {
+    fn from(value: crate::credential_service::hybrid::HybridState) -> Self {
+        match value {
+            crate::credential_service::hybrid::HybridState::Init(qr_code) => {
+                HybridState::Started(qr_code)
+            }
+            crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
+            crate::credential_service::hybrid::HybridState::Connected => HybridState::Connected,
+            crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
+            crate::credential_service::hybrid::HybridState::UserCancelled => {
+                HybridState::UserCancelled
+            }
+            crate::credential_service::hybrid::HybridState::Failed => HybridState::Failed,
+        }
+    }
+}
+
 /// Used to share public state between credential service and UI.
 #[derive(Clone, Debug, Default)]
 pub enum UsbState {
@@ -243,7 +268,6 @@ pub enum UsbState {
     // TODO: implement cancellation
     // This isn't actually sent from the server.
     //UserCancelled,
-
     /// Multiple credentials have been found and the user has to select which to use
     SelectCredential {
         /// List of user-identities to decide which to use.
@@ -278,4 +302,3 @@ pub enum Error {
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
 }
-

@@ -282,20 +282,3 @@ pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
 }
-
-impl From<crate::credential_service::hybrid::HybridState> for HybridState {
-    fn from(value: crate::credential_service::hybrid::HybridState) -> Self {
-        match value {
-            crate::credential_service::hybrid::HybridState::Init(qr_code) => {
-                HybridState::Started(qr_code)
-            }
-            crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
-            crate::credential_service::hybrid::HybridState::Connected => HybridState::Connected,
-            crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
-            crate::credential_service::hybrid::HybridState::UserCancelled => {
-                HybridState::UserCancelled
-            }
-            crate::credential_service::hybrid::HybridState::Failed => HybridState::Failed,
-        }
-    }
-}
