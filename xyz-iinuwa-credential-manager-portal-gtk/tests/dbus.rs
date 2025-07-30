@@ -36,7 +36,7 @@ fn test_client_capabilities() {
 
 mod client {
     use crate::config::{INTERFACE, PATH, SERVICE_DIR, SERVICE_NAME};
-    use gtk::gio::{TestDBus, TestDBusFlags};
+    use gio::{TestDBus, TestDBusFlags};
     use serde::Serialize;
     use zbus::{blocking::Connection, zvariant::DynamicType, Message};
 

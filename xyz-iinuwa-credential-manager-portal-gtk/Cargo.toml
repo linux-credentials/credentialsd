@@ -1,5 +1,5 @@
 [package]
-name = "xyz-iinuwa-credential-manager-portal-gtk"
+name = "xyzii-credman"
 version = "0.1.0"
 authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>"]
 edition = "2021"
@@ -8,10 +8,7 @@ edition = "2021"
 lto = true
 
 [dependencies]
-async-std = { version = "1.13.1", features = ["unstable"] }
 base64 = "0.22.1"
-gettext-rs = { version = "0.7", features = ["gettext-system"] }
-gtk = { version = "0.9.6", package = "gtk4", features = ["v4_6"] }
 openssl = "0.10.72"
 ring = "0.17.14"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -25,8 +22,10 @@ async-trait = "0.1.88"
 tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
 futures-lite = "2.6.0"
 
-qrcode = "0.14.1"
 # this is temporary until we move COSE -> Vec<u8> serialization methods into libwebauthn
 cosey = "0.3.2"
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12", "ring", "log", "logging", "prefer-post-quantum"] }
 async-stream = "0.3.6"
+
+[dev-dependencies]
+gio = "0.21.0"

@@ -3,9 +3,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use async_std::sync::Mutex as AsyncMutex;
 use futures_lite::{Stream, StreamExt};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
 use crate::model::{BackgroundEvent, CredentialRequest, CredentialResponse, Device};
 
@@ -153,8 +152,8 @@ where
     svc: Arc<AsyncMutex<CredentialService<H, U>>>,
     bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
     usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
-    usb_event_forwarder_task: Arc<Mutex<Option<async_std::task::JoinHandle<()>>>>,
-    hybrid_event_forwarder_task: Arc<Mutex<Option<async_std::task::JoinHandle<()>>>>,
+    usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+    hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
 }
 
 impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync> Clone
@@ -222,7 +221,7 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
         let svc = self.svc.lock().await;
         let mut stream = svc.get_hybrid_credential();
         if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-            let task = async_std::task::spawn(async move {
+            let task = tokio::spawn(async move {
                 while let Some(hybrid_state) = stream.next().await {
                     if let Some(tx) = tx_weak.upgrade() {
                         match hybrid_state {
@@ -239,14 +238,15 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
                         };
                     }
                 }
-            });
+            })
+            .abort_handle();
             if let Some(prev_task) = self
                 .hybrid_event_forwarder_task
                 .lock()
                 .unwrap()
                 .replace(task)
             {
-                async_std::task::block_on(prev_task.cancel());
+                prev_task.abort();
             }
         }
         Ok(())
@@ -256,11 +256,11 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
         let mut stream = self.svc.lock().await.get_usb_credential();
         if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
             let usb_pin_tx = self.usb_pin_tx.clone();
-            let task = async_std::task::spawn(async move {
+            let task = tokio::spawn(async move {
                 while let Some(state) = stream.next().await {
                     if let Some(tx) = tx_weak.upgrade() {
                         if tx
-                            .send(BackgroundEvent::UsbStateChanged((&state).into()))
+                            .send(BackgroundEvent::UsbStateChanged(state.clone().into()))
                             .await
                             .is_err()
                         {
@@ -279,9 +279,10 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
                         };
                     }
                 }
-            });
+            })
+            .abort_handle();
             if let Some(prev_task) = self.usb_event_forwarder_task.lock().unwrap().replace(task) {
-                async_std::task::block_on(prev_task.cancel());
+                prev_task.abort();
             }
         }
         Ok(())
@@ -319,11 +320,11 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
 {
     fn drop(&mut self) {
         if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
-            async_std::task::block_on(task.cancel());
+            task.abort();
         }
 
         if let Some(task) = self.hybrid_event_forwarder_task.lock().unwrap().take() {
-            async_std::task::block_on(task.cancel());
+            task.abort();
         }
     }
 }

@@ -209,7 +209,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 mod test {
     use std::sync::Arc;
 
-    use async_std::stream::StreamExt;
+    use futures_lite::stream::StreamExt;
 
     use crate::{
         credential_service::usb::InProcessUsbHandler,
@@ -237,7 +237,10 @@ mod test {
         let cred_service = Arc::new(CredentialService::new(hybrid_handler, usb_handler));
         cred_service.init_request(&request).unwrap();
         let mut stream = cred_service.get_hybrid_credential();
-        async_std::task::block_on(async move { while let Some(_) = stream.next().await {} });
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async move { while let Some(_) = stream.next().await {} });
         let cred_service = Arc::try_unwrap(cred_service).unwrap();
         assert!(cred_service.complete_auth().is_some());
     }

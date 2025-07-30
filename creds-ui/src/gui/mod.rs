@@ -18,17 +18,11 @@ pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + 'stati
     thread::Builder::new()
         .name("gui".into())
         .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(async move {
-                let client = Arc::new(AsyncMutex::new(client));
-                // D-Bus received a request and needs a window open
-                while let Ok(view_request) = rx.recv_blocking() {
-                    run_gui(client.clone(), view_request);
-                }
-            })
+            let client = Arc::new(AsyncMutex::new(client));
+            // D-Bus received a request and needs a window open
+            while let Ok(view_request) = rx.recv_blocking() {
+                run_gui(client.clone(), view_request);
+            }
         })
         .unwrap();
 }

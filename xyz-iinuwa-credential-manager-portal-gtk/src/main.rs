@@ -1,6 +1,4 @@
 mod cbor;
-#[rustfmt::skip]
-mod config;
 mod cose;
 mod credential_service;
 mod dbus;
@@ -39,7 +37,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     print!("Starting D-Bus service...");
     let service_name = "xyz.iinuwa.credentials.CredentialManagerUi";
     let path = "/xyz/iinuwa/credentials/CredentialManagerUi";
-    let _conn = dbus::start_service(service_name, path, dbus_to_gui_tx, cred_mgr).await?;
+    let _conn = dbus::start_service(service_name, path, /* dbus_to_gui_tx, */ cred_mgr).await?;
     println!(" ✅");
     println!("Waiting for messages...");
     loop {

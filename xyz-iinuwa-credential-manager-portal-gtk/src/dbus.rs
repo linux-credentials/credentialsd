@@ -33,6 +33,7 @@ mod model;
 
 use futures_lite::StreamExt;
 use std::collections::VecDeque;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::object_server::SignalEmitter;
@@ -59,11 +60,10 @@ pub use self::model::{CreateCredentialRequest, CreatePublicKeyCredentialRequest}
 pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 'static>(
     service_name: &str,
     path: &str,
-    gui_tx: async_std::channel::Sender<ViewRequest>,
+    // gui_tx: Sender<ViewRequest>,
     manager_client: C,
 ) -> Result<Connection> {
-    let lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>> =
-        Arc::new(AsyncMutex::new(gui_tx));
+    let lock = Arc::new(AsyncMutex::new(()));
     connection::Builder::session()?
         .name(service_name)?
         .serve_at(
@@ -88,7 +88,8 @@ enum SignalState {
 }
 
 struct CredentialManager<C: CredentialManagementClient> {
-    app_lock: Arc<AsyncMutex<async_std::channel::Sender<ViewRequest>>>,
+    // app_lock: Arc<AsyncMutex<Sender<ViewRequest>>>,
+    app_lock: Arc<AsyncMutex<()>>,
     manager_client: C,
 }
 
@@ -120,7 +121,8 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                     let cred_request =
                         CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
-                    let response = execute_flow(&tx, &self.manager_client, &cred_request).await?;
+                    let response =
+                        execute_flow(/* &tx, */ &self.manager_client, &cred_request).await?;
 
                     if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) =
                         response
@@ -181,7 +183,8 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                     let cred_request =
                         CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
 
-                    let response = execute_flow(&tx, &self.manager_client, &cred_request).await?;
+                    let response =
+                        execute_flow(/* &tx, */ &self.manager_client, &cred_request).await?;
 
                     match response {
                         CredentialResponse::GetPublicKeyCredentialResponse(cred_response) => {
@@ -309,17 +312,30 @@ impl InternalService {
     ) -> zbus::Result<()>;
 }
 
-struct UiControlService;
+struct UiControlServiceImpl;
 
 /// These methods are called by the credential service to control the UI.
-#[interface(name = "xyz.iinuwa.credentials.UiControl1")]
-impl UiControlService {
+#[interface(
+    name = "xyz.iinuwa.credentials.UiControl1",
+    proxy(
+        gen_blocking = false,
+        default_path = "/xyz/iinuwa/credentials/UiControl",
+        default_service = "xyz.iinuwa.credentials.UiControl",
+    )
+)]
+impl UiControlService for UiControlServiceImpl {
     fn launch_ui(&self) {}
     fn send_state_changed(&self) {}
 }
 
+trait UiControlService {
+    fn launch_ui(&self);
+    fn send_state_changed(&self);
+}
+
 async fn execute_flow<C: CredentialManagementClient>(
-    gui_tx: &async_std::channel::Sender<ViewRequest>,
+    // TODO: Replace this with UiControlClient
+    // gui_tx: &async_std::channel::Sender<ViewRequest>,
     manager_client: &C,
     cred_request: &CredentialRequest,
 ) -> Result<CredentialResponse> {
@@ -342,7 +358,8 @@ async fn execute_flow<C: CredentialManagementClient>(
         operation,
         signal: signal_tx,
     };
-    gui_tx.send(view_request).await.unwrap();
+    // TODO: Replace this with a UiControlClient
+    // gui_tx.send(view_request).await.unwrap();
 
     // wait for gui to complete
     signal_rx.await.map_err(|_| {
