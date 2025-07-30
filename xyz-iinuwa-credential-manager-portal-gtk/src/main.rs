@@ -4,7 +4,6 @@ mod config;
 mod cose;
 mod credential_service;
 mod dbus;
-mod gui;
 mod model;
 mod serde;
 mod webauthn;
@@ -35,13 +34,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         cred_server.run().await;
     });
-    println!(" ✅");
-
-    print!("Starting GUI thread...\t");
-    // this allows the D-Bus service to signal to the GUI to draw a window for
-    // executing the credential flow.
-    let (dbus_to_gui_tx, dbus_to_gui_rx) = async_std::channel::unbounded();
-    gui::start_gui_thread(dbus_to_gui_rx, Arc::new(cred_client));
     println!(" ✅");
 
     print!("Starting D-Bus service...");

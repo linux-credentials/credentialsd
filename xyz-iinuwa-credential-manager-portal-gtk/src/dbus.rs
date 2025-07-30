@@ -43,7 +43,6 @@ use zbus::{
 };
 
 use crate::credential_service::{CredentialManagementClient, CredentialServiceClient};
-use crate::gui::ViewRequest;
 use crate::model::{
     CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse, Operation,
 };

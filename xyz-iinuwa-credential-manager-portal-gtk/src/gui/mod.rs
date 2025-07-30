@@ -16,23 +16,32 @@ pub struct ViewRequest {
     pub signal: oneshot::Sender<()>,
 }
 
-pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + Clone + 'static>(
+pub(super) fn start_gui_thread<C: CredentialServiceClient + Send + Sync + 'static>(
     rx: Receiver<ViewRequest>,
     client: C,
 ) {
     thread::Builder::new()
         .name("gui".into())
         .spawn(move || {
-            let client = Arc::new(AsyncMutex::new(client));
-            // D-Bus received a request and needs a window open
-            while let Ok(view_request) = rx.recv_blocking() {
-                run_gui(client.clone(), view_request);
-            }
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let client = Arc::new(AsyncMutex::new(client));
+                // D-Bus received a request and needs a window open
+                while let Ok(view_request) = rx.recv_blocking() {
+                    run_gui(client.clone(), view_request);
+                }
+            })
         })
         .unwrap();
 }
 
-fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(client: Arc<AsyncMutex<C>>, request: ViewRequest) {
+fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(
+    client: Arc<AsyncMutex<C>>,
+    request: ViewRequest,
+) {
     let ViewRequest {
         operation,
         signal: response_tx,
