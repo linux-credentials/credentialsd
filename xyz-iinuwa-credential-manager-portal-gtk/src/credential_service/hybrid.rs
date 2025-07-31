@@ -12,7 +12,7 @@ use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOpe
 use libwebauthn::transport::{Channel, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use crate::model::{CredentialRequest, Error};
+use creds_lib::model::{CredentialRequest, Error};
 
 use super::AuthenticatorResponse;
 
@@ -205,6 +205,19 @@ impl From<HybridStateInternal> for HybridState {
     }
 }
 
+impl From<HybridState> for creds_lib::model::HybridState {
+    fn from(value: HybridState) -> Self {
+        match value {
+            HybridState::Init(qr_code) => creds_lib::model::HybridState::Started(qr_code),
+            HybridState::Connecting => creds_lib::model::HybridState::Connecting,
+            HybridState::Connected => creds_lib::model::HybridState::Connected,
+            HybridState::Completed => creds_lib::model::HybridState::Completed,
+            HybridState::UserCancelled => creds_lib::model::HybridState::UserCancelled,
+            HybridState::Failed => creds_lib::model::HybridState::Failed,
+        }
+    }
+}
+
 async fn handle_hybrid_updates(
     state_sender: &Sender<HybridStateInternal>,
     mut ux_update_receiver: broadcast::Receiver<CableUxUpdate>,
@@ -249,7 +262,7 @@ pub(super) mod test {
         proto::ctap2::{Ctap2PublicKeyCredentialDescriptor, Ctap2Transport},
     };
 
-    use crate::model::CredentialRequest;
+    use creds_lib::model::CredentialRequest;
 
     use super::{HybridEvent, HybridHandler, HybridStateInternal};
     #[derive(Debug)]

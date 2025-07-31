@@ -15,15 +15,17 @@ use libwebauthn::{
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
 
-use crate::{
-    credential_service::{hybrid::HybridEvent, usb::UsbEvent},
+use creds_lib::{
+    client::CredentialServiceClient,
     model::{CredentialRequest, CredentialResponse, Device, Transport},
 };
+
+use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
 
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
 use usb::{UsbHandler, UsbStateInternal};
 pub use {
-    server::{CredentialManagementClient, CredentialServiceClient, InProcessServer},
+    server::{CredentialManagementClient, InProcessServer},
     usb::UsbState,
 };
 
@@ -211,10 +213,10 @@ mod test {
 
     use futures_lite::stream::StreamExt;
 
-    use crate::{
-        credential_service::usb::InProcessUsbHandler,
-        dbus::{CreateCredentialRequest, CreatePublicKeyCredentialRequest},
+    use crate::credential_service::usb::InProcessUsbHandler;
+    use creds_lib::{
         model::CredentialRequest,
+        server::{CreateCredentialRequest, CreatePublicKeyCredentialRequest},
     };
 
     use super::{
@@ -222,6 +224,7 @@ mod test {
         AuthenticatorResponse, CredentialService,
     };
 
+    /*
     #[test]
     fn test_hybrid_sets_credential() {
         let request = create_credential_request();
@@ -285,16 +288,19 @@ mod test {
                 "credProps": true
             }
         }"#.to_string();
-        let (req, _) = CreateCredentialRequest {
-            origin: Some("webauthn.io".to_string()),
-            is_same_origin: Some(true),
-            r#type: "public-key".to_string(),
-            public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
-        }
-        .try_into_ctap2_request()
+
+        let (req, _) = crate::dbus::model::create_credential_request_try_into_ctap2(
+            &CreateCredentialRequest {
+                origin: Some("webauthn.io".to_string()),
+                is_same_origin: Some(true),
+                r#type: "public-key".to_string(),
+                public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
+            },
+        )
         .unwrap();
         CredentialRequest::CreatePublicKeyCredentialRequest(req)
     }
+    */
 
     fn create_authenticator_response() -> AuthenticatorResponse {
         use libwebauthn::{

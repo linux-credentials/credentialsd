@@ -8,13 +8,14 @@ use async_std::{
     sync::Mutex as AsyncMutex,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::credential_service::CredentialServiceClient;
-use crate::model::{
-    BackgroundEvent, Credential, Device, Error, HybridState, Operation, Transport, UsbState,
-    ViewUpdate,
+use creds_lib::{
+    client::CredentialServiceClient,
+    model::{
+        BackgroundEvent, Credential, Device, Error, HybridState, Operation, Transport, UsbState,
+        ViewUpdate,
+    },
 };
 
 #[derive(Debug)]
@@ -34,7 +35,7 @@ where
     selected_device: Option<Device>,
 
     // providers: Vec<Provider>,
-    usb_cred_tx: Option<Arc<AsyncMutex<mpsc::Sender<String>>>>,
+    usb_cred_tx: Option<Arc<AsyncMutex<Sender<String>>>>,
 
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -213,9 +214,15 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         // TODO: Provide more specific error messages using the wrapped Error.
                         UsbState::Failed(err) => {
                             let error_msg = String::from(match err {
-                                Error::NoCredentials => "No matching credentials found on this authenticator.",
-                                Error::PinAttemptsExhausted => "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                                Error::AuthenticatorError | Error::Internal(_) => "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                                Error::NoCredentials => {
+                                    "No matching credentials found on this authenticator."
+                                }
+                                Error::PinAttemptsExhausted => {
+                                    "No more PIN attempts allowed. Try removing your device and plugging it back in."
+                                }
+                                Error::AuthenticatorError | Error::Internal(_) => {
+                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
+                                }
                             });
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))

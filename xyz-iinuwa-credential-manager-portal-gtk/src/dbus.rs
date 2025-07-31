@@ -31,31 +31,40 @@
 
 mod model;
 
+use creds_lib::server::{CreateCredentialRequest, ViewRequest};
 use futures_lite::StreamExt;
 use std::collections::VecDeque;
-use std::sync::mpsc::Sender;
+use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant;
+use zbus::proxy;
 use zbus::{
     connection::{self, Connection},
     fdo, interface, Result,
 };
 
-use crate::credential_service::{CredentialManagementClient, CredentialServiceClient};
-use crate::model::{
-    CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse,
-    Operation, ViewRequest,
+use creds_lib::{
+    client::CredentialServiceClient,
+    model::{
+        CredentialRequest, CredentialResponse, CredentialType, GetClientCapabilitiesResponse,
+        Operation,
+    },
+    server::{
+        BackgroundEvent, CreateCredentialResponse, CreatePublicKeyCredentialResponse, Device,
+        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialResponse,
+    },
 };
 
 use self::model::{
-    BackgroundEvent, CreateCredentialResponse, CreatePublicKeyCredentialResponse, Device,
-    GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialResponse,
+    create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
+    get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
 };
+use crate::credential_service::CredentialManagementClient;
+
 // TODO: This is a workaround for testing credential_service. Refactor so that
 // these private structs don't need to be exported.
-pub use self::model::{CreateCredentialRequest, CreatePublicKeyCredentialRequest};
+// pub use self::model::{CreateCredentialRequest, CreatePublicKeyCredentialRequest};
 
 pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 'static>(
     service_name: &str,
@@ -113,7 +122,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                         )));
                     }
                     let (make_cred_request, client_data_json) =
-                        request.clone().try_into_ctap2_request().map_err(|e| {
+                        create_credential_request_try_into_ctap2(&request).map_err(|e| {
                             fdo::Error::Failed(format!(
                                 "Could not parse passkey creation request: {e:?}"
                             ))
@@ -127,11 +136,10 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                     if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) =
                         response
                     {
-                        let public_key_response =
-                            CreatePublicKeyCredentialResponse::try_from_ctap2_response(
-                                &cred_response,
-                                client_data_json,
-                            )?;
+                        let public_key_response = create_credential_response_try_from_ctap2(
+                            &cred_response,
+                            client_data_json,
+                        )?;
                         Ok(public_key_response.into())
                     } else {
                         Err(fdo::Error::Failed("Failed to create passkey".to_string()))
@@ -175,7 +183,7 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
                     //    - query for related origins, if supported
                     //    - fail if not supported, or if RP ID doesn't match any related origins.
                     let (get_cred_request, client_data_json) =
-                        request.clone().try_into_ctap2_request().map_err(|_| {
+                        get_credential_request_try_into_ctap2(&request).map_err(|_| {
                             fdo::Error::Failed(
                                 "Could not parse passkey assertion request.".to_owned(),
                             )
@@ -188,11 +196,10 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
 
                     match response {
                         CredentialResponse::GetPublicKeyCredentialResponse(cred_response) => {
-                            let public_key_response =
-                                GetPublicKeyCredentialResponse::try_from_ctap2_response(
-                                    &cred_response,
-                                    client_data_json,
-                                )?;
+                            let public_key_response = get_credential_response_try_from_ctap2(
+                                &cred_response,
+                                client_data_json,
+                            )?;
                             Ok(public_key_response.into())
                         }
                         _ => Err(fdo::Error::Failed(
@@ -312,25 +319,35 @@ impl InternalService {
     ) -> zbus::Result<()>;
 }
 
-struct UiControlServiceImpl;
-
 /// These methods are called by the credential service to control the UI.
-#[interface(
-    name = "xyz.iinuwa.credentials.UiControl1",
-    proxy(
-        gen_blocking = false,
-        default_path = "/xyz/iinuwa/credentials/UiControl",
-        default_service = "xyz.iinuwa.credentials.UiControl",
-    )
+#[proxy(
+    gen_blocking = false,
+    default_path = "/xyz/iinuwa/credentials/UiControl",
+    default_service = "xyz.iinuwa.credentials.UiControl"
 )]
-impl UiControlService for UiControlServiceImpl {
-    fn launch_ui(&self) {}
-    fn send_state_changed(&self) {}
+trait UiControlServiceClient {
+    fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
 }
 
-trait UiControlService {
-    fn launch_ui(&self);
-    fn send_state_changed(&self);
+trait UiControlServiceClient {
+    async fn launch_ui(&self, request: ViewRequest) -> std::result::Result<(), Box<dyn Error>>;
+}
+struct UiControlServiceImpl {
+    conn: Connection,
+}
+impl UiControlServiceImpl {
+    async fn proxy(&self) -> std::result::Result<UiControlServiceClientProxy, zbus::Error> {
+        UiControlServiceClientProxy::new(&self.conn).await
+    }
+}
+impl UiControlServiceClient for UiControlServiceImpl {
+    async fn launch_ui(&self, request: ViewRequest) -> std::result::Result<(), Box<dyn Error>> {
+        self.proxy()
+            .await?
+            .launch_ui(request)
+            .await
+            .map_err(|err| err.into())
+    }
 }
 
 async fn execute_flow<C: CredentialManagementClient>(
@@ -346,21 +363,18 @@ async fn execute_flow<C: CredentialManagementClient>(
 
     // start GUI
     let operation = match &cred_request {
-        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create {
-            cred_type: CredentialType::Passkey,
-        },
-        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get {
-            cred_types: vec![CredentialType::Passkey],
-        },
+        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
+        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
     };
     let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();
+    /*
     let view_request = ViewRequest {
         operation,
         signal: signal_tx,
     };
     // TODO: Replace this with a UiControlClient
     // gui_tx.send(view_request).await.unwrap();
-
+    */
     // wait for gui to complete
     signal_rx.await.map_err(|_| {
         zbus::Error::Failure("GUI channel closed before completing request.".to_string())
@@ -371,100 +385,4 @@ async fn execute_flow<C: CredentialManagementClient>(
         tracing::error!("Error retrieving credential: {:?}", err);
         zbus::Error::Failure("Error retrieving credential".to_string())
     })
-}
-
-pub struct DbusCredentialClient {
-    conn: Connection,
-}
-
-impl DbusCredentialClient {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
-    }
-    async fn proxy(&self) -> std::result::Result<InternalServiceProxy, ()> {
-        InternalServiceProxy::new(&self.conn)
-            .await
-            .map_err(|err| tracing::error!("Failed to communicate with D-Bus service: {err}"))
-    }
-}
-
-impl CredentialServiceClient for DbusCredentialClient {
-    async fn get_available_public_key_devices(
-        &self,
-    ) -> std::result::Result<Vec<crate::model::Device>, ()> {
-        let dbus_devices = self
-            .proxy()
-            .await?
-            .get_available_public_key_devices()
-            .await
-            .map_err(|_| ())?;
-        dbus_devices.into_iter().map(|d| d.try_into()).collect()
-    }
-
-    async fn get_hybrid_credential(&mut self) -> std::result::Result<(), ()> {
-        self.proxy()
-            .await?
-            .get_hybrid_credential()
-            .await
-            .inspect_err(|err| tracing::error!("Failed to start hybrid credential flow: {err}"))
-            .map_err(|_| ())
-    }
-
-    async fn get_usb_credential(&mut self) -> std::result::Result<(), ()> {
-        self.proxy()
-            .await?
-            .get_hybrid_credential()
-            .await
-            .inspect_err(|err| tracing::error!("Failed to start USB credential flow: {err}"))
-            .map_err(|_| ())
-    }
-
-    async fn initiate_event_stream(
-        &mut self,
-    ) -> std::result::Result<
-        std::pin::Pin<
-            Box<dyn futures_lite::Stream<Item = crate::model::BackgroundEvent> + Send + 'static>,
-        >,
-        (),
-    > {
-        let stream = self
-            .proxy()
-            .await?
-            .receive_state_changed()
-            .await
-            .map_err(|err| tracing::error!("Failed to initalize event stream: {err}"))?
-            .filter_map(|msg| {
-                msg.args()
-                    .and_then(|args| {
-                        args.update
-                            .try_into()
-                            .map_err(|err: zvariant::Error| err.into())
-                    })
-                    .inspect_err(|err| tracing::warn!("Failed to parse StateChanged signal: {err}"))
-                    .ok()
-            })
-            .boxed();
-        self.proxy()
-            .await?
-            .initiate_event_stream()
-            .await
-            .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
-            .and_then(|_| Ok(stream))
-    }
-
-    async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
-        self.proxy()
-            .await?
-            .enter_client_pin(pin)
-            .await
-            .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
-    }
-
-    async fn select_credential(&self, credential_id: String) -> std::result::Result<(), ()> {
-        self.proxy()
-            .await?
-            .select_credential(credential_id)
-            .await
-            .map_err(|err| tracing::error!("Failed to select credential: {err}"))
-    }
 }

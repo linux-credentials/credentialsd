@@ -17,7 +17,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use crate::model::{Credential, CredentialRequest, Error, GetAssertionResponseInternal};
+use creds_lib::model::{Credential, CredentialRequest, Error, GetAssertionResponseInternal};
 
 use super::{AuthenticatorResponse, CredentialResponse};
 
@@ -524,32 +524,34 @@ impl From<UsbStateInternal> for UsbState {
     }
 }
 
-impl From<UsbState> for crate::model::UsbState {
+impl From<UsbState> for creds_lib::model::UsbState {
     fn from(value: UsbState) -> Self {
         Self::from(&value)
     }
 }
-impl From<&UsbState> for crate::model::UsbState {
+impl From<&UsbState> for creds_lib::model::UsbState {
     fn from(value: &UsbState) -> Self {
         match value {
-            UsbState::Idle => crate::model::UsbState::Idle,
-            UsbState::Waiting => crate::model::UsbState::Waiting,
-            UsbState::SelectingDevice => crate::model::UsbState::SelectingDevice,
-            UsbState::Connected => crate::model::UsbState::Connected,
-            UsbState::NeedsPin { attempts_left, .. } => crate::model::UsbState::NeedsPin {
+            UsbState::Idle => creds_lib::model::UsbState::Idle,
+            UsbState::Waiting => creds_lib::model::UsbState::Waiting,
+            UsbState::SelectingDevice => creds_lib::model::UsbState::SelectingDevice,
+            UsbState::Connected => creds_lib::model::UsbState::Connected,
+            UsbState::NeedsPin { attempts_left, .. } => creds_lib::model::UsbState::NeedsPin {
                 attempts_left: *attempts_left,
             },
             UsbState::NeedsUserVerification { attempts_left } => {
-                crate::model::UsbState::NeedsUserVerification {
+                creds_lib::model::UsbState::NeedsUserVerification {
                     attempts_left: *attempts_left,
                 }
             }
-            UsbState::NeedsUserPresence => crate::model::UsbState::NeedsUserPresence,
-            UsbState::SelectCredential { creds, .. } => crate::model::UsbState::SelectCredential {
-                creds: creds.to_owned(),
-            },
-            UsbState::Completed => crate::model::UsbState::Completed,
-            UsbState::Failed(err) => crate::model::UsbState::Failed(err.to_owned()),
+            UsbState::NeedsUserPresence => creds_lib::model::UsbState::NeedsUserPresence,
+            UsbState::SelectCredential { creds, .. } => {
+                creds_lib::model::UsbState::SelectCredential {
+                    creds: creds.to_owned(),
+                }
+            }
+            UsbState::Completed => creds_lib::model::UsbState::Completed,
+            UsbState::Failed(err) => creds_lib::model::UsbState::Failed(err.to_owned()),
         }
     }
 }

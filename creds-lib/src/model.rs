@@ -1,37 +1,31 @@
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 use zbus::zvariant::{SerializeDict, Type};
 
-use crate::webauthn::{
+pub use libwebauthn::ops::webauthn::{
     Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
 };
 
-pub struct ViewRequest {
-    pub operation: Operation,
-    pub signal: oneshot::Sender<()>,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) username: Option<String>,
+    pub id: String,
+    pub name: String,
+    pub username: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum CredentialRequest {
+pub enum CredentialRequest {
     CreatePublicKeyCredentialRequest(MakeCredentialRequest),
     GetPublicKeyCredentialRequest(GetAssertionRequest),
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum CredentialResponse {
+pub enum CredentialResponse {
     CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
     GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
 }
 
 impl CredentialResponse {
-    pub(crate) fn from_make_credential(
+    pub fn from_make_credential(
         response: &MakeCredentialResponse,
         transports: &[&str],
         modality: &str,
@@ -43,7 +37,7 @@ impl CredentialResponse {
         ))
     }
 
-    pub(crate) fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
+    pub fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
         CredentialResponse::GetPublicKeyCredentialResponse(GetAssertionResponseInternal::new(
             assertion.clone(),
             modality.to_string(),
@@ -52,14 +46,14 @@ impl CredentialResponse {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct MakeCredentialResponseInternal {
-    pub(crate) ctap: MakeCredentialResponse,
-    pub(crate) transport: Vec<String>,
-    pub(crate) attachment_modality: String,
+pub struct MakeCredentialResponseInternal {
+    pub ctap: MakeCredentialResponse,
+    pub transport: Vec<String>,
+    pub attachment_modality: String,
 }
 
 impl MakeCredentialResponseInternal {
-    pub(crate) fn new(
+    pub fn new(
         response: MakeCredentialResponse,
         transport: Vec<String>,
         attachment_modality: String,
@@ -73,13 +67,13 @@ impl MakeCredentialResponseInternal {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GetAssertionResponseInternal {
-    pub(crate) ctap: Assertion,
-    pub(crate) attachment_modality: String,
+pub struct GetAssertionResponseInternal {
+    pub ctap: Assertion,
+    pub attachment_modality: String,
 }
 
 impl GetAssertionResponseInternal {
-    pub(crate) fn new(ctap: Assertion, attachment_modality: String) -> Self {
+    pub fn new(ctap: Assertion, attachment_modality: String) -> Self {
         Self {
             ctap,
             attachment_modality,
@@ -101,7 +95,7 @@ pub struct GetClientCapabilitiesResponse {
     pub signal_unknown_credential: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum CredentialType {
     Passkey,
     // Password,
@@ -113,10 +107,10 @@ pub struct Device {
     pub transport: Transport,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 pub enum Operation {
-    Create { cred_type: CredentialType },
-    Get { cred_types: Vec<CredentialType> },
+    Create,
+    Get,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -217,23 +211,6 @@ pub enum HybridState {
 
     /// Failed to receive a credential
     Failed,
-}
-
-impl From<crate::credential_service::hybrid::HybridState> for HybridState {
-    fn from(value: crate::credential_service::hybrid::HybridState) -> Self {
-        match value {
-            crate::credential_service::hybrid::HybridState::Init(qr_code) => {
-                HybridState::Started(qr_code)
-            }
-            crate::credential_service::hybrid::HybridState::Connecting => HybridState::Connecting,
-            crate::credential_service::hybrid::HybridState::Connected => HybridState::Connected,
-            crate::credential_service::hybrid::HybridState::Completed => HybridState::Completed,
-            crate::credential_service::hybrid::HybridState::UserCancelled => {
-                HybridState::UserCancelled
-            }
-            crate::credential_service::hybrid::HybridState::Failed => HybridState::Failed,
-        }
-    }
 }
 
 /// Used to share public state between credential service and UI.

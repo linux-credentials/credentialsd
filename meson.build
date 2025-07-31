@@ -20,5 +20,6 @@ meson.add_dist_script(
   meson.project_source_root(),
 )
 
+subdir('creds-lib')
 subdir('xyz-iinuwa-credential-manager-portal-gtk')
 subdir('creds-ui')

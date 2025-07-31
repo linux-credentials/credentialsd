@@ -3,10 +3,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use creds_lib::client::CredentialServiceClient;
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
-use crate::model::{BackgroundEvent, CredentialRequest, CredentialResponse, Device};
+use creds_lib::model::{BackgroundEvent, CredentialRequest, CredentialResponse, Device};
 
 use super::hybrid::{HybridHandler, HybridState};
 use super::usb::{UsbHandler, UsbState};
@@ -91,26 +92,6 @@ enum InProcessServerRequest {
 enum InProcessServerResponse {
     Client(ServiceResponse),
     Management(ManagementResponse),
-}
-
-/// Used for communication from trusted UI to credential service
-pub trait CredentialServiceClient {
-    fn get_available_public_key_devices(
-        &self,
-    ) -> impl Future<Output = Result<Vec<Device>, ()>> + Send;
-
-    fn get_hybrid_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
-    fn get_usb_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
-    fn initiate_event_stream(
-        &mut self,
-    ) -> impl Future<
-        Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>,
-    > + Send;
-    fn enter_client_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
-    fn select_credential(
-        &self,
-        credential_id: String,
-    ) -> impl Future<Output = Result<(), ()>> + Send;
 }
 
 /// Used for communication from privileged broker to credential service
@@ -414,35 +395,36 @@ impl CredentialServiceClient for InProcessClient {
     }
 }
 
-impl CredentialServiceClient for Arc<InProcessClient> {
+struct ArcInProcessClient(Arc<InProcessClient>);
+impl CredentialServiceClient for ArcInProcessClient {
     fn get_available_public_key_devices(&self) -> impl Future<Output = Result<Vec<Device>, ()>> {
-        InProcessClient::get_available_public_key_devices(self)
+        InProcessClient::get_available_public_key_devices(&self.0)
     }
 
     async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
-        let client = Arc::get_mut(self).ok_or(())?;
+        let client = Arc::get_mut(&mut self.0).ok_or(())?;
         InProcessClient::get_hybrid_credential(client).await
     }
 
     async fn get_usb_credential(&mut self) -> Result<(), ()> {
-        let client = Arc::get_mut(self).ok_or(())?;
+        let client = Arc::get_mut(&mut self.0).ok_or(())?;
         InProcessClient::get_usb_credential(client).await
     }
 
     async fn initiate_event_stream(
         &mut self,
     ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
-        let client = Arc::get_mut(self).ok_or(())?;
+        let client = Arc::get_mut(&mut self.0).ok_or(())?;
         InProcessClient::initiate_event_stream(client).await
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-        let client = Arc::get_mut(self).ok_or(())?;
+        let client = Arc::get_mut(&mut self.0).ok_or(())?;
         InProcessClient::enter_client_pin(client, pin).await
     }
 
     fn select_credential(&self, credential_id: String) -> impl Future<Output = Result<(), ()>> {
-        InProcessClient::select_credential(self, credential_id)
+        InProcessClient::select_credential(&self.0, credential_id)
     }
 }
 

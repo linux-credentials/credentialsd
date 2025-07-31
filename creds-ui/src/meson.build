@@ -1,3 +1,5 @@
+gui_cargo_package_name = 'creds-ui'
+
 global_conf = configuration_data()
 global_conf.set_quoted('APP_ID', application_id)
 if (get_option('profile') == 'development')
@@ -25,7 +27,7 @@ run_command(
 cargo_options = [
   '--manifest-path', meson.project_source_root() / gui_source_dir / 'Cargo.toml',
 ]
-cargo_options += ['--target-dir', meson.project_build_root() / gui_executable_name / 'src']
+cargo_options += ['--target-dir', meson.project_build_root() / gui_build_dir]
 
 if get_option('profile') == 'default'
   cargo_options += ['--release']
@@ -55,7 +57,7 @@ custom_target(
     cargo_options,
     '&&',
     'cp',
-    gui_executable_name / 'src' / rust_target / gui_executable_name,
+    gui_build_dir / rust_target / gui_cargo_package_name,
     '@OUTPUT@',
   ],
 )

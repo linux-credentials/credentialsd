@@ -4,7 +4,8 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use libwebauthn::{
     ops::webauthn::{CredentialProtectionPolicy, MakeCredentialLargeBlobExtension},
     proto::ctap2::{
-        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialType, Ctap2Transport,
+        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialType,
+        Ctap2Transport,
     },
 };
 use ring::digest;
@@ -12,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
 
-use crate::{cose::{CoseKeyAlgorithmIdentifier, CoseKeyType}, model::Operation};
+use creds_lib::model::Operation;
+
+use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
 pub use libwebauthn::ops::webauthn::{
     Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
@@ -669,8 +672,8 @@ impl GetPublicKeyCredentialResponse {
 
 pub fn create_client_data_hash(json: &str) -> Vec<u8> {
     digest::digest(&digest::SHA256, json.as_bytes())
-            .as_ref()
-            .to_owned()
+        .as_ref()
+        .to_owned()
 }
 
 pub fn format_client_data_json(
