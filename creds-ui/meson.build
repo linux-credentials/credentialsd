@@ -1,7 +1,7 @@
 i18n = import('i18n')
 gnome = import('gnome')
 
-gui_executable_name = 'xyzii-creds-portal-gtk'
+gui_executable_name = 'creds-ui'
 gui_build_dir = meson.current_build_dir()
 gui_source_dir = meson.current_source_dir()
 base_id = 'xyz.iinuwa.CredentialManagerUi'

@@ -45,7 +45,9 @@ endif
 cargo_options = [
   '--manifest-path', meson.project_source_root() / meson.current_source_dir() / 'Cargo.toml',
 ]
-cargo_options += ['--target-dir', meson.project_build_root() / meson.current_build_dir()]
+cargo_options += [
+  '--target-dir', meson.project_build_root() / meson.current_build_dir() / 'target',
+]
 
 subdir('src')
 subdir('tests')
