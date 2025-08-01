@@ -7,12 +7,25 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'xicm-portal-gtk'",
-            "program": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/src/xyzii-credman",
+            "name": "Debug Daemon (credsd)",
+            "program": "${workspaceFolder}/build/credsd/src/credsd",
+            "args": [],
+            "env": {
+                "RUST_LOG": "credsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug"
+            },
+            "sourceLanguages": ["rust"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Meson: Build all targets"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug UI (creds-ui)",
+            "program": "${workspaceFolder}/build/creds-ui/src/creds-ui",
             "args": [],
             "env": {
                 "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data",
-                "RUST_LOG": "xyz_iinuwa_credential_manager_portal_gtk=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug"
+                "RUST_LOG": "creds_ui=debug,zbus::info"
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",

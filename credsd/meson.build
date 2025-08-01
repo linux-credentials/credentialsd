@@ -1,4 +1,4 @@
-backend_executable_name = 'xyzii-credman'
+backend_executable_name = 'credsd'
 backend_build_dir = meson.current_build_dir()
 base_id = 'xyz.iinuwa.CredentialManagerUi'
 

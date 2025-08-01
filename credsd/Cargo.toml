@@ -1,5 +1,5 @@
 [package]
-name = "xyzii-credman"
+name = "credsd"
 version = "0.1.0"
 authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>"]
 edition = "2021"
