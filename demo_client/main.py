@@ -20,12 +20,13 @@ async def run(cmd):
     with open('../contrib/xyz.iinuwa.credentials.CredentialManager.xml', 'r') as f:
         introspection = f.read()
 
-    proxy_object = bus.get_proxy_object('xyz.iinuwa.credentials.CredentialManagerUi',
-                                        '/xyz/iinuwa/credentials/CredentialManagerUi',
-                                        introspection)
+    proxy_object = bus.get_proxy_object(
+        "xyz.iinuwa.credentials.Credentials",
+        "/xyz/iinuwa/credentials/Credentials",
+        introspection,
+    )
 
-    interface = proxy_object.get_interface(
-        'xyz.iinuwa.credentials.CredentialManagerUi1')
+    interface = proxy_object.get_interface("xyz.iinuwa.credentials.Credentials1")
 
     rp_id = "example.com"
     origin = "https://example.com"

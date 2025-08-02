@@ -104,7 +104,7 @@ struct CredentialManager<C: CredentialManagementClient> {
 }
 
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
-#[interface(name = "xyz.iinuwa.credentials.CredentialManagerUi1")]
+#[interface(name = "xyz.iinuwa.credentials.Credentials1")]
 impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C> {
     async fn create_credential(
         &self,

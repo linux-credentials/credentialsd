@@ -12,7 +12,7 @@ use crate::{
     credential_service::{
         hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
     },
-    dbus::UiControlServiceClient,
+    dbus::{CredentialControlServiceClient, UiControlServiceClient},
 };
 
 #[tokio::main]
@@ -33,8 +33,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!(" ✅");
 
     print!("Starting D-Bus public client service...");
-    let service_name = "xyz.iinuwa.credentials.CredentialManagerUi";
-    let path = "/xyz/iinuwa/credentials/CredentialManagerUi";
+    let service_name = "xyz.iinuwa.credentials.Credentials";
+    let path = "/xyz/iinuwa/credentials/Credentials";
+    let cred_mgr = CredentialControlServiceClient::new(dbus_client_conn.clone());
     let _conn = dbus::start_service(service_name, path, cred_mgr).await?;
     println!(" ✅");
 
