@@ -15,7 +15,7 @@
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Meson: Build all targets"
+            "preLaunchTask": "Meson: Build Daemon"
         },
         {
             "type": "lldb",
@@ -25,11 +25,11 @@
             "args": [],
             "env": {
                 "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data",
-                "RUST_LOG": "creds_ui=debug,zbus::info"
+                "RUST_LOG": "creds_ui=debug,zbus::trace"
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Meson: Build all targets"
+            "preLaunchTask": "Meson: Build UI"
         },
     ]
 }

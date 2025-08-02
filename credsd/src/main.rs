@@ -8,8 +8,11 @@ mod webauthn;
 
 use std::{error::Error, sync::Arc};
 
-use crate::credential_service::{
-    hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
+use crate::{
+    credential_service::{
+        hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
+    },
+    dbus::UiControlServiceClient,
 };
 
 #[tokio::main]
@@ -25,20 +28,30 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
-    let credential_service =
-        CredentialService::new(InternalHybridHandler::new(), InProcessUsbHandler {});
-    print!("Starting credential service...\t");
-    let (mut cred_server, cred_mgr, cred_client) = InProcessServer::new(credential_service);
-    tokio::spawn(async move {
-        cred_server.run().await;
-    });
+    print!("Connecting to D-Bus as client...\t");
+    let dbus_client_conn = zbus::connection::Builder::session()?.build().await?;
     println!(" ✅");
 
-    print!("Starting D-Bus service...");
+    print!("Starting D-Bus public client service...");
     let service_name = "xyz.iinuwa.credentials.CredentialManagerUi";
     let path = "/xyz/iinuwa/credentials/CredentialManagerUi";
-    let _conn = dbus::start_service(service_name, path, /* dbus_to_gui_tx, */ cred_mgr).await?;
+    let _conn = dbus::start_service(service_name, path, cred_mgr).await?;
     println!(" ✅");
+
+    print!("Starting D-Bus UI -> Credential control service...");
+    let ui_controller = UiControlServiceClient::new(dbus_client_conn);
+    let credential_service = CredentialService::new(
+        InternalHybridHandler::new(),
+        InProcessUsbHandler {},
+        ui_controller,
+    );
+    let internal_service_name = "xyz.iinuwa.credentials.CredentialManagerInternal";
+    let internal_path = "/xyz/iinuwa/credentials/CredentialManagerInternal";
+    let _internal_service =
+        dbus::start_internal_service(internal_service_name, internal_path, credential_service)
+            .await?;
+    println!(" ✅");
+
     println!("Waiting for messages...");
     loop {
         // wait forever, handle D-Bus in the background

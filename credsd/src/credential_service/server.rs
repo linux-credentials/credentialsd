@@ -1,9 +1,11 @@
+use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use creds_lib::client::CredentialServiceClient;
+use creds_lib::server::ViewRequest;
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
@@ -104,7 +106,7 @@ pub trait CredentialManagementClient {
 
     fn get_available_public_key_devices(
         &self,
-    ) -> impl Future<Output = Result<Vec<Device>, ()>> + Send;
+    ) -> impl Future<Output = Result<Vec<Device>, Box<dyn Error>>> + Send;
 
     fn get_hybrid_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
     fn get_usb_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
@@ -121,24 +123,28 @@ pub trait CredentialManagementClient {
 }
 
 #[derive(Debug)]
-pub struct InProcessManager<H, U>
+pub struct InProcessManager<H, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync,
     U: UsbHandler + Debug + Send + Sync,
+    UC: UiController + Debug + Send + Sync,
 {
     tx: mpsc::Sender<(
         InProcessServerRequest,
         oneshot::Sender<InProcessServerResponse>,
     )>,
-    svc: Arc<AsyncMutex<CredentialService<H, U>>>,
+    svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
     bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
     usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
     usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
 }
 
-impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync> Clone
-    for InProcessManager<H, U>
+impl<
+        H: HybridHandler + Debug + Send + Sync,
+        U: UsbHandler + Debug + Send + Sync,
+        UC: UiController + Debug + Send + Sync,
+    > Clone for InProcessManager<H, U, UC>
 {
     fn clone(&self) -> Self {
         Self {
@@ -152,8 +158,11 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
     }
 }
 
-impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync>
-    InProcessManager<H, U>
+impl<
+        H: HybridHandler + Debug + Send + Sync,
+        U: UsbHandler + Debug + Send + Sync,
+        UC: UiController + Debug + Send + Sync,
+    > InProcessManager<H, U, UC>
 {
     async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -175,11 +184,14 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
     }
 }
 
-impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync>
-    CredentialManagementClient for InProcessManager<H, U>
+impl<
+        H: HybridHandler + Debug + Send + Sync,
+        U: UsbHandler + Debug + Send + Sync,
+        UC: UiController + Debug + Send + Sync,
+    > CredentialManagementClient for InProcessManager<H, U, UC>
 {
     async fn init_request(&self, cred_request: CredentialRequest) -> Result<(), String> {
-        self.svc.lock().await.init_request(&cred_request)
+        self.svc.lock().await.init_request(&cred_request).await
     }
 
     async fn complete_auth(&self) -> Result<CredentialResponse, String> {
@@ -190,12 +202,15 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
             .ok_or("No credentials in credential service".to_string())
     }
 
-    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-        self.svc
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, Box<dyn Error>> {
+        let devices = self
+            .svc
             .lock()
             .await
             .get_available_public_key_devices()
             .await
+            .map_err(|_| "Failed to get public key devices".to_string())?;
+        Ok(devices)
     }
 
     async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
@@ -296,8 +311,11 @@ impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync
     }
 }
 
-impl<H: HybridHandler + Debug + Send + Sync, U: UsbHandler + Debug + Send + Sync> Drop
-    for InProcessManager<H, U>
+impl<
+        H: HybridHandler + Debug + Send + Sync,
+        U: UsbHandler + Debug + Send + Sync,
+        UC: UiController + Debug + Send + Sync,
+    > Drop for InProcessManager<H, U, UC>
 {
     fn drop(&mut self) {
         if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
@@ -429,24 +447,28 @@ impl CredentialServiceClient for ArcInProcessClient {
 }
 
 #[derive(Debug)]
-pub struct InProcessServer<H, U>
+pub struct InProcessServer<H, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync,
     U: UsbHandler + Debug + Send + Sync,
+    UC: UiController + Debug + Send + Sync,
 {
     rx: mpsc::Receiver<(
         InProcessServerRequest,
         oneshot::Sender<InProcessServerResponse>,
     )>,
-    mgr: InProcessManager<H, U>,
+    mgr: InProcessManager<H, U, UC>,
 }
 
-impl<H, U> InProcessServer<H, U>
+impl<H, U, UC> InProcessServer<H, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync,
     U: UsbHandler + Debug + Send + Sync,
+    UC: UiController + Debug + Send + Sync,
 {
-    pub fn new(svc: CredentialService<H, U>) -> (Self, InProcessManager<H, U>, InProcessClient) {
+    pub fn new(
+        svc: CredentialService<H, U, UC>,
+    ) -> (Self, InProcessManager<H, U, UC>, InProcessClient) {
         let (tx, rx) = mpsc::channel(256);
 
         let svc_arc = Arc::new(AsyncMutex::new(svc));
@@ -516,4 +538,12 @@ where
             tx.send(response).unwrap()
         }
     }
+}
+
+/// Used by the credential service to control the UI.
+pub trait UiController {
+    fn launch_ui(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
 }

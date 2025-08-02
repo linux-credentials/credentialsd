@@ -4,6 +4,7 @@ use zbus::{fdo, interface, proxy};
 
 #[proxy(
     gen_blocking = false,
+    interface = "xyz.iinuwa.credentials.CredentialManagerInternal1",
     default_path = "/xyz/iinuwa/credentials/CredentialManagerInternal",
     default_service = "xyz.iinuwa.credentials.CredentialManagerInternal"
 )]
@@ -32,6 +33,12 @@ pub struct UiControlService {
 /// These methods are called by the credential service to control the UI.
 #[interface(name = "xyz.iinuwa.credentials.UiControl1")]
 impl UiControlService {
-    fn launch_ui(&self, request: creds_lib::server::ViewRequest) {}
+    async fn launch_ui(&self, request: creds_lib::server::ViewRequest) -> fdo::Result<()> {
+        tracing::debug!("Received UI launch request");
+        self.request_tx
+            .send(request)
+            .await
+            .map_err(|_| fdo::Error::Failed("UI failed to launch".to_string()))
+    }
     // fn send_state_changed(&self, event: BackgroundEvent) {}
 }

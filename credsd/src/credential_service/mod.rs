@@ -14,10 +14,12 @@ use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
+use tokio::sync::Mutex as AsyncMutex;
 
 use creds_lib::{
     client::CredentialServiceClient,
-    model::{CredentialRequest, CredentialResponse, Device, Transport},
+    model::{CredentialRequest, CredentialResponse, Device, Operation, Transport},
+    server::{CreatePublicKeyCredentialRequest, ViewRequest},
 };
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
@@ -25,12 +27,12 @@ use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
 use usb::{UsbHandler, UsbStateInternal};
 pub use {
-    server::{CredentialManagementClient, InProcessServer},
+    server::{CredentialManagementClient, InProcessServer, UiController},
     usb::UsbState,
 };
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
+pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     devices: Vec<Device>,
 
     cred_request: Mutex<Option<CredentialRequest>>,
@@ -39,14 +41,14 @@ pub struct CredentialService<H: HybridHandler, U: UsbHandler> {
 
     hybrid_handler: H,
     usb_handler: U,
+
+    ui_control_client: UC,
 }
 
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug> CredentialService<H, U>
-where
-// <H as HybridHandler>::Stream: Unpin + Send + Sized + 'static,
-// <U as UsbHandler>::Stream: Unpin + Send + Sized + 'static,
+impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
+    CredentialService<H, U, UC>
 {
-    pub fn new(hybrid_handler: H, usb_handler: U) -> Self {
+    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: UC) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -65,24 +67,49 @@ where
 
             hybrid_handler,
             usb_handler,
+
+            ui_control_client,
         }
     }
 
-    pub fn init_request(&self, request: &CredentialRequest) -> Result<(), String> {
-        let mut cred_request = self.cred_request.lock().unwrap();
-        if cred_request.is_some() {
-            Err("Already a request in progress.".to_string())
-        } else {
+    pub async fn init_request(&self, request: &CredentialRequest) -> Result<(), String> {
+        {
+            let mut cred_request = self.cred_request.lock().unwrap();
+            if cred_request.is_some() {
+                return Err("Already a request in progress.".to_string());
+            }
+
             _ = cred_request.insert(request.clone());
-            Ok(())
+        }
+        let operation = match &request {
+            CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
+            CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
+        };
+        let view_request = ViewRequest { operation };
+
+        let launch_ui_response = self
+            .ui_control_client
+            .launch_ui(view_request)
+            .await
+            .map_err(|err| err.to_string());
+        match launch_ui_response {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
+                let mut cred_request = self.cred_request.lock().unwrap();
+                _ = cred_request.take();
+                Err(err)
+            }
         }
     }
 
-    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+    pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         Ok(self.devices.to_owned())
     }
 
-    fn get_hybrid_credential(&self) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
+    pub fn get_hybrid_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.cred_request.lock().unwrap();
         let cred_request = guard.clone().unwrap();
         let stream = self.hybrid_handler.start(&cred_request);
@@ -93,7 +120,7 @@ where
         })
     }
 
-    fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+    pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.cred_request.lock().unwrap();
         let cred_request = guard.clone().unwrap();
         let stream = self.usb_handler.start(&cred_request);

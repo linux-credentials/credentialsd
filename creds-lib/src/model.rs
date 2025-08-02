@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use serde::{Deserialize, Serialize};
 use zbus::zvariant::{SerializeDict, Type};
 
@@ -278,4 +280,17 @@ pub enum Error {
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
+}
+
+impl std::error::Error for Error {}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthenticatorError => f.write_str("AuthenticatorError"),
+            Self::NoCredentials => f.write_str("NoCredentials"),
+            Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
+            Self::Internal(s) => write!(f, "InternalError: {s}"),
+        }
+    }
 }

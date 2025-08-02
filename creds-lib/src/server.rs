@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use zbus::{
     fdo,
     object_server::SignalEmitter,
     proxy,
-    zvariant::{self, DeserializeDict, LE, OwnedValue, SerializeDict, Type, Value},
+    zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value},
 };
 
 use crate::model::{Operation, ViewUpdate};
@@ -31,6 +33,30 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
             }
         }?;
         Ok(ret)
+    }
+}
+
+impl TryFrom<crate::model::BackgroundEvent> for BackgroundEvent {
+    type Error = zvariant::Error;
+    fn try_from(value: crate::model::BackgroundEvent) -> Result<Self, Self::Error> {
+        let event = match value {
+            crate::model::BackgroundEvent::HybridQrStateChanged(state) => {
+                let state: HybridState = state.into();
+                let value = Value::new(state)
+                    .try_to_owned()
+                    .expect("non-file descriptor value to succeed");
+                BackgroundEvent::HybridStateChanged(value)
+            }
+            crate::model::BackgroundEvent::UsbStateChanged(state) => {
+                let state: UsbState = state.into();
+                let value = Value::new(state)
+                    .try_to_owned()
+                    .expect("non-file descriptor value to succeed");
+
+                BackgroundEvent::UsbStateChanged(value)
+            }
+        };
+        Ok(event)
     }
 }
 
@@ -73,11 +99,6 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
             public_key: Some(response),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Type)]
-pub struct ViewRequest {
-    pub operation: Operation,
 }
 
 /// Updates to send to the client
@@ -163,11 +184,12 @@ impl TryFrom<ClientUpdate> for ViewUpdate {
     }
 }
 
-#[derive(SerializeDict, DeserializeDict, Type)]
+#[derive(SerializeDict, DeserializeDict, Type, Value)]
+#[zvariant(signature = "dict")]
 pub struct Credential {
     id: String,
     name: String,
-    username: String,
+    username: Optional<String>,
 }
 
 impl From<Credential> for crate::model::Credential {
@@ -175,15 +197,22 @@ impl From<Credential> for crate::model::Credential {
         Self {
             id: value.id,
             name: value.name,
-            username: if value.username.is_empty() {
-                None
-            } else {
-                Some(value.username)
-            },
+            username: value.username.into(),
         }
     }
 }
 
+impl From<crate::model::Credential> for Credential {
+    fn from(value: crate::model::Credential) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            username: value.username.into(),
+        }
+    }
+}
+
+/*
 impl TryFrom<Value<'_>> for Credential {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
@@ -193,6 +222,7 @@ impl TryFrom<Value<'_>> for Credential {
         Ok(credential)
     }
 }
+    */
 
 #[derive(SerializeDict, DeserializeDict, Type)]
 pub struct Device {
@@ -207,6 +237,15 @@ impl TryFrom<Value<'_>> for Device {
         let encoded = zvariant::to_bytes(ctx, &value)?;
         let device: Device = encoded.deserialize()?.0;
         Ok(device)
+    }
+}
+
+impl From<crate::model::Device> for Device {
+    fn from(value: crate::model::Device) -> Self {
+        Device {
+            id: value.id,
+            transport: value.transport.as_str().to_owned(),
+        }
     }
 }
 
@@ -286,6 +325,21 @@ pub enum HybridState {
     Failed(OwnedValue),
 }
 
+impl From<crate::model::HybridState> for HybridState {
+    fn from(value: crate::model::HybridState) -> Self {
+        match value {
+            crate::model::HybridState::Idle => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::Started(qr_code) => {
+                HybridState::Idle(value_to_owned(Value::from(qr_code)))
+            }
+            crate::model::HybridState::Connecting => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::Connected => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::Completed => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::UserCancelled => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::Failed => HybridState::Idle(OwnedValue::from(false)),
+        }
+    }
+}
 impl TryFrom<HybridState> for crate::model::HybridState {
     type Error = zvariant::Error;
     fn try_from(value: HybridState) -> std::result::Result<Self, Self::Error> {
@@ -308,6 +362,43 @@ impl TryFrom<Value<'_>> for HybridState {
         let encoded = zvariant::to_bytes(ctx, &value)?;
         let obj: Self = encoded.deserialize()?.0;
         Ok(obj)
+    }
+}
+
+impl From<HybridState> for Value<'_> {
+    fn from(value: HybridState) -> Self {
+        let mut fields = HashMap::new();
+        match value {
+            HybridState::Idle(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("IDLE")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::Started(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("STARTED")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::Connecting(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("CONNECTING")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::Connected(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("CONNECTED")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::Completed(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("COMPLETED")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::UserCancelled(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("USER_CANCELLED")));
+                fields.insert("value", owned_value);
+            }
+            HybridState::Failed(owned_value) => {
+                fields.insert("type", value_to_owned(Value::from("FAILED")));
+                fields.insert("value", owned_value);
+            }
+        }
+        Value::from(fields)
     }
 }
 
@@ -424,6 +515,49 @@ impl TryFrom<UsbState> for crate::model::UsbState {
     }
 }
 
+impl From<crate::model::UsbState> for UsbState {
+    fn from(value: crate::model::UsbState) -> Self {
+        match value {
+            crate::model::UsbState::Idle => UsbState::Idle(OwnedValue::from(false)),
+            crate::model::UsbState::Waiting => UsbState::Waiting(OwnedValue::from(false)),
+            crate::model::UsbState::SelectingDevice => {
+                UsbState::SelectingDevice(OwnedValue::from(false))
+            }
+            crate::model::UsbState::Connected => UsbState::Connected(OwnedValue::from(false)),
+            crate::model::UsbState::NeedsPin { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => num as i32,
+                    None => -1,
+                };
+                UsbState::NeedsPin(OwnedValue::from(num))
+            }
+            crate::model::UsbState::NeedsUserVerification { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => num as i32,
+                    None => -1,
+                };
+                UsbState::NeedsPin(OwnedValue::from(num))
+            }
+            crate::model::UsbState::NeedsUserPresence => {
+                UsbState::NeedsUserPresence(OwnedValue::from(false))
+            }
+            crate::model::UsbState::SelectCredential { creds } => {
+                let creds: Vec<Credential> = creds.into_iter().map(Credential::from).collect();
+                let value = Value::new(creds)
+                    .try_to_owned()
+                    .expect("All non-file descriptors to convert to OwnedValue successfully");
+                UsbState::SelectCredential(value)
+            }
+            crate::model::UsbState::Completed => UsbState::Completed(OwnedValue::from(false)),
+            crate::model::UsbState::Failed(error) => UsbState::Failed(
+                Value::<'_>::from(error.to_string())
+                    .try_to_owned()
+                    .expect("non-file descriptor value to convert"),
+            ),
+        }
+    }
+}
+
 impl TryFrom<Value<'_>> for UsbState {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
@@ -432,4 +566,114 @@ impl TryFrom<Value<'_>> for UsbState {
         let obj: Self = encoded.deserialize()?.0;
         Ok(obj)
     }
+}
+
+impl From<UsbState> for Value<'_> {
+    fn from(value: UsbState) -> Self {
+        let mut fields = HashMap::new();
+        match value {
+            UsbState::Idle(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("IDLE")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::Waiting(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("WAITING")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::SelectingDevice(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("SELECTING_DEVICE")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::Connected(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("CONNECTED")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::NeedsPin(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("NEEDS_PIN")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::NeedsUserVerification(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("NEEDS_USER_VERIFICATION")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::NeedsUserPresence(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("NEEDS_USER_PRESENCE")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::SelectCredential(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("SELECT_CREDENTIAL")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::Completed(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("COMPLETED")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+            UsbState::Failed(owned_value) => {
+                fields.insert(
+                    "type",
+                    Value::from("FAILED")
+                        .try_to_owned()
+                        .expect("non-file descriptor fields to succeed"),
+                );
+                fields.insert("value", owned_value);
+            }
+        };
+        Value::from(fields)
+    }
+}
+
+#[derive(Serialize, Deserialize, Type)]
+pub struct ViewRequest {
+    pub operation: Operation,
+}
+
+fn value_to_owned(value: Value<'_>) -> OwnedValue {
+    value
+        .try_to_owned()
+        .expect("non-file descriptor values to succeed")
 }

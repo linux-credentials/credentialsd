@@ -31,18 +31,20 @@
 
 mod model;
 
+use std::pin::Pin;
+use std::{collections::VecDeque, error::Error, fmt::Debug, sync::Arc};
+
 use creds_lib::server::{CreateCredentialRequest, ViewRequest};
-use futures_lite::StreamExt;
-use std::collections::VecDeque;
-use std::error::Error;
-use std::sync::Arc;
+use futures_lite::{Stream, StreamExt};
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex as AsyncMutex;
-use zbus::object_server::SignalEmitter;
-use zbus::proxy;
+use tokio::task::AbortHandle;
+use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::{
     connection::{self, Connection},
     fdo, interface, Result,
 };
+use zbus::{proxy, ObjectServer};
 
 use creds_lib::{
     client::CredentialServiceClient,
@@ -60,16 +62,15 @@ use self::model::{
     create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
     get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
 };
-use crate::credential_service::CredentialManagementClient;
-
-// TODO: This is a workaround for testing credential_service. Refactor so that
-// these private structs don't need to be exported.
-// pub use self::model::{CreateCredentialRequest, CreatePublicKeyCredentialRequest};
+use crate::credential_service::hybrid::{HybridHandler, HybridState};
+use crate::credential_service::usb::UsbHandler;
+use crate::credential_service::{
+    CredentialManagementClient, CredentialService, UiController, UsbState,
+};
 
 pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 'static>(
     service_name: &str,
     path: &str,
-    // gui_tx: Sender<ViewRequest>,
     manager_client: C,
 ) -> Result<Connection> {
     let lock = Arc::new(AsyncMutex::new(()));
@@ -235,8 +236,37 @@ impl<C: CredentialManagementClient + Send + Sync + 'static> CredentialManager<C>
     }
 }
 
-struct InternalService {
+pub async fn start_internal_service<
+    H: HybridHandler + Debug + Send + Sync + 'static,
+    U: UsbHandler + Debug + Send + Sync + 'static,
+    UC: UiController + Debug + Send + Sync + 'static,
+>(
+    service_name: &str,
+    path: &str,
+    credential_service: CredentialService<H, U, UC>,
+) -> Result<Connection> {
+    connection::Builder::session()?
+        .name(service_name)?
+        .serve_at(
+            path,
+            InternalService {
+                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
+                svc: Arc::new(AsyncMutex::new(credential_service)),
+                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+                usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+                hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+            },
+        )?
+        .build()
+        .await
+}
+
+pub struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
+    svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+    usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
 /// The following methods are for communication between the [trusted]
@@ -250,7 +280,12 @@ struct InternalService {
         default_service = "xyz.iinuwa.credentials.CredentialManagerInternal",
     )
 )]
-impl InternalService {
+impl<H, U, UC> InternalService<H, U, UC>
+where
+    H: HybridHandler + Debug + Send + Sync + 'static,
+    U: UsbHandler + Debug + Send + Sync + 'static,
+    UC: UiController + Debug + Send + Sync + 'static,
+{
     async fn initiate_event_stream(
         &self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
@@ -270,46 +305,137 @@ impl InternalService {
     }
 
     async fn get_available_public_key_devices(&self) -> fdo::Result<Vec<Device>> {
-        todo!()
+        let devices = self
+            .svc
+            .lock()
+            .await
+            .get_available_public_key_devices()
+            .await
+            .map_err(|_| {
+                fdo::Error::Failed("Failed to get retrieve available devices".to_string())
+            })?;
+        Ok(devices.into_iter().map(Device::from).collect())
     }
 
-    async fn get_hybrid_credential(&self) -> fdo::Result<()> {
-        todo!()
+    async fn get_hybrid_credential(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let svc = self.svc.lock().await;
+        let mut stream = svc.get_hybrid_credential();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
+                .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
+                .await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                let event =
+                    creds_lib::model::BackgroundEvent::HybridQrStateChanged(state.clone().into())
+                        .try_into();
+                match event {
+                    Err(err) => {
+                        tracing::error!("Failed to serialize state update: {err}");
+                        break;
+                    }
+                    Ok(event) => match send_state_update(&emitter, &signal_state, event).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("Failed to send state update to UI: {err}");
+                            break;
+                        }
+                    },
+                }
+                match state {
+                    HybridState::Completed | HybridState::Failed => {
+                        break;
+                    }
+                    _ => {}
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self.hybrid_event_forwarder_task.lock().await.replace(task) {
+            prev_task.abort();
+        }
+        Ok(())
     }
 
-    async fn get_usb_credential(&self) -> fdo::Result<()> {
-        todo!()
+    async fn get_usb_credential(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let mut stream = self.svc.lock().await.get_usb_credential();
+        let usb_pin_tx = self.usb_pin_tx.clone();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
+                .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
+                .await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                match creds_lib::model::BackgroundEvent::UsbStateChanged((&state).into()).try_into()
+                {
+                    Err(err) => {
+                        tracing::error!("Failed to serialize state update: {err}");
+                        break;
+                    }
+                    Ok(event) => match send_state_update(&emitter, &signal_state, event).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("Failed to send state update to UI: {err}");
+                            break;
+                        }
+                    },
+                };
+                match state {
+                    UsbState::NeedsPin { pin_tx, .. } => {
+                        let mut usb_pin_tx = usb_pin_tx.lock().await;
+                        let _ = usb_pin_tx.insert(pin_tx);
+                    }
+                    UsbState::Completed | UsbState::Failed(_) => {
+                        break;
+                    }
+                    _ => {}
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self.usb_event_forwarder_task.lock().await.replace(task) {
+            prev_task.abort();
+        }
+        Ok(())
     }
 
     async fn select_device(&self, device_id: String) -> fdo::Result<()> {
         todo!()
     }
+
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
-        todo!()
-    }
-    async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
-        todo!()
+        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+            pin_tx.send(pin).await.unwrap();
+        }
+        Ok(())
     }
 
-    async fn send_state_update(
-        &self,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-        update: BackgroundEvent,
-    ) -> fdo::Result<()> {
-        let mut signal_state = self.signal_state.lock().await;
-        match *signal_state {
-            SignalState::Idle => {
-                let pending = VecDeque::from([update]);
-                *signal_state = SignalState::Pending(pending);
-            }
-            SignalState::Pending(ref mut pending) => {
-                pending.push_back(update);
-            }
-            SignalState::Active => {
-                emitter.state_changed(update).await?;
-            }
-        };
-        Ok(())
+    async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
+        todo!()
     }
 
     #[zbus(signal)]
@@ -318,29 +444,121 @@ impl InternalService {
         update: BackgroundEvent,
     ) -> zbus::Result<()>;
 }
+async fn send_state_update(
+    emitter: &SignalEmitter<'_>,
+    signal_state: &Arc<AsyncMutex<SignalState>>,
+    update: BackgroundEvent,
+) -> fdo::Result<()> {
+    let mut signal_state = signal_state.lock().await;
+    match *signal_state {
+        SignalState::Idle => {
+            let pending = VecDeque::from([update]);
+            *signal_state = SignalState::Pending(pending);
+        }
+        SignalState::Pending(ref mut pending) => {
+            pending.push_back(update);
+        }
+        SignalState::Active => {
+            emitter.state_changed(update).await?;
+        }
+    };
+    Ok(())
+}
+
+pub struct CredentialControlServiceClient {
+    conn: Connection,
+}
+
+impl CredentialControlServiceClient {
+    async fn proxy(&self) -> Result<InternalServiceProxy> {
+        InternalServiceProxy::new(&self.conn).await
+    }
+}
+
+impl CredentialManagementClient for CredentialControlServiceClient {
+    fn init_request(
+        &self,
+        cred_request: CredentialRequest,
+    ) -> impl std::prelude::rust_2024::Future<Output = std::result::Result<(), String>> + Send {
+        todo!()
+    }
+
+    fn complete_auth(
+        &self,
+    ) -> impl std::prelude::rust_2024::Future<Output = std::result::Result<CredentialResponse, String>>
+           + Send {
+        todo!()
+    }
+
+    async fn get_available_public_key_devices(
+        &self,
+    ) -> std::result::Result<Vec<creds_lib::model::Device>, Box<dyn Error>> {
+        let devices: std::result::Result<Vec<creds_lib::model::Device>, String> = self
+            .proxy()
+            .await?
+            .get_available_public_key_devices()
+            .await?
+            .into_iter()
+            .map(|d| d.try_into().map_err(|_| "Failed".to_string()))
+            .collect();
+        Ok(devices?)
+    }
+
+    async fn get_hybrid_credential(&mut self) -> std::result::Result<(), ()> {
+        todo!()
+    }
+
+    async fn get_usb_credential(&mut self) -> std::result::Result<(), ()> {
+        todo!()
+    }
+
+    async fn initiate_event_stream(
+        &mut self,
+    ) -> std::result::Result<
+        Pin<Box<dyn Stream<Item = creds_lib::model::BackgroundEvent> + Send + 'static>>,
+        (),
+    > {
+        todo!()
+    }
+
+    async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
+        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+            pin_tx.send(pin).await.unwrap();
+        }
+        Ok(())
+    }
+
+    async fn select_credential(&self, credential_id: String) -> std::result::Result<(), ()> {
+        todo!()
+    }
+}
 
 /// These methods are called by the credential service to control the UI.
 #[proxy(
     gen_blocking = false,
-    default_path = "/xyz/iinuwa/credentials/UiControl",
-    default_service = "xyz.iinuwa.credentials.UiControl"
+    interface = "xyz.iinuwa.credentials.UiControl1",
+    default_service = "xyz.iinuwa.credentials.UiControl",
+    default_path = "/xyz/iinuwa/credentials/UiControl"
 )]
+// The #[proxy] macro renames this type to this creates a type UiControlServiceClientProxy
 trait UiControlServiceClient {
     fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
 }
 
-trait UiControlServiceClient {
-    async fn launch_ui(&self, request: ViewRequest) -> std::result::Result<(), Box<dyn Error>>;
-}
-struct UiControlServiceImpl {
+#[derive(Debug)]
+pub struct UiControlServiceClient {
     conn: Connection,
 }
-impl UiControlServiceImpl {
+impl UiControlServiceClient {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+
     async fn proxy(&self) -> std::result::Result<UiControlServiceClientProxy, zbus::Error> {
         UiControlServiceClientProxy::new(&self.conn).await
     }
 }
-impl UiControlServiceClient for UiControlServiceImpl {
+impl UiController for UiControlServiceClient {
     async fn launch_ui(&self, request: ViewRequest) -> std::result::Result<(), Box<dyn Error>> {
         self.proxy()
             .await?
