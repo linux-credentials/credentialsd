@@ -34,15 +34,16 @@ mod model;
 use std::pin::Pin;
 use std::{collections::VecDeque, error::Error, fmt::Debug, sync::Arc};
 
-use creds_lib::server::{CreateCredentialRequest, ViewRequest};
+use creds_lib::model::MakeCredentialRequest;
+use creds_lib::server::{CreateCredentialRequest, CreatePublicKeyCredentialRequest, ViewRequest};
 use futures_lite::{Stream, StreamExt};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::AbortHandle;
 use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::{
     connection::{self, Connection},
-    fdo, interface, Result,
+    fdo, interface,
 };
 use zbus::{proxy, ObjectServer};
 
@@ -72,7 +73,7 @@ pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 
     service_name: &str,
     path: &str,
     manager_client: C,
-) -> Result<Connection> {
+) -> zbus::Result<Connection> {
     let lock = Arc::new(AsyncMutex::new(()));
     connection::Builder::session()?
         .name(service_name)?
@@ -244,7 +245,7 @@ pub async fn start_internal_service<
     service_name: &str,
     path: &str,
     credential_service: CredentialService<H, U, UC>,
-) -> Result<Connection> {
+) -> zbus::Result<Connection> {
     connection::Builder::session()?
         .name(service_name)?
         .serve_at(
@@ -259,6 +260,100 @@ pub async fn start_internal_service<
         )?
         .build()
         .await
+}
+
+struct CredentialRequestController<H: HybridHandler, U: UsbHandler, UC: UiController> {
+    svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+}
+
+#[interface(name = "xyz.iinuwa.credentials.impl.Credentials")]
+impl<H, U, UC> CredentialRequestController<H, U, UC>
+where
+    H: HybridHandler + Debug + Send + Sync + 'static,
+    U: UsbHandler + Debug + Send + Sync + 'static,
+    UC: UiController + Debug + Send + Sync + 'static,
+{
+    async fn create_credential(
+        &self,
+        request: CreateCredentialRequest,
+    ) -> fdo::Result<CreateCredentialResponse> {
+        match create_credential_request_try_into_ctap2(&request) {
+            Ok((make_request, client_data_json)) => {
+                let mut rx = {
+                    let rx: Receiver<Result<CredentialResponse, creds_lib::model::Error>> = self
+                        .svc
+                        .lock()
+                        .await
+                        .init_request(&CredentialRequest::CreatePublicKeyCredentialRequest(
+                            make_request,
+                        ))
+                        .await;
+                    rx
+                };
+                let msg = rx.recv().await.ok_or_else(|| {
+                    tracing::error!("Credential service shutdown response channel prematurely");
+                    fdo::Error::Failed("Credential service shutdown".to_string())
+                })?;
+                match msg {
+                    Ok(CredentialResponse::CreatePublicKeyCredentialResponse(cred_response)) => {
+                        let public_key_response = create_credential_response_try_from_ctap2(
+                            &cred_response,
+                            client_data_json,
+                        )?;
+                        Ok(public_key_response.into())
+                    }
+                    // We should be returning the correct kind of response, so this shouldn't happen.
+                    Ok(_) => Err(fdo::Error::Failed("Internal error occurred".to_string())),
+                    Err(_) => Err(fdo::Error::Failed(
+                        "Failed to create credential".to_string(),
+                    )),
+                }
+            }
+            Err(_) => Err(fdo::Error::InvalidArgs(
+                "Unable to parse create credential request".to_string(),
+            )),
+        }
+    }
+
+    async fn get_credential(
+        &self,
+        request: GetCredentialRequest,
+    ) -> fdo::Result<GetCredentialResponse> {
+        match get_credential_request_try_into_ctap2(&request) {
+            Ok((get_request, client_data_json)) => {
+                let mut rx = {
+                    let rx: Receiver<Result<CredentialResponse, creds_lib::model::Error>> = self
+                        .svc
+                        .lock()
+                        .await
+                        .init_request(&CredentialRequest::GetPublicKeyCredentialRequest(
+                            get_request,
+                        ))
+                        .await;
+                    rx
+                };
+                let msg = rx.recv().await.ok_or_else(|| {
+                    tracing::error!("Credential service shutdown response channel prematurely");
+                    fdo::Error::Failed("Credential service shutdown".to_string())
+                })?;
+                match msg {
+                    Ok(CredentialResponse::GetPublicKeyCredentialResponse(cred_response)) => {
+                        let public_key_response = get_credential_response_try_from_ctap2(
+                            &cred_response,
+                            client_data_json,
+                        )?;
+                        Ok(public_key_response.into())
+                    }
+                    // We should be returning the correct kind of response, so this shouldn't happen.
+                    Ok(_) => Err(fdo::Error::Failed("Internal error occurred".to_string())),
+                    Err(_) => Err(fdo::Error::Failed("Failed to get credential".to_string())),
+                }
+            }
+            Err(_) => Err(fdo::Error::InvalidArgs(
+                "Unable to parse get credential request".to_string(),
+            )),
+        }
+    }
 }
 
 pub struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
@@ -326,7 +421,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
+            let interface: zbus::Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
                 .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
                 .await;
 
@@ -378,7 +473,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
+            let interface: zbus::Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
                 .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
                 .await;
 
@@ -470,30 +565,32 @@ pub struct CredentialControlServiceClient {
 }
 
 impl CredentialControlServiceClient {
-    async fn proxy(&self) -> Result<InternalServiceProxy> {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+
+    async fn proxy(&self) -> zbus::Result<InternalServiceProxy> {
         InternalServiceProxy::new(&self.conn).await
     }
 }
 
 impl CredentialManagementClient for CredentialControlServiceClient {
-    fn init_request(
+    async fn init_request(
         &self,
         cred_request: CredentialRequest,
-    ) -> impl std::prelude::rust_2024::Future<Output = std::result::Result<(), String>> + Send {
-        todo!()
+    ) -> Receiver<Result<CredentialResponse, creds_lib::model::Error>> {
+        // TODO: Start here
+        self.proxy().await.unwrap().
     }
 
-    fn complete_auth(
-        &self,
-    ) -> impl std::prelude::rust_2024::Future<Output = std::result::Result<CredentialResponse, String>>
-           + Send {
+    async fn complete_auth(&self) -> Result<CredentialResponse, String> {
         todo!()
     }
 
     async fn get_available_public_key_devices(
         &self,
-    ) -> std::result::Result<Vec<creds_lib::model::Device>, Box<dyn Error>> {
-        let devices: std::result::Result<Vec<creds_lib::model::Device>, String> = self
+    ) -> Result<Vec<creds_lib::model::Device>, Box<dyn Error>> {
+        let devices: Result<Vec<creds_lib::model::Device>, String> = self
             .proxy()
             .await?
             .get_available_public_key_devices()
@@ -504,31 +601,30 @@ impl CredentialManagementClient for CredentialControlServiceClient {
         Ok(devices?)
     }
 
-    async fn get_hybrid_credential(&mut self) -> std::result::Result<(), ()> {
+    async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
         todo!()
     }
 
-    async fn get_usb_credential(&mut self) -> std::result::Result<(), ()> {
+    async fn get_usb_credential(&mut self) -> Result<(), ()> {
         todo!()
     }
 
     async fn initiate_event_stream(
         &mut self,
-    ) -> std::result::Result<
-        Pin<Box<dyn Stream<Item = creds_lib::model::BackgroundEvent> + Send + 'static>>,
-        (),
-    > {
+    ) -> Result<Pin<Box<dyn Stream<Item = creds_lib::model::BackgroundEvent> + Send + 'static>>, ()>
+    {
         todo!()
     }
 
-    async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
-        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
-            pin_tx.send(pin).await.unwrap();
+    async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+        if let Err(err) = self.proxy().await.unwrap().enter_client_pin(pin).await {
+            tracing::error!("Failed to send client pin: {err}");
+            return Err(());
         }
         Ok(())
     }
 
-    async fn select_credential(&self, credential_id: String) -> std::result::Result<(), ()> {
+    async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
         todo!()
     }
 }
@@ -554,12 +650,12 @@ impl UiControlServiceClient {
         Self { conn }
     }
 
-    async fn proxy(&self) -> std::result::Result<UiControlServiceClientProxy, zbus::Error> {
+    async fn proxy(&self) -> Result<UiControlServiceClientProxy, zbus::Error> {
         UiControlServiceClientProxy::new(&self.conn).await
     }
 }
 impl UiController for UiControlServiceClient {
-    async fn launch_ui(&self, request: ViewRequest) -> std::result::Result<(), Box<dyn Error>> {
+    async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
         self.proxy()
             .await?
             .launch_ui(request)
@@ -573,26 +669,30 @@ async fn execute_flow<C: CredentialManagementClient>(
     // gui_tx: &async_std::channel::Sender<ViewRequest>,
     manager_client: &C,
     cred_request: &CredentialRequest,
-) -> Result<CredentialResponse> {
-    manager_client
-        .init_request(cred_request.clone())
+) -> zbus::Result<CredentialResponse> {
+    let mut signal_rx = manager_client.init_request(cred_request.clone()).await;
+    let rsp = signal_rx
+        .recv()
         .await
-        .map_err(|_| fdo::Error::Failed("Request already running".to_string()))?;
+        .ok_or(fdo::Error::Failed(
+            "Credential service unexpectedly interrupted".to_string(),
+        ))?
+        .map_err(|err| fdo::Error::Failed(err.to_string()))?;
+    Ok(rsp)
 
+    /*
     // start GUI
     let operation = match &cred_request {
         CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
         CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
     };
     let (signal_tx, signal_rx) = tokio::sync::oneshot::channel();
-    /*
     let view_request = ViewRequest {
         operation,
         signal: signal_tx,
     };
     // TODO: Replace this with a UiControlClient
     // gui_tx.send(view_request).await.unwrap();
-    */
     // wait for gui to complete
     signal_rx.await.map_err(|_| {
         zbus::Error::Failure("GUI channel closed before completing request.".to_string())
@@ -603,4 +703,5 @@ async fn execute_flow<C: CredentialManagementClient>(
         tracing::error!("Error retrieving credential: {:?}", err);
         zbus::Error::Failure("Error retrieving credential".to_string())
     })
+    */
 }

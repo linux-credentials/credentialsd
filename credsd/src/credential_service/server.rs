@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use creds_lib::client::CredentialServiceClient;
 use creds_lib::server::ViewRequest;
 use futures_lite::{Stream, StreamExt};
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
 use creds_lib::model::{BackgroundEvent, CredentialRequest, CredentialResponse, Device};
@@ -25,7 +26,7 @@ enum ManagementRequest {
 
 enum ManagementResponse {
     EnterClientPin,
-    InitRequest(Result<(), String>),
+    InitRequest(Receiver<Result<CredentialResponse, creds_lib::model::Error>>),
     CompleteAuth(Result<CredentialResponse, String>),
     GetDevices(Vec<Device>),
     GetHybridCredential,
@@ -101,7 +102,7 @@ pub trait CredentialManagementClient {
     fn init_request(
         &self,
         cred_request: CredentialRequest,
-    ) -> impl Future<Output = Result<(), String>> + Send;
+    ) -> impl Future<Output = Receiver<Result<CredentialResponse, creds_lib::model::Error>>> + Send;
     fn complete_auth(&self) -> impl Future<Output = Result<CredentialResponse, String>> + Send;
 
     fn get_available_public_key_devices(
@@ -190,7 +191,10 @@ impl<
         UC: UiController + Debug + Send + Sync,
     > CredentialManagementClient for InProcessManager<H, U, UC>
 {
-    async fn init_request(&self, cred_request: CredentialRequest) -> Result<(), String> {
+    async fn init_request(
+        &self,
+        cred_request: CredentialRequest,
+    ) -> Receiver<Result<CredentialResponse, creds_lib::model::Error>> {
         self.svc.lock().await.init_request(&cred_request).await
     }
 
@@ -458,6 +462,7 @@ where
         oneshot::Sender<InProcessServerResponse>,
     )>,
     mgr: InProcessManager<H, U, UC>,
+    responder_rx: Option<Receiver<Result<CredentialResponse, creds_lib::model::Error>>>,
 }
 
 impl<H, U, UC> InProcessServer<H, U, UC>
@@ -486,6 +491,7 @@ where
         let server = Self {
             rx,
             mgr: mgr.clone(),
+            responder_rx: None,
         };
         (server, mgr, client)
     }
