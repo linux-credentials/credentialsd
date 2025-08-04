@@ -73,12 +73,10 @@ use crate::credential_service::{
     CredentialManagementClient, CredentialService, UiController, UsbState,
 };
 
-enum SignalState {
-    /// No state
-    Idle,
-    /// Waiting for client to signal that it's ready to receive events.
-    /// Holds a cache of events to send once the client connects.
-    Pending(VecDeque<BackgroundEvent>),
-    /// Client is actively receiving messages.
-    Active,
-}
+pub use self::{
+    flow_control::{
+        start_flow_control_service, CredentialRequestController, CredentialRequestControllerClient,
+        SERVICE_NAME as FLOW_CONTROL_SERVICE_NAME, SERVICE_PATH as FLOW_CONTROL_SERVICE_PATH,
+    },
+    gateway::start_gateway,
+};

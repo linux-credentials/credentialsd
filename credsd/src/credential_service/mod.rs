@@ -86,8 +86,9 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     pub async fn init_request(
         &self,
         request: &CredentialRequest,
-    ) -> Receiver<Result<CredentialResponse, CredentialServiceError>> {
-        let (tx, rx) = mpsc::channel(1);
+        tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
+    ) {
+        // let (tx, rx) = mpsc::channel(1);
         let res = {
             let mut cred_request = self.cred_request.lock().unwrap();
             if cred_request.is_some() {
@@ -104,7 +105,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             )))
             .await
             .expect("Send to local receiver to succeed");
-            return rx;
+            return;
         }
         let operation = match &request {
             CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
@@ -123,7 +124,6 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             let err = Err(CredentialServiceError::Internal(err));
             tx.send(err).await;
         }
-        return rx;
     }
 
     pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
@@ -153,10 +153,17 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         })
     }
 
-    pub fn complete_auth(&self) -> Option<CredentialResponse> {
-        self.cred_request.lock().unwrap().take();
-        let mut cred_response = self.cred_response.lock().unwrap();
-        cred_response.take()
+    pub async fn complete_auth(
+        &self,
+        response: Result<CredentialResponse, CredentialServiceError>,
+    ) -> () {
+        if let Some((_request, responder)) = self.cred_request.lock().unwrap().take() {
+            if responder.send(response).await.is_err() {
+                tracing::error!("Failed to send response to back to caller");
+            };
+        } else {
+            tracing::error!("No corresponding request for this");
+        }
     }
 }
 

@@ -17,31 +17,6 @@ pub(crate) async fn start_service<C: CredentialManagementClient + Send + Sync + 
         .await
 }
 
-pub async fn start_internal_service<
-    H: HybridHandler + Debug + Send + Sync + 'static,
-    U: UsbHandler + Debug + Send + Sync + 'static,
-    UC: UiController + Debug + Send + Sync + 'static,
->(
-    service_name: &str,
-    path: &str,
-    credential_service: CredentialService<H, U, UC>,
-) -> zbus::Result<Connection> {
-    connection::Builder::session()?
-        .name(service_name)?
-        .serve_at(
-            path,
-            InternalService {
-                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
-                svc: Arc::new(AsyncMutex::new(credential_service)),
-                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
-                usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
-                hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
-            },
-        )?
-        .build()
-        .await
-}
-
 struct CredentialRequestController<H: HybridHandler, U: UsbHandler, UC: UiController> {
     svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
 }

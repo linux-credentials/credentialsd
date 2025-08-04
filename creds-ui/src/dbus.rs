@@ -4,11 +4,11 @@ use zbus::{fdo, interface, proxy};
 
 #[proxy(
     gen_blocking = false,
-    interface = "xyz.iinuwa.credentials.CredentialManagerInternal1",
-    default_path = "/xyz/iinuwa/credentials/CredentialManagerInternal",
-    default_service = "xyz.iinuwa.credentials.CredentialManagerInternal"
+    interface = "xyz.iinuwa.credentials.FlowControl1",
+    default_path = "/xyz/iinuwa/credentials/FlowControl",
+    default_service = "xyz.iinuwa.credentials.FlowControl"
 )]
-pub trait InternalService {
+pub trait FlowControlService {
     async fn initiate_event_stream(&self) -> fdo::Result<()>;
 
     async fn get_available_public_key_devices(&self) -> fdo::Result<Vec<Device>>;

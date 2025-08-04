@@ -3,7 +3,7 @@ use creds_lib::client::CredentialServiceClient;
 use futures_lite::StreamExt;
 use zbus::{Connection, zvariant};
 
-use crate::dbus::InternalServiceProxy;
+use crate::dbus::FlowControlServiceProxy;
 
 pub struct DbusCredentialClient {
     conn: Connection,
@@ -13,8 +13,8 @@ impl DbusCredentialClient {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
     }
-    async fn proxy(&self) -> std::result::Result<InternalServiceProxy, ()> {
-        InternalServiceProxy::new(&self.conn)
+    async fn proxy(&self) -> std::result::Result<FlowControlServiceProxy, ()> {
+        FlowControlServiceProxy::new(&self.conn)
             .await
             .map_err(|err| tracing::error!("Failed to communicate with D-Bus service: {err}"))
     }

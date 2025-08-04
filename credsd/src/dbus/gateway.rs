@@ -17,6 +17,7 @@ use zbus::{fdo, interface, Connection, DBusError};
 use crate::dbus::{
     create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
     get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
+    CredentialRequestController,
 };
 
 pub const INTERFACE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials1";
@@ -203,13 +204,6 @@ async fn check_origin(
         return Err(WebAuthnError::NotAllowedError.into());
     };
     Ok((origin, true, top_origin))
-}
-
-trait CredentialRequestController {
-    async fn request_credential(
-        &self,
-        request: CredentialRequest,
-    ) -> Result<CredentialResponse, WebAuthnError>;
 }
 
 #[derive(DBusError, Debug)]

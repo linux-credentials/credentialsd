@@ -1,4 +1,74 @@
-pub struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+use std::future::Future;
+use std::{collections::VecDeque, error::Error, fmt::Debug, pin::Pin, sync::Arc};
+
+use creds_lib::model::{
+    CredentialRequest, CredentialResponse, Error as CredentialServiceError, WebAuthnError,
+};
+use creds_lib::server::{BackgroundEvent, Device};
+use futures_lite::{Stream, StreamExt};
+use tokio::{
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Mutex as AsyncMutex,
+    },
+    task::AbortHandle,
+};
+use zbus::{
+    connection::{Builder, Connection},
+    fdo, interface,
+    object_server::{InterfaceRef, SignalEmitter},
+    ObjectServer,
+};
+
+use crate::credential_service::{
+    hybrid::{HybridHandler, HybridState},
+    usb::UsbHandler,
+    CredentialManagementClient, CredentialService, UiController, UsbState,
+};
+
+pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/FlowControl";
+pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl";
+
+pub async fn start_flow_control_service<
+    H: HybridHandler + Debug + Send + Sync + 'static,
+    U: UsbHandler + Debug + Send + Sync + 'static,
+    UC: UiController + Debug + Send + Sync + 'static,
+>(
+    credential_service: CredentialService<H, U, UC>,
+) -> zbus::Result<(
+    Connection,
+    Sender<(
+        CredentialRequest,
+        Sender<Result<CredentialResponse, CredentialServiceError>>,
+    )>,
+)> {
+    let svc = Arc::new(AsyncMutex::new(credential_service));
+    let svc2 = svc.clone();
+    let conn = Builder::session()?
+        .name(SERVICE_NAME)?
+        .serve_at(
+            SERVICE_PATH,
+            InternalService {
+                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
+                svc,
+                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+                usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+                hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+            },
+        )?
+        .build()
+        .await?;
+    let (initiator_tx, mut initiator_rx) = mpsc::channel(2);
+    tokio::spawn(async move {
+        let svc = svc2;
+        while let Some((msg, tx)) = initiator_rx.recv().await {
+            svc.lock().await.init_request(&msg, tx).await;
+        }
+    });
+    Ok((conn, initiator_tx))
+}
+
+struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
     svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
     usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
@@ -10,11 +80,11 @@ pub struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
 /// UI and the credential service, and should not be called by arbitrary
 /// clients.
 #[interface(
-    name = "xyz.iinuwa.credentials.CredentialManagerInternal1",
+    name = "xyz.iinuwa.credentials.FlowControl1",
     proxy(
         gen_blocking = false,
-        default_path = "/xyz/iinuwa/credentials/CredentialManagerInternal",
-        default_service = "xyz.iinuwa.credentials.CredentialManagerInternal",
+        default_path = "/xyz/iinuwa/credentials/FlowControl",
+        default_service = "xyz.iinuwa.credentials.FlowControl",
     )
 )]
 impl<H, U, UC> InternalService<H, U, UC>
@@ -202,6 +272,16 @@ async fn send_state_update(
     Ok(())
 }
 
+enum SignalState {
+    /// No state
+    Idle,
+    /// Waiting for client to signal that it's ready to receive events.
+    /// Holds a cache of events to send once the client connects.
+    Pending(VecDeque<BackgroundEvent>),
+    /// Client is actively receiving messages.
+    Active,
+}
+
 pub struct CredentialControlServiceClient {
     conn: Connection,
 }
@@ -222,7 +302,8 @@ impl CredentialManagementClient for CredentialControlServiceClient {
         cred_request: CredentialRequest,
     ) -> Receiver<Result<CredentialResponse, creds_lib::model::Error>> {
         // TODO: Start here
-        self.proxy().await.unwrap().
+        // self.proxy().await.unwrap().
+        todo!()
     }
 
     async fn complete_auth(&self) -> Result<CredentialResponse, String> {
@@ -268,5 +349,37 @@ impl CredentialManagementClient for CredentialControlServiceClient {
 
     async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
         todo!()
+    }
+}
+
+pub trait CredentialRequestController {
+    fn request_credential(
+        &self,
+        request: CredentialRequest,
+    ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
+}
+
+pub struct CredentialRequestControllerClient {
+    pub initiator: Sender<(
+        CredentialRequest,
+        Sender<Result<CredentialResponse, CredentialServiceError>>,
+    )>,
+}
+
+impl CredentialRequestController for CredentialRequestControllerClient {
+    async fn request_credential(
+        &self,
+        request: CredentialRequest,
+    ) -> Result<CredentialResponse, WebAuthnError> {
+        let (tx, mut rx) = mpsc::channel(4);
+        // TODO: We need a PlatformError variant.
+        self.initiator.send((request, tx)).await.unwrap();
+        if let Some(msg) = rx.recv().await {
+            // TODO: Pass real WebAuthnError from credential service
+            msg.map_err(|_| WebAuthnError::NotAllowedError)
+        } else {
+            // if the sender was dropped, then the operation is cancelled.
+            Err(WebAuthnError::NotAllowedError)
+        }
     }
 }

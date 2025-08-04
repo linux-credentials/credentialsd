@@ -12,7 +12,9 @@ use crate::{
     credential_service::{
         hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
     },
-    dbus::{CredentialControlServiceClient, UiControlServiceClient},
+    dbus::{
+        CredentialControlServiceClient, CredentialRequestControllerClient, UiControlServiceClient,
+    },
 };
 
 #[tokio::main]
@@ -32,13 +34,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let dbus_client_conn = zbus::connection::Builder::session()?.build().await?;
     println!(" ✅");
 
-    print!("Starting D-Bus public client service...");
-    let service_name = "xyz.iinuwa.credentials.Credentials";
-    let path = "/xyz/iinuwa/credentials/Credentials";
-    let cred_mgr = CredentialControlServiceClient::new(dbus_client_conn.clone());
-    let _conn = dbus::start_service(service_name, path, cred_mgr).await?;
-    println!(" ✅");
-
     print!("Starting D-Bus UI -> Credential control service...");
     let ui_controller = UiControlServiceClient::new(dbus_client_conn);
     let credential_service = CredentialService::new(
@@ -46,11 +41,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
         InProcessUsbHandler {},
         ui_controller,
     );
-    let internal_service_name = "xyz.iinuwa.credentials.CredentialManagerInternal";
-    let internal_path = "/xyz/iinuwa/credentials/CredentialManagerInternal";
-    let _internal_service =
-        dbus::start_internal_service(internal_service_name, internal_path, credential_service)
-            .await?;
+    let (_flow_control_conn, initiator) =
+        dbus::start_flow_control_service(credential_service).await?;
+    println!(" ✅");
+
+    print!("Starting D-Bus public client service...");
+    let service_name = "xyz.iinuwa.credentials.Credentials";
+    let path = "/xyz/iinuwa/credentials/Credentials";
+    let initiator = CredentialRequestControllerClient { initiator };
+    let _gateway_conn = dbus::start_gateway(initiator).await?;
     println!(" ✅");
 
     println!("Waiting for messages...");

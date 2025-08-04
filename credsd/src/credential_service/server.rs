@@ -195,15 +195,21 @@ impl<
         &self,
         cred_request: CredentialRequest,
     ) -> Receiver<Result<CredentialResponse, creds_lib::model::Error>> {
-        self.svc.lock().await.init_request(&cred_request).await
+        // self.svc.lock().await.init_request(&cred_request).await
+        todo!()
     }
 
     async fn complete_auth(&self) -> Result<CredentialResponse, String> {
+        /*
         self.svc
             .lock()
             .await
             .complete_auth()
+            .await
             .ok_or("No credentials in credential service".to_string())
+        */
+
+        todo!()
     }
 
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, Box<dyn Error>> {
