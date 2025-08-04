@@ -79,4 +79,5 @@ pub use self::{
         SERVICE_NAME as FLOW_CONTROL_SERVICE_NAME, SERVICE_PATH as FLOW_CONTROL_SERVICE_PATH,
     },
     gateway::start_gateway,
+    ui_control::UiControlServiceClient,
 };
