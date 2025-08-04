@@ -294,3 +294,40 @@ impl Display for Error {
         }
     }
 }
+
+pub enum WebAuthnError {
+    /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
+    /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
+    /// Operations.
+    AbortError,
+
+    /// Either `residentKey` was set to required and no available authenticator
+    /// supported resident keys, or `userVerification` was set to required and no
+    /// available authenticator could perform user verification.
+    ConstraintError,
+
+    /// The authenticator used in the ceremony recognized an entry in
+    /// `excludeCredentials` after the user consented to registering a credential.
+    InvalidStateError,
+
+    /// No entry in `pubKeyCredParams` had a type property of `public-key`, or the
+    /// authenticator did not support any of the signature algorithms specified
+    /// in `pubKeyCredParams`.
+    NotSupportedError,
+
+    /// The effective domain was not a valid domain, or `rp.id` was not equal to
+    /// or a registrable domain suffix of the effective domain. In the latter
+    /// case, the client does not support related origin requests or the related
+    /// origins validation procedure failed.
+    SecurityError,
+
+    /// A catch-all error covering a wide range of possible reasons, including
+    /// common ones like the user canceling out of the ceremony. Some of these
+    /// causes are documented throughout this spec, while others are
+    /// client-specific.
+    NotAllowedError,
+
+    /// The options argument was not a valid `CredentialCreationOptions` value, or
+    /// the value of `user.id` was empty or was longer than 64 bytes.
+    TypeError,
+}
