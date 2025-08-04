@@ -3,7 +3,7 @@ project(
   'rust',
   version: '0.1.0',
   meson_version: '>= 1.5.0',
-  # license: 'MIT',
+  license: 'LGPL-3.0-only',
 )
 
 version = meson.project_version()
