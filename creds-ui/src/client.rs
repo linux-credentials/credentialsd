@@ -45,7 +45,7 @@ impl CredentialServiceClient for DbusCredentialClient {
     async fn get_usb_credential(&mut self) -> std::result::Result<(), ()> {
         self.proxy()
             .await?
-            .get_hybrid_credential()
+            .get_usb_credential()
             .await
             .inspect_err(|err| tracing::error!("Failed to start USB credential flow: {err}"))
             .map_err(|_| ())
