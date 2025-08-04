@@ -118,10 +118,10 @@ where
             .await
             .get_available_public_key_devices()
             .await
-            .map_err(|_| {
-                fdo::Error::Failed("Failed to get retrieve available devices".to_string())
-            })?;
-        Ok(devices.into_iter().map(Device::from).collect())
+            .map_err(|_| fdo::Error::Failed("Failed to retrieve available devices".to_string()))?;
+        let dbus_devices: Vec<Device> = devices.into_iter().map(Device::from).collect();
+
+        Ok(dbus_devices)
     }
 
     async fn get_hybrid_credential(
@@ -133,9 +133,8 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
-                .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
-                .await;
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
                 Ok(ref i) => i.signal_emitter(),
@@ -185,9 +184,8 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<InternalService<H, U, UC>>> = object_server
-                .interface("/xyz/iinuwa/credentials/CredentialManagerInternal")
-                .await;
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
                 Ok(ref i) => i.signal_emitter(),

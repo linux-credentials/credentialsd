@@ -1,12 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use zbus::{
-    fdo,
-    object_server::SignalEmitter,
-    proxy,
-    zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value},
-};
+use zbus::zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
 
 use crate::model::{Operation, ViewUpdate};
 
@@ -225,9 +220,10 @@ impl TryFrom<Value<'_>> for Credential {
     */
 
 #[derive(SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "a{sv}")]
 pub struct Device {
-    id: String,
-    transport: String,
+    pub id: String,
+    pub transport: String,
 }
 
 impl TryFrom<Value<'_>> for Device {
@@ -330,13 +326,17 @@ impl From<crate::model::HybridState> for HybridState {
         match value {
             crate::model::HybridState::Idle => HybridState::Idle(OwnedValue::from(false)),
             crate::model::HybridState::Started(qr_code) => {
-                HybridState::Idle(value_to_owned(Value::from(qr_code)))
+                HybridState::Started(value_to_owned(&Value::from(qr_code)))
             }
-            crate::model::HybridState::Connecting => HybridState::Idle(OwnedValue::from(false)),
-            crate::model::HybridState::Connected => HybridState::Idle(OwnedValue::from(false)),
-            crate::model::HybridState::Completed => HybridState::Idle(OwnedValue::from(false)),
-            crate::model::HybridState::UserCancelled => HybridState::Idle(OwnedValue::from(false)),
-            crate::model::HybridState::Failed => HybridState::Idle(OwnedValue::from(false)),
+            crate::model::HybridState::Connecting => {
+                HybridState::Connecting(OwnedValue::from(false))
+            }
+            crate::model::HybridState::Connected => HybridState::Connected(OwnedValue::from(false)),
+            crate::model::HybridState::Completed => HybridState::Completed(OwnedValue::from(false)),
+            crate::model::HybridState::UserCancelled => {
+                HybridState::UserCancelled(OwnedValue::from(false))
+            }
+            crate::model::HybridState::Failed => HybridState::Failed(OwnedValue::from(false)),
         }
     }
 }
@@ -358,10 +358,28 @@ impl TryFrom<HybridState> for crate::model::HybridState {
 impl TryFrom<Value<'_>> for HybridState {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zvariant::to_bytes(ctx, &value)?;
-        let obj: Self = encoded.deserialize()?.0;
-        Ok(obj)
+        let fields: HashMap<String, Value<'_>> = value.try_into()?;
+        let tag = fields
+            .get("type")
+            .ok_or(zvariant::Error::Message(
+                "Expected a dictionary with `type` key".to_string(),
+            ))
+            .and_then(|t| t.try_into())?;
+        let value = fields.get("value").ok_or(zvariant::Error::Message(
+            "Expected a dictionary with `value` key".to_string(),
+        ))?;
+        match tag {
+            "IDLE" => Ok(Self::Idle(value_to_owned(value))),
+            "STARTED" => Ok(Self::Started(value_to_owned(value))),
+            "CONNECTING" => Ok(Self::Connecting(value_to_owned(value))),
+            "CONNECTED" => Ok(Self::Connected(value_to_owned(value))),
+            "COMPLETED" => Ok(Self::Completed(value_to_owned(value))),
+            "USER_CANCELLED" => Ok(Self::Completed(value_to_owned(value))),
+            "FAILED" => Ok(Self::Failed(value_to_owned(value))),
+            _ => Err(zvariant::Error::Message(format!(
+                "Invalid HybridState type passed: {tag}"
+            ))),
+        }
     }
 }
 
@@ -370,31 +388,31 @@ impl From<HybridState> for Value<'_> {
         let mut fields = HashMap::new();
         match value {
             HybridState::Idle(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("IDLE")));
+                fields.insert("type", value_to_owned(&Value::from("IDLE")));
                 fields.insert("value", owned_value);
             }
             HybridState::Started(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("STARTED")));
+                fields.insert("type", value_to_owned(&Value::from("STARTED")));
                 fields.insert("value", owned_value);
             }
             HybridState::Connecting(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("CONNECTING")));
+                fields.insert("type", value_to_owned(&Value::from("CONNECTING")));
                 fields.insert("value", owned_value);
             }
             HybridState::Connected(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("CONNECTED")));
+                fields.insert("type", value_to_owned(&Value::from("CONNECTED")));
                 fields.insert("value", owned_value);
             }
             HybridState::Completed(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("COMPLETED")));
+                fields.insert("type", value_to_owned(&Value::from("COMPLETED")));
                 fields.insert("value", owned_value);
             }
             HybridState::UserCancelled(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("USER_CANCELLED")));
+                fields.insert("type", value_to_owned(&Value::from("USER_CANCELLED")));
                 fields.insert("value", owned_value);
             }
             HybridState::Failed(owned_value) => {
-                fields.insert("type", value_to_owned(Value::from("FAILED")));
+                fields.insert("type", value_to_owned(&Value::from("FAILED")));
                 fields.insert("value", owned_value);
             }
         }
@@ -561,10 +579,31 @@ impl From<crate::model::UsbState> for UsbState {
 impl TryFrom<Value<'_>> for UsbState {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zvariant::to_bytes(ctx, &value)?;
-        let obj: Self = encoded.deserialize()?.0;
-        Ok(obj)
+        let fields: HashMap<String, Value<'_>> = value.try_into()?;
+        let tag = fields
+            .get("type")
+            .ok_or(zvariant::Error::Message(
+                "Expected a dictionary with `type` key".to_string(),
+            ))
+            .and_then(|t| t.try_into())?;
+        let value = fields.get("value").ok_or(zvariant::Error::Message(
+            "Expected a dictionary with `value` key".to_string(),
+        ))?;
+        match tag {
+            "IDLE" => Ok(Self::Idle(value_to_owned(value))),
+            "WAITING" => Ok(Self::Waiting(value_to_owned(value))),
+            "SELECTING_DEVICE" => Ok(Self::SelectingDevice(value_to_owned(value))),
+            "CONNECTED" => Ok(Self::SelectingDevice(value_to_owned(value))),
+            "NEEDS_PIN" => Ok(Self::NeedsPin(value_to_owned(value))),
+            "NEEDS_USER_VERIFICATION" => Ok(Self::NeedsUserVerification(value_to_owned(value))),
+            "NEEDS_USER_PRESENCE" => Ok(Self::NeedsUserPresence(value_to_owned(value))),
+            "SELECT_CREDENTIAL" => Ok(Self::SelectCredential(value_to_owned(value))),
+            "COMPLETED" => Ok(Self::Completed(value_to_owned(value))),
+            "FAILED" => Ok(Self::Failed(value_to_owned(value))),
+            _ => Err(zvariant::Error::Message(format!(
+                "Invalid UsbState type passed: {tag}"
+            ))),
+        }
     }
 }
 
@@ -672,7 +711,7 @@ pub struct ViewRequest {
     pub operation: Operation,
 }
 
-fn value_to_owned(value: Value<'_>) -> OwnedValue {
+fn value_to_owned(value: &Value<'_>) -> OwnedValue {
     value
         .try_to_owned()
         .expect("non-file descriptor values to succeed")
