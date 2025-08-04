@@ -24,8 +24,8 @@
             "program": "${workspaceFolder}/build/creds-ui/src/creds-ui",
             "args": [],
             "env": {
-                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/xyz-iinuwa-credential-manager-portal-gtk/data",
                 "RUST_LOG": "creds_ui=debug,zbus::trace"
+                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/creds-ui/data",
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",

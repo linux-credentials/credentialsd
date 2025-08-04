@@ -25,7 +25,7 @@ use crate::credential_service::{
     usb::UsbHandler,
     CredentialManagementClient, CredentialService, UiController, UsbState,
 };
-
+pub const INTERFACE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl1";
 pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/FlowControl";
 pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl";
 
@@ -48,7 +48,7 @@ pub async fn start_flow_control_service<
         .name(SERVICE_NAME)?
         .serve_at(
             SERVICE_PATH,
-            InternalService {
+            FlowControlService {
                 signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
                 svc,
                 usb_pin_tx: Arc::new(AsyncMutex::new(None)),
@@ -68,7 +68,7 @@ pub async fn start_flow_control_service<
     Ok((conn, initiator_tx))
 }
 
-struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
     svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
     usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
@@ -87,7 +87,7 @@ struct InternalService<H: HybridHandler, U: UsbHandler, UC: UiController> {
         default_service = "xyz.iinuwa.credentials.FlowControl",
     )
 )]
-impl<H, U, UC> InternalService<H, U, UC>
+impl<H, U, UC> FlowControlService<H, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
@@ -291,11 +291,12 @@ impl CredentialControlServiceClient {
         Self { conn }
     }
 
-    async fn proxy(&self) -> zbus::Result<InternalServiceProxy> {
-        InternalServiceProxy::new(&self.conn).await
+    async fn proxy(&self) -> zbus::Result<FlowControlServiceProxy> {
+        FlowControlServiceProxy::new(&self.conn).await
     }
 }
 
+/*
 impl CredentialManagementClient for CredentialControlServiceClient {
     async fn init_request(
         &self,
@@ -351,6 +352,7 @@ impl CredentialManagementClient for CredentialControlServiceClient {
         todo!()
     }
 }
+    */
 
 pub trait CredentialRequestController {
     fn request_credential(

@@ -6,15 +6,13 @@ mod dbus;
 mod serde;
 mod webauthn;
 
-use std::{error::Error, sync::Arc};
+use std::error::Error;
 
 use crate::{
     credential_service::{
-        hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService, InProcessServer,
+        hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService,
     },
-    dbus::{
-        CredentialControlServiceClient, CredentialRequestControllerClient, UiControlServiceClient,
-    },
+    dbus::{CredentialRequestControllerClient, UiControlServiceClient},
 };
 
 #[tokio::main]
@@ -31,7 +29,10 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     print!("Connecting to D-Bus as client...\t");
-    let dbus_client_conn = zbus::connection::Builder::session()?.build().await?;
+    let dbus_client_conn = zbus::connection::Builder::session()?
+        .name("xyz.iinuwa.credentials.Credsd")?
+        .build()
+        .await?;
     println!(" ✅");
 
     print!("Starting D-Bus UI -> Credential control service...");
@@ -46,8 +47,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!(" ✅");
 
     print!("Starting D-Bus public client service...");
-    let service_name = "xyz.iinuwa.credentials.Credentials";
-    let path = "/xyz/iinuwa/credentials/Credentials";
     let initiator = CredentialRequestControllerClient { initiator };
     let _gateway_conn = dbus::start_gateway(initiator).await?;
     println!(" ✅");
