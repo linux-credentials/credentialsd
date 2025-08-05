@@ -26,3 +26,9 @@ pub use self::{
     gateway::start_gateway,
     ui_control::UiControlServiceClient,
 };
+
+#[cfg(test)]
+pub mod test {
+    pub use super::flow_control::test::DummyFlowServer;
+    pub use super::ui_control::test::DummyUiServer;
+}

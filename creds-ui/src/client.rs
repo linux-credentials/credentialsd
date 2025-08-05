@@ -1,5 +1,5 @@
 use async_std::stream::Stream;
-use creds_lib::client::CredentialServiceClient;
+use creds_lib::client::FlowController;
 use futures_lite::StreamExt;
 use zbus::{Connection, zvariant};
 
@@ -20,7 +20,7 @@ impl DbusCredentialClient {
     }
 }
 
-impl CredentialServiceClient for DbusCredentialClient {
+impl FlowController for DbusCredentialClient {
     async fn get_available_public_key_devices(
         &self,
     ) -> std::result::Result<Vec<creds_lib::model::Device>, ()> {

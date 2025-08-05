@@ -319,3 +319,360 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             .and_then(|msg| msg.map_err(|_| WebAuthnError::NotAllowedError))
     }
 }
+
+#[cfg(test)]
+pub mod test {
+    use std::{
+        error::Error,
+        fmt::Debug,
+        pin::Pin,
+        sync::{Arc, Mutex},
+    };
+
+    use creds_lib::{
+        client::FlowController,
+        model::{BackgroundEvent, Device},
+    };
+    use futures_lite::{Stream, StreamExt};
+    use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+
+    use crate::credential_service::{
+        hybrid::{HybridHandler, HybridState},
+        usb::UsbHandler,
+        CredentialService, UiController, UsbState,
+    };
+
+    #[allow(clippy::enum_variant_names)]
+    #[derive(Debug)]
+    pub enum DummyFlowRequest {
+        EnterClientPin(String),
+        GetDevices,
+        GetHybridCredential,
+        GetUsbCredential,
+        InitStream,
+    }
+
+    // Clippy complains that these variant names have the same prefix, but that's
+    // intentional for now.
+    #[allow(clippy::enum_variant_names)]
+    pub enum DummyFlowResponse {
+        EnterClientPin(Result<(), ()>),
+        GetDevices(Vec<Device>),
+        GetHybridCredential,
+        GetUsbCredential,
+        InitStream(Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>),
+    }
+
+    impl Debug for DummyFlowResponse {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
+                Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
+                Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
+                Self::GetUsbCredential => f.debug_tuple("GetUsbCredential").finish(),
+                Self::InitStream(_) => f
+                    .debug_tuple("InitStream")
+                    .field(&String::from("<BackgroundEventStream>"))
+                    .finish(),
+            }
+        }
+    }
+    /// Represents a client for the UI to call methods on the credential service.
+    #[derive(Debug)]
+    pub struct DummyFlowClient {
+        tx: mpsc::Sender<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
+    }
+
+    impl DummyFlowClient {
+        async fn send(&self, request: DummyFlowRequest) -> Result<DummyFlowResponse, ()> {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.tx.send((request, response_tx)).await.unwrap();
+            match response_rx.await {
+                Ok(response) => Ok(response),
+                Err(err) => {
+                    tracing::error!("Failed to retrieve response from server: {:?}", err);
+                    Err(())
+                }
+            }
+        }
+    }
+
+    impl FlowController for DummyFlowClient {
+        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+            let response = self.send(DummyFlowRequest::GetDevices).await.unwrap();
+            if let DummyFlowResponse::GetDevices(devices) = response {
+                Ok(devices)
+            } else {
+                Err(())
+            }
+        }
+
+        async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::GetHybridCredential) =
+                self.send(DummyFlowRequest::GetHybridCredential).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        async fn get_usb_credential(&mut self) -> Result<(), ()> {
+            let response = self.send(DummyFlowRequest::GetUsbCredential).await.unwrap();
+            if let DummyFlowResponse::GetUsbCredential = response {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        async fn initiate_event_stream(
+            &mut self,
+        ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
+            if let Ok(DummyFlowResponse::InitStream(Ok(stream))) =
+                self.send(DummyFlowRequest::InitStream).await
+            {
+                Ok(stream)
+            } else {
+                Err(())
+            }
+        }
+
+        async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::EnterClientPin(Ok(()))) =
+                self.send(DummyFlowRequest::EnterClientPin(pin)).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+            todo!();
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct DummyFlowServer<H, U, UC>
+    where
+        H: HybridHandler + Debug + Send + Sync,
+        U: UsbHandler + Debug + Send + Sync,
+        UC: UiController + Debug + Send + Sync,
+    {
+        rx: mpsc::Receiver<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
+        svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+        bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
+        usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
+        usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+        hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+    }
+
+    impl<
+            H: HybridHandler + Debug + Send + Sync,
+            U: UsbHandler + Debug + Send + Sync,
+            UC: UiController + Debug + Send + Sync,
+        > DummyFlowServer<H, U, UC>
+    {
+        /*
+        async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.tx
+                .send((InProcessServerRequest::Management(request), response_tx))
+                .await
+                .unwrap();
+            match response_rx.await {
+                Ok(InProcessServerResponse::Management(response)) => Ok(response),
+                Ok(_) => {
+                    tracing::error!("invalid response received from server");
+                    Err(())
+                }
+                Err(err) => {
+                    tracing::error!("Failed to retrieve response from server: {:?}", err);
+                    Err(())
+                }
+            }
+        }
+        */
+        pub fn new(svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>) -> (Self, DummyFlowClient) {
+            let (request_tx, request_rx) = mpsc::channel(32);
+            let server = Self {
+                rx: request_rx,
+                svc,
+                bg_event_tx: None,
+                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+                usb_event_forwarder_task: Arc::new(Mutex::new(None)),
+                hybrid_event_forwarder_task: Arc::new(Mutex::new(None)),
+            };
+            let client = DummyFlowClient { tx: request_tx };
+            (server, client)
+        }
+
+        pub async fn run(&mut self) {
+            while let Some((request, tx)) = self.rx.recv().await {
+                tracing::debug!(target: "DummyFlowServer", "Received message: {request:?}");
+                let response = match request {
+                    DummyFlowRequest::EnterClientPin(pin) => {
+                        let rsp = self.enter_client_pin(pin).await;
+                        DummyFlowResponse::EnterClientPin(rsp)
+                    }
+                    DummyFlowRequest::GetDevices => {
+                        let rsp = self.get_available_public_key_devices().await.unwrap();
+                        DummyFlowResponse::GetDevices(rsp)
+                    }
+                    DummyFlowRequest::GetHybridCredential => {
+                        let rsp = self.get_hybrid_credential().await;
+                        DummyFlowResponse::GetHybridCredential
+                    }
+
+                    DummyFlowRequest::GetUsbCredential => {
+                        let rsp = self.get_usb_credential().await;
+                        DummyFlowResponse::GetUsbCredential
+                    }
+                    DummyFlowRequest::InitStream => {
+                        let rsp = self.initiate_event_stream().await;
+                        DummyFlowResponse::InitStream(rsp)
+                    }
+                };
+                tx.send(response).unwrap()
+            }
+        }
+
+        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, Box<dyn Error>> {
+            tracing::debug!(target: "DummyFlowServer", "get_available_public_key_devices()");
+            let devices = self
+                .svc
+                .lock()
+                .await
+                .get_available_public_key_devices()
+                .await
+                .map_err(|_| "Failed to get public key devices".to_string())?;
+            Ok(devices)
+        }
+
+        async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
+            let svc = self.svc.lock().await;
+            let mut stream = svc.get_hybrid_credential();
+            tracing::debug!(target: "DummyFlowServer", "Subscribing to hybrid credential state changes");
+            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
+                let task = tokio::spawn(async move {
+                    while let Some(hybrid_state) = stream.next().await {
+                        tracing::debug!(target: "DummyFlowServer", "Received hybrid state change: {hybrid_state:?}");
+                        if let Some(tx) = tx_weak.upgrade() {
+                            match hybrid_state {
+                                HybridState::Completed | HybridState::Failed => {
+                                    tx.send(BackgroundEvent::HybridQrStateChanged(
+                                        hybrid_state.into(),
+                                    ))
+                                    .await
+                                    .unwrap();
+                                    break;
+                                }
+                                _ => tx
+                                    .send(BackgroundEvent::HybridQrStateChanged(
+                                        hybrid_state.into(),
+                                    ))
+                                    .await
+                                    .unwrap(),
+                            };
+                        }
+                    }
+                })
+                .abort_handle();
+                if let Some(prev_task) = self
+                    .hybrid_event_forwarder_task
+                    .lock()
+                    .unwrap()
+                    .replace(task)
+                {
+                    prev_task.abort();
+                }
+            } else {
+                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up hybrid state stream; some messages may be missed.");
+            }
+            Ok(())
+        }
+
+        async fn get_usb_credential(&mut self) -> Result<(), ()> {
+            let mut stream = self.svc.lock().await.get_usb_credential();
+            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
+                let usb_pin_tx = self.usb_pin_tx.clone();
+                let task = tokio::spawn(async move {
+                    while let Some(state) = stream.next().await {
+                        if let Some(tx) = tx_weak.upgrade() {
+                            if tx
+                                .send(BackgroundEvent::UsbStateChanged(state.clone().into()))
+                                .await
+                                .is_err()
+                            {
+                                tracing::debug!("Closing USB background event forwarder");
+                                break;
+                            }
+                            match state {
+                                UsbState::NeedsPin { pin_tx, .. } => {
+                                    let mut usb_pin_tx = usb_pin_tx.lock().await;
+                                    let _ = usb_pin_tx.insert(pin_tx);
+                                }
+                                UsbState::Completed | UsbState::Failed(_) => {
+                                    break;
+                                }
+                                _ => {}
+                            };
+                        }
+                    }
+                })
+                .abort_handle();
+                if let Some(prev_task) = self.usb_event_forwarder_task.lock().unwrap().replace(task)
+                {
+                    prev_task.abort();
+                }
+            } else {
+                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up USB state stream; some messages may be missed.");
+            }
+            Ok(())
+        }
+
+        async fn initiate_event_stream(
+            &mut self,
+        ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
+            let (tx, mut rx) = mpsc::channel(32);
+            self.bg_event_tx = Some(tx);
+            Ok(Box::pin(async_stream::stream! {
+                // TODO: we need to add a shutdown event that tells this stream
+                // to shut down when completed, failed or cancelled
+                while let Some(bg_event) = rx.recv().await {
+                    yield bg_event
+                }
+                tracing::debug!("event stream ended");
+            }))
+        }
+
+        async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+                pin_tx.send(pin).await.unwrap();
+            }
+            Ok(())
+        }
+
+        async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+            todo!();
+        }
+    }
+
+    impl<
+            H: HybridHandler + Debug + Send + Sync,
+            U: UsbHandler + Debug + Send + Sync,
+            UC: UiController + Debug + Send + Sync,
+        > Drop for DummyFlowServer<H, U, UC>
+    {
+        fn drop(&mut self) {
+            if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
+                task.abort();
+            }
+
+            if let Some(task) = self.hybrid_event_forwarder_task.lock().unwrap().take() {
+                task.abort();
+            }
+        }
+    }
+}

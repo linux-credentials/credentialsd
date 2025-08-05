@@ -270,6 +270,15 @@ pub(super) mod test {
         stream: DummyHybridStateStream,
     }
 
+    impl DummyHybridHandler {
+        #[cfg(test)]
+        pub fn new(states: Vec<HybridStateInternal>) -> Self {
+            Self {
+                stream: DummyHybridStateStream { states },
+            }
+        }
+    }
+
     impl Default for DummyHybridHandler {
         fn default() -> Self {
             Self {

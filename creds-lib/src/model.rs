@@ -260,6 +260,7 @@ pub enum UsbState {
     Failed(Error),
 }
 
+#[derive(Debug)]
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
     HybridQrStateChanged(HybridState),

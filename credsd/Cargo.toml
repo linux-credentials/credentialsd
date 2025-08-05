@@ -27,3 +27,4 @@ zbus = { version = "5.9.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 gio = "0.21.0"
+zbus = { version = "5.9.0", default-features = false, features = ["blocking-api", "tokio"] }
