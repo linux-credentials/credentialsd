@@ -14,18 +14,14 @@ use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
-use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
-    Mutex as AsyncMutex,
-};
+use tokio::sync::oneshot::Sender;
 
 use creds_lib::{
-    client::CredentialServiceClient,
     model::{
         CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
         Transport,
     },
-    server::{CreatePublicKeyCredentialRequest, ViewRequest},
+    server::ViewRequest,
 };
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
@@ -33,22 +29,21 @@ use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
 use hybrid::{HybridHandler, HybridState, HybridStateInternal};
 use usb::{UsbHandler, UsbStateInternal};
 pub use {
-    server::{CredentialManagementClient, InProcessServer, UiController},
+    server::{CredentialManagementClient, UiController},
     usb::UsbState,
 };
+
+type RequestContext = (
+    CredentialRequest,
+    Sender<Result<CredentialResponse, CredentialServiceError>>,
+);
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     devices: Vec<Device>,
 
-    cred_request: Mutex<
-        Option<(
-            CredentialRequest,
-            Sender<Result<CredentialResponse, CredentialServiceError>>,
-        )>,
-    >,
-    // Place to store data to be returned to the caller
-    cred_response: Arc<Mutex<Option<CredentialResponse>>>,
+    /// Current request and channel to respond to caller.
+    ctx: Arc<Mutex<Option<RequestContext>>>,
 
     hybrid_handler: H,
     usb_handler: U,
@@ -73,8 +68,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         Self {
             devices,
 
-            cred_request: Mutex::new(None),
-            cred_response: Arc::new(Mutex::new(None)),
+            ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler,
             usb_handler,
@@ -88,25 +82,18 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         request: &CredentialRequest,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
-        // let (tx, rx) = mpsc::channel(1);
-        let res = {
-            let mut cred_request = self.cred_request.lock().unwrap();
+        {
+            let mut cred_request = self.ctx.lock().unwrap();
             if cred_request.is_some() {
-                drop(cred_request);
-                false
+                tx.send(Err(CredentialServiceError::Internal(
+                    "Already a request in progress.".to_string(),
+                )))
+                .expect("Send to local receiver to succeed");
+                return;
             } else {
-                _ = cred_request.insert((request.clone(), tx.clone()));
-                true
+                _ = cred_request.insert((request.clone(), tx));
             }
         };
-        if !res {
-            tx.send(Err(CredentialServiceError::Internal(
-                "Already a request in progress.".to_string(),
-            )))
-            .await
-            .expect("Send to local receiver to succeed");
-            return;
-        }
         let operation = match &request {
             CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
             CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
@@ -120,9 +107,10 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             .map_err(|err| err.to_string());
         if let Err(err) = launch_ui_response {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            _ = self.cred_request.lock().unwrap().take();
+            _ = self.ctx.lock().unwrap().take();
             let err = Err(CredentialServiceError::Internal(err));
-            tx.send(err).await;
+            let (_, tx) = self.ctx.lock().unwrap().take().unwrap();
+            tx.send(err);
         }
     }
 
@@ -133,32 +121,39 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     pub fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let guard = self.cred_request.lock().unwrap();
-        let cred_request = guard.clone().unwrap();
-        let stream = self.hybrid_handler.start(&cred_request.0);
-        let cred_response = self.cred_response.clone();
-        Box::pin(HybridStateStream {
-            inner: stream,
-            cred_response,
-        })
+        let guard = self.ctx.lock().unwrap();
+        if let Some((ref cred_request, _)) = *guard {
+            let stream = self.hybrid_handler.start(&cred_request);
+            let ctx = self.ctx.clone();
+            Box::pin(HybridStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start hybrid credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
     }
 
     pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
-        let guard = self.cred_request.lock().unwrap();
-        let cred_request = guard.clone().unwrap();
-        let stream = self.usb_handler.start(&cred_request.0);
-        Box::pin(UsbStateStream {
-            inner: stream,
-            cred_response: self.cred_response.clone(),
-        })
+        let guard = self.ctx.lock().unwrap();
+        if let Some((ref cred_request, _)) = *guard {
+            let stream = self.usb_handler.start(&cred_request);
+            let ctx = self.ctx.clone();
+            Box::pin(UsbStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start hybrid credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
     }
 
     pub async fn complete_auth(
         &self,
         response: Result<CredentialResponse, CredentialServiceError>,
     ) -> () {
-        if let Some((_request, responder)) = self.cred_request.lock().unwrap().take() {
-            if responder.send(response).await.is_err() {
+        if let Some((_request, responder)) = self.ctx.lock().unwrap().take() {
+            if responder.send(response).is_err() {
                 tracing::error!("Failed to send response to back to caller");
             };
         } else {
@@ -169,7 +164,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
 
 pub struct HybridStateStream<H> {
     inner: H,
-    cred_response: Arc<Mutex<Option<CredentialResponse>>>,
+    ctx: Arc<Mutex<Option<RequestContext>>>,
 }
 
 impl<H> Stream for HybridStateStream<H>
@@ -182,7 +177,7 @@ where
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let cred_response = &self.cred_response.clone();
+        let ctx = &self.ctx.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
@@ -206,8 +201,7 @@ where
                             )
                         }
                     };
-                    let mut cred_response = cred_response.lock().unwrap();
-                    cred_response.replace(response);
+                    complete_request(ctx, response.clone());
                 }
                 Poll::Ready(Some(state.into()))
             }
@@ -218,7 +212,7 @@ where
 
 struct UsbStateStream<H> {
     inner: H,
-    cred_response: Arc<Mutex<Option<CredentialResponse>>>,
+    ctx: Arc<Mutex<Option<RequestContext>>>,
 }
 
 impl<H> Stream for UsbStateStream<H>
@@ -231,18 +225,29 @@ where
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let cred_response = &self.cred_response.clone();
+        let ctx = &self.ctx.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(UsbEvent { state })) => {
                 if let UsbStateInternal::Completed(response) = &state {
-                    let mut cred_response = cred_response.lock().unwrap();
-                    cred_response.replace(response.clone());
+                    complete_request(ctx, response.clone());
                 }
                 Poll::Ready(Some(state.into()))
             }
             Poll::Ready(None) => Poll::Ready(None),
         }
+    }
+}
+
+fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialResponse) {
+    if let Some((_, responder)) = ctx.lock().unwrap().take() {
+        if responder.send(Ok(response)).is_err() {
+            tracing::error!(
+                "Attempted to send credential response to caller, but channel was closed."
+            );
+        }
+    } else {
+        tracing::error!("Tried to consume context to respond to caller, but none was found.")
     }
 }
 

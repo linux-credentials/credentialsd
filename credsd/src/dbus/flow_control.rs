@@ -6,6 +6,7 @@ use creds_lib::model::{
 };
 use creds_lib::server::{BackgroundEvent, Device};
 use futures_lite::{Stream, StreamExt};
+use tokio::sync::oneshot;
 use tokio::{
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -39,7 +40,7 @@ pub async fn start_flow_control_service<
     Connection,
     Sender<(
         CredentialRequest,
-        Sender<Result<CredentialResponse, CredentialServiceError>>,
+        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
     let svc = Arc::new(AsyncMutex::new(credential_service));
@@ -372,7 +373,7 @@ pub trait CredentialRequestController {
 pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
-        Sender<Result<CredentialResponse, CredentialServiceError>>,
+        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }
 
@@ -381,15 +382,14 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         &self,
         request: CredentialRequest,
     ) -> Result<CredentialResponse, WebAuthnError> {
-        let (tx, mut rx) = mpsc::channel(4);
+        let (tx, rx) = oneshot::channel();
         // TODO: We need a PlatformError variant.
         self.initiator.send((request, tx)).await.unwrap();
-        if let Some(msg) = rx.recv().await {
-            // TODO: Pass real WebAuthnError from credential service
-            msg.map_err(|_| WebAuthnError::NotAllowedError)
-        } else {
-            // if the sender was dropped, then the operation is cancelled.
-            Err(WebAuthnError::NotAllowedError)
-        }
+        rx.await
+            .map_err(|_| {
+                tracing::error!("Credential response channel closed prematurely");
+                WebAuthnError::NotAllowedError
+            })
+            .and_then(|msg| msg.map_err(|_| WebAuthnError::NotAllowedError))
     }
 }

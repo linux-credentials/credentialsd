@@ -526,7 +526,16 @@ impl TryFrom<UsbState> for crate::model::UsbState {
                 .map(|creds| Self::SelectCredential { creds }),
             UsbState::Completed(_) => Ok(Self::Completed),
             UsbState::Failed(value) => {
-                ServiceError::try_from(Value::<'_>::from(value)).map(|err| Self::Failed(err.into()))
+                let error_code: String = Value::<'_>::from(value).try_into()?;
+                Ok(Self::Failed(
+                    match error_code.as_ref() {
+                        "AuthenticatorError" => ServiceError::AuthenticatorError,
+                        "NoCredentials" => ServiceError::NoCredentials,
+                        "PinAttemptsExhausted" => ServiceError::PinAttemptsExhausted,
+                        _ => ServiceError::Internal,
+                    }
+                    .into(),
+                ))
             }
         }?;
         Ok(ret)
