@@ -9,14 +9,16 @@
 This project uses Meson and Ninja.
 
 Package requirements:
- - GTK4
- - gettext
- - libdbus-1
- - libssl/openssl
- - libudev
- - desktop-file-utils
+
+- GTK4
+- gettext
+- libdbus-1
+- libssl/openssl
+- libudev
+- desktop-file-utils
 
 For example, on Ubuntu:
+
 ```shell
 sudo apt update && sudo apt install \
   # Build dependencies
@@ -42,9 +44,10 @@ ninja -C build
 
 ```shell
 # Run the server, with debug logging enabled
-export GSETTINGS_SCHEMA_DIR=build/xyz-iinuwa-credential-manager-portal-gtk/data
-export RUST_LOG=xyz_iinuwa_credential_manager_portal_gtk=debug
-./build/xyz-iinuwa-credential-manager-portal-gtk/src/xyz-iinuwa-credential-manager-portal-gtk
+export GSETTINGS_SCHEMA_DIR=build/creds-ui/data
+export RUST_LOG=credsd=debug,creds_ui=debug
+./build/credsd/target/debug/credsd &
+./build/creds-ui/target/debug/creds-ui
 ```
 
 ### Clients
@@ -58,7 +61,6 @@ cd demo_client/
 ```
 
 There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [webext/README.md]().
-
 
 ## Goals
 
@@ -77,28 +79,30 @@ Some high-level goals:
   etc.) to hook into
 
 Some nice-to-haves:
+
 - Design a specification for a platform authenticator. I'm not sure whether this
-needs to be specified, or whether it could be considered and implemented as a
-first-party credential provider.
+  needs to be specified, or whether it could be considered and implemented as a
+  first-party credential provider.
 
 Some non-goals:
 
-- Fully implement the proposed specification. This repo is focused on defining
-the D-Bus API for clients and portal frontend/backend implementations to use.
-Though I would love to help implement, I don't think I will have the time to
-fully implement the features specced by the API, so I welcome collaboration
-from others to help implement. For now, any implementation in this repository
-is for reference purposes.
+- Fully integrate with any specific desktop environment. Each desktop
+  environment (GNOME, KDE, etc.) has its own UI and UX conventions, as well as
+  system configuration methods (e.g., GNOME Settings), which this API will need to integrate with.
+  Because of the variation, we intend to leave integration with these other
+  components to developers more familiar with each of the desktop environments.
+  For now, we are using bare GTK to build a UI for testing, but any UI
+  implementation in this repository is for reference purposes. If anyone is willing to do some of this integration work, feel free to contact us!
 
 - Create a full-featured password manager. Features like Password syncing,
-password generation, rotation, etc. is not part of this specficiation. Other
-password manager projects should be able to use this to make their credentials
-available to the user uniformly, though.
+  password generation, rotation, etc. is not part of this specficiation. Other
+  password manager projects should be able to use this to make their credentials
+  available to the user uniformly, though.
 
-- BSD support. While I'd love to help out all open desktop environments, I don't
-know enough about any BSD to make it useful for them. Hopefully, the design
-process is transparent enough that someone else could design something that
-works for BSDs.
+- BSD support. While we'd love to help out all open desktop environments, we don't
+  know enough about any BSD to make it useful for them. Hopefully, the design
+  process is transparent enough that someone else could design something that
+  works for BSDs.
 
 ## Current Work
 
@@ -106,8 +110,8 @@ works for BSDs.
 - March 2025: Integrated libwebauthn to support USB authenticators.
 - May 2024: Met with developers in GNOME and systemd to design internals for
   securely storing device credentials.
-- Jan 2024: I've defined the [scenarios](doc/scenarios.md) that I expect this
-  API to cover. I am working on extracting [API methods](doc/api.md) required to
+- Jan 2024: Defined the [scenarios](doc/scenarios.md) that we expect this
+  API to cover. We are working on extracting [API methods](doc/api.md) required to
   implement the interactions between the client, portal frontend, portal backend,
   machine and mobile devices. Once that is done, I intend to convert the API into
   a [portal spec](doc/design-doc.md), making it fit normal D-Bus/portal patterns.
@@ -141,9 +145,8 @@ Alternatively, lock out the credential based on incorrect attempts.
 ![](images/security-key-3.png)
 ![](images/end.png)
 
-
-
 ## Related projects:
+
 - https://github.com/linux-credentials/libwebauthn (previously https://github.com/AlfioEmanueleFresta/xdg-credentials-portal)
 - authenticator-rs
 - webauthn-rs
