@@ -37,7 +37,7 @@ jobs:
         run: meson test --interactive
         working-directory: build/
       - name: Check clippy recommendations
-        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path xyz-iinuwa-credential-manager-portal-gtk/Cargo.toml --target-dir build/xyz-iinuwa-credential-manager-portal-gtk/src
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path credsd/Cargo.toml --target-dir build/credsd/target/release
       - name: Check formatting
         run: cargo fmt --check
-        working-directory: xyz-iinuwa-credential-manager-portal-gtk
+        working-directory: credsd
