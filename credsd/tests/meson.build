@@ -5,7 +5,7 @@ test_config.set_quoted(
 )
 test_config.set(
   'DBUS_EXECUTABLE',
-  meson.project_build_root() / backend_build_dir / backend_executable_name,
+  meson.project_build_root() / backend_build_dir / 'target' / rust_target / backend_executable_name,
 )
 configure_file(
   input: 'config' / 'mod.rs.in',
@@ -22,8 +22,8 @@ run_command(
 )
 
 configure_file(
-  input: 'services' / 'xyz.iinuwa.CredentialManagerUi.service.in',
-  output: 'xyz.iinuwa.CredentialManagerUi.service',
+  input: 'services' / 'xyz.iinuwa.credentials.Credentials.service.in',
+  output: 'xyz.iinuwa.credentials.Credentials.service',
   configuration: test_config,
 )
 

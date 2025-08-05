@@ -1,4 +1,4 @@
 pub const SERVICE_DIR: &'static str = @SERVICE_DIR@;
-pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.CredentialManagerUi";
-pub const PATH: &'static str = "/xyz/iinuwa/credentials/CredentialManagerUi";
-pub const INTERFACE: &'static str = "xyz.iinuwa.credentials.CredentialManagerUi1";
+pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials";
+pub const PATH: &'static str = "/xyz/iinuwa/credentials/Credentials";
+pub const INTERFACE: &'static str = "xyz.iinuwa.credentials.Credentials1";

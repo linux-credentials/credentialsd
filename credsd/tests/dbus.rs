@@ -20,7 +20,7 @@ fn test_client_capabilities() {
     let capabilities = HashMap::from([
         ("conditionalCreate", false),
         ("conditionalGet", false),
-        ("hybridTransport", false),
+        ("hybridTransport", true),
         ("passkeyPlatformAuthenticator", false),
         ("userVerifyingPlatformAuthenticator", false),
         ("relatedOrigins", false),
