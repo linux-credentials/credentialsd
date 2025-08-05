@@ -1,32 +1,19 @@
-//! This module contains types used for serializing data to and from D-Bus method calls.
+//! This module contains types and methods used for serializing data to and from D-Bus method calls.
 //!
 //! Types shared between components within this service belong in creds_lib::model.
 
 use std::{collections::HashMap, time::Duration};
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
-use zbus::{
-    fdo,
-    zvariant::{self, DeserializeDict, OwnedValue, SerializeDict, Type, Value, LE},
-};
+use zbus::fdo;
 
 use creds_lib::{
-    model::{
-        CredentialType, GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation,
-        ViewUpdate,
-    },
+    model::{GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation},
     server::{
         CreateCredentialRequest, CreatePublicKeyCredentialResponse, GetCredentialRequest,
         GetPublicKeyCredentialResponse,
     },
 };
-
-pub(super) struct ViewRequest {
-    pub(super) operation: Operation,
-    pub(super) signal: oneshot::Sender<()>,
-}
 
 use crate::webauthn::{
     self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,

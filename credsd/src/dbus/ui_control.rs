@@ -1,4 +1,4 @@
-//! These methods are called by the credential service to control the UI.
+//! These methods are called by the flow controller to launch the trusted UI.
 
 use std::error::Error;
 

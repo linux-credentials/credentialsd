@@ -6,10 +6,7 @@ use std::{sync::Arc, thread::JoinHandle};
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
 use creds_lib::server::ViewRequest;
-use creds_lib::{
-    client::CredentialServiceClient,
-    model::{Operation, ViewUpdate},
-};
+use creds_lib::{client::CredentialServiceClient, model::ViewUpdate};
 
 use view_model::ViewEvent;
 
@@ -42,39 +39,4 @@ fn run_gui<C: CredentialServiceClient + Send + Sync + 'static>(
     view_model::gtk::start_gtk_app(tx_event, rx_update);
 
     async_std::task::block_on(event_loop.cancel());
-}
-
-trait GuiClient {
-    /// Mark the GUI as ready to receive events from credential service.
-    /// Returns a queue of updates for updating the GUI state.
-    async fn initiate_event_stream(&self) -> Result<Receiver<ViewUpdate>, ()>;
-
-    /// Select a authenticator or transport to interact with a credential.
-    async fn select_device(&self, device_id: String) -> Result<(), ()>;
-
-    /// Send the client PIN to an authenticator.
-    async fn enter_client_pin(&self, pin: String) -> Result<(), ()>;
-
-    /// Confirm user's credential selection when an authenticator returns multiple credentials.
-    async fn select_credential(&self, credential_id: String) -> Result<(), ()>;
-}
-
-struct InProcessGuiClient {}
-
-impl GuiClient for InProcessGuiClient {
-    async fn initiate_event_stream(&self) -> Result<Receiver<ViewUpdate>, ()> {
-        todo!()
-    }
-
-    async fn select_device(&self, device_id: String) -> Result<(), ()> {
-        todo!()
-    }
-
-    async fn enter_client_pin(&self, pin: String) -> Result<(), ()> {
-        todo!()
-    }
-
-    async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
-        todo!()
-    }
 }

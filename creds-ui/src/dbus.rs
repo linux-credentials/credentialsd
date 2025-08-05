@@ -27,7 +27,6 @@ pub trait FlowControlService {
 
 pub struct UiControlService {
     pub request_tx: Sender<crate::dbus::ViewRequest>,
-    // pub update_tx: Sender<BackgroundEvent>,
 }
 
 /// These methods are called by the credential service to control the UI.
@@ -40,5 +39,4 @@ impl UiControlService {
             .await
             .map_err(|_| fdo::Error::Failed("UI failed to launch".to_string()))
     }
-    // fn send_state_changed(&self, event: BackgroundEvent) {}
 }

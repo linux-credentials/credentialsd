@@ -10,7 +10,6 @@ use creds_lib::{
         GetCredentialResponse,
     },
 };
-use serde::Deserialize;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{fdo, interface, Connection, DBusError};
 
@@ -20,7 +19,6 @@ use crate::dbus::{
     CredentialRequestController,
 };
 
-pub const INTERFACE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials1";
 pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials";
 pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/Credentials";
 
@@ -53,7 +51,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
-        let (origin, is_same_origin, _top_origin) = check_origin(
+        let (_origin, is_same_origin, _top_origin) = check_origin(
             request.origin.as_ref().map(|s| s.as_str()),
             request.is_same_origin,
         )
@@ -109,7 +107,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
-        let (origin, is_same_origin, _top_origin) = check_origin(
+        let (_origin, is_same_origin, _top_origin) = check_origin(
             request.origin.as_ref().map(|s| s.as_str()),
             request.is_same_origin,
         )

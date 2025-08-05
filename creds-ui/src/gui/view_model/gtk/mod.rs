@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use gettextrs::{gettext, LocaleCategory};
+use gettextrs::{LocaleCategory, gettext};
 use glib::clone;
 use gtk::gdk::Texture;
 use gtk::gdk_pixbuf::Pixbuf;
@@ -145,8 +145,11 @@ impl ViewModel {
                                 }
                                 ViewUpdate::UsbNeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
-                                        Some(1) => "Touch your device again. 1 attempt remaining.".to_string(),
-                                        Some(attempts_left) => format!("Touch your device again. {attempts_left} attempts remaining."),
+                                        Some(1) => "Touch your device again. 1 attempt remaining."
+                                            .to_string(),
+                                        Some(attempts_left) => format!(
+                                            "Touch your device again. {attempts_left} attempts remaining."
+                                        ),
                                         None => "Touch your device.".to_string(),
                                     };
                                     view_model.set_prompt(prompt);

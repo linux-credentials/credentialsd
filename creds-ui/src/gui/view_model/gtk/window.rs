@@ -3,14 +3,14 @@ use std::cell::RefCell;
 use glib::Properties;
 use gtk::gdk::Texture;
 use gtk::subclass::prelude::*;
+use gtk::{Picture, prelude::*};
 use gtk::{
     gio,
     glib::{self, clone},
 };
-use gtk::{prelude::*, Picture};
 
 use super::application::ExampleApplication;
-use super::{device::DeviceObject, ViewModel};
+use super::{ViewModel, device::DeviceObject};
 use crate::config::{APP_ID, PROFILE};
 use crate::gui::view_model::Transport;
 

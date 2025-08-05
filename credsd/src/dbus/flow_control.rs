@@ -1,15 +1,18 @@
+//! This module implements the service to allow the user to control the flow of
+//! the credential request through the trusted UI.
+
 use std::future::Future;
-use std::{collections::VecDeque, error::Error, fmt::Debug, pin::Pin, sync::Arc};
+use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use creds_lib::model::{
     CredentialRequest, CredentialResponse, Error as CredentialServiceError, WebAuthnError,
 };
 use creds_lib::server::{BackgroundEvent, Device};
-use futures_lite::{Stream, StreamExt};
+use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
     sync::{
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Sender},
         Mutex as AsyncMutex,
     },
     task::AbortHandle,
@@ -24,9 +27,8 @@ use zbus::{
 use crate::credential_service::{
     hybrid::{HybridHandler, HybridState},
     usb::UsbHandler,
-    CredentialManagementClient, CredentialService, UiController, UsbState,
+    CredentialService, UiController, UsbState,
 };
-pub const INTERFACE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl1";
 pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/FlowControl";
 pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl";
 
@@ -236,10 +238,6 @@ where
         Ok(())
     }
 
-    async fn select_device(&self, device_id: String) -> fdo::Result<()> {
-        todo!()
-    }
-
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
         if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
@@ -290,78 +288,6 @@ enum SignalState {
     /// Client is actively receiving messages.
     Active,
 }
-
-pub struct CredentialControlServiceClient {
-    conn: Connection,
-}
-
-impl CredentialControlServiceClient {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
-    }
-
-    async fn proxy(&self) -> zbus::Result<FlowControlServiceProxy> {
-        FlowControlServiceProxy::new(&self.conn).await
-    }
-}
-
-/*
-impl CredentialManagementClient for CredentialControlServiceClient {
-    async fn init_request(
-        &self,
-        cred_request: CredentialRequest,
-    ) -> Receiver<Result<CredentialResponse, creds_lib::model::Error>> {
-        // TODO: Start here
-        // self.proxy().await.unwrap().
-        todo!()
-    }
-
-    async fn complete_auth(&self) -> Result<CredentialResponse, String> {
-        todo!()
-    }
-
-    async fn get_available_public_key_devices(
-        &self,
-    ) -> Result<Vec<creds_lib::model::Device>, Box<dyn Error>> {
-        let devices: Result<Vec<creds_lib::model::Device>, String> = self
-            .proxy()
-            .await?
-            .get_available_public_key_devices()
-            .await?
-            .into_iter()
-            .map(|d| d.try_into().map_err(|_| "Failed".to_string()))
-            .collect();
-        Ok(devices?)
-    }
-
-    async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
-        todo!()
-    }
-
-    async fn get_usb_credential(&mut self) -> Result<(), ()> {
-        todo!()
-    }
-
-    async fn initiate_event_stream(
-        &mut self,
-    ) -> Result<Pin<Box<dyn Stream<Item = creds_lib::model::BackgroundEvent> + Send + 'static>>, ()>
-    {
-        todo!()
-    }
-
-    async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-        if let Err(err) = self.proxy().await.unwrap().enter_client_pin(pin).await {
-            tracing::error!("Failed to send client pin: {err}");
-            return Err(());
-        }
-        Ok(())
-    }
-
-    async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
-        todo!()
-    }
-}
-    */
 
 pub trait CredentialRequestController {
     fn request_credential(

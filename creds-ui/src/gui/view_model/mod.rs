@@ -26,7 +26,6 @@ where
     credential_service: Arc<AsyncMutex<C>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
-    bg_event: Receiver<BackgroundEvent>,
     title: String,
     operation: Operation,
 
@@ -35,8 +34,6 @@ where
     selected_device: Option<Device>,
 
     // providers: Vec<Provider>,
-    usb_cred_tx: Option<Arc<AsyncMutex<Sender<String>>>>,
-
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
     // hybrid_linked_state: HybridState,
@@ -49,17 +46,14 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
-        let (bg_update, bg_event) = async_std::channel::unbounded::<BackgroundEvent>();
         Self {
             credential_service,
             rx_event,
             tx_update,
-            bg_event,
             operation,
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
-            usb_cred_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
         }

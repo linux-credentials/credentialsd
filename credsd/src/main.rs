@@ -2,7 +2,6 @@ mod cbor;
 mod cose;
 mod credential_service;
 mod dbus;
-// mod model;
 mod serde;
 mod webauthn;
 

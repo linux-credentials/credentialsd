@@ -26,8 +26,11 @@ use creds_lib::{
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
 
-use hybrid::{HybridHandler, HybridState, HybridStateInternal};
-use usb::{UsbHandler, UsbStateInternal};
+use self::{
+    hybrid::{HybridHandler, HybridState, HybridStateInternal},
+    usb::{UsbHandler, UsbStateInternal},
+};
+
 pub use {
     server::{CredentialManagementClient, UiController},
     usb::UsbState,
@@ -110,7 +113,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             _ = self.ctx.lock().unwrap().take();
             let err = Err(CredentialServiceError::Internal(err));
             let (_, tx) = self.ctx.lock().unwrap().take().unwrap();
-            tx.send(err);
+            tx.send(err).expect("Request handler to be listening");
         }
     }
 
@@ -145,19 +148,6 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
                 "Attempted to start hybrid credential flow, but no request context was found."
             );
             todo!("Handle error when context is not set up.")
-        }
-    }
-
-    pub async fn complete_auth(
-        &self,
-        response: Result<CredentialResponse, CredentialServiceError>,
-    ) -> () {
-        if let Some((_request, responder)) = self.ctx.lock().unwrap().take() {
-            if responder.send(response).is_err() {
-                tracing::error!("Failed to send response to back to caller");
-            };
-        } else {
-            tracing::error!("No corresponding request for this");
         }
     }
 }
