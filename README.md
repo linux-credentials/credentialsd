@@ -150,3 +150,7 @@ Alternatively, lock out the credential based on incorrect attempts.
 - https://github.com/linux-credentials/libwebauthn (previously https://github.com/AlfioEmanueleFresta/xdg-credentials-portal)
 - authenticator-rs
 - webauthn-rs
+
+# License
+
+See the [LICENSE.md](LICENSE.md) file for license rights and limitations (LGPL-3.0-only).

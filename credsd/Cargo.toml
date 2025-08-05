@@ -1,8 +1,9 @@
 [package]
 name = "credsd"
 version = "0.1.0"
-authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>"]
+authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.sirringhaus@suse.com>", "Alfie Fresta <alfie.fresta@gmail.com>"]
 edition = "2021"
+license = "LGPL-3.0-only"
 
 [profile.release]
 lto = true
