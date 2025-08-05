@@ -164,10 +164,19 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         cred_id, self.selected_device
                     );
 
-                    if let Some(cred_tx) = self.usb_cred_tx.take() {
-                        if cred_tx.lock().await.send(cred_id.clone()).await.is_err() {
-                            error!("Failed to send selected credential to device");
-                        }
+                    if let Err(_) = self
+                        .credential_service
+                        .lock()
+                        .await
+                        .select_credential(cred_id)
+                        .await
+                    {
+                        let error_msg = "Failed to select credential from device.";
+                        tracing::error!(error_msg);
+                        self.tx_update
+                            .send(ViewUpdate::Failed(error_msg.to_string()))
+                            .await
+                            .unwrap();
                     }
                 }
 

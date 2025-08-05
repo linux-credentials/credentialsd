@@ -52,6 +52,7 @@ pub async fn start_flow_control_service<
                 signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
                 svc,
                 usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+                usb_cred_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
                 hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
             },
@@ -72,6 +73,7 @@ struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
     svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
     usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    usb_cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
@@ -181,6 +183,7 @@ where
     ) -> fdo::Result<()> {
         let mut stream = self.svc.lock().await.get_usb_credential();
         let usb_pin_tx = self.usb_pin_tx.clone();
+        let usb_cred_tx = self.usb_cred_tx.clone();
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
@@ -214,6 +217,10 @@ where
                         let mut usb_pin_tx = usb_pin_tx.lock().await;
                         let _ = usb_pin_tx.insert(pin_tx);
                     }
+                    UsbState::SelectCredential { cred_tx, .. } => {
+                        let mut usb_cred_tx = usb_cred_tx.lock().await;
+                        let _ = usb_cred_tx.insert(cred_tx);
+                    }
                     UsbState::Completed | UsbState::Failed(_) => {
                         break;
                     }
@@ -240,7 +247,10 @@ where
     }
 
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
-        todo!()
+        if let Some(cred_tx) = self.usb_cred_tx.lock().await.take() {
+            cred_tx.send(credential_id).await.unwrap();
+        }
+        Ok(())
     }
 
     #[zbus(signal)]
