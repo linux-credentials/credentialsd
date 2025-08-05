@@ -699,7 +699,6 @@ dependencies = [
  "async-stream",
  "async-trait",
  "base64",
- "cosey",
  "creds-lib",
  "futures-lite",
  "gio",
