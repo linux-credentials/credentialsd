@@ -12,6 +12,11 @@ prefix = get_option('prefix')
 bindir = prefix / get_option('bindir')
 localedir = prefix / get_option('localedir')
 
+cargo_home = get_option('cargo_home')
+if cargo_home == ''
+  cargo_home = meson.project_build_root() / 'cargo-home'
+endif
+
 meson.add_dist_script(
   'build-aux/dist-vendor.sh',
   meson.project_build_root() / 'meson-dist' / meson.project_name()
