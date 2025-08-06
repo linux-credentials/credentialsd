@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
+use zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
 
 use crate::model::Operation;
 

@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{SerializeDict, Type};
+use zvariant::{SerializeDict, Type};
 
 pub use libwebauthn::ops::webauthn::{
     Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,

@@ -768,7 +768,7 @@ dependencies = [
  "futures-lite",
  "libwebauthn",
  "serde",
- "zbus",
+ "zvariant",
 ]
 
 [[package]]
