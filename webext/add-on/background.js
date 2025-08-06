@@ -12,8 +12,9 @@ function connected(port) {
   console.log(contentPort);
 
   // Initialize native port
-  nativePort = browser.runtime.connectNative("credential_manager_shim");
-  if (nativePort.error) {
+  nativePort = browser.runtime.connectNative("xyz.iinuwa.credentialsd_helper");
+  console.debug(nativePort);
+  if (nativePort.error !== null) {
     console.error(nativePort.error)
     throw nativePort.error
   }
