@@ -16,7 +16,7 @@
       </item>
     </section>
   </menu>
-  <template class="ExampleApplicationWindow" parent="GtkApplicationWindow">
+  <template class="CredentialsUiWindow" parent="GtkApplicationWindow">
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerbar">
         <child type="end">
@@ -37,7 +37,7 @@
             <binding name="label">
               <lookup name="title">
                 <lookup name="view-model">
-                  ExampleApplicationWindow
+                  CredentialsUiWindow
                 </lookup>
               </lookup>
             </binding>
@@ -67,7 +67,7 @@
                         <binding name="child">
                           <lookup name="devices">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -95,7 +95,7 @@
                         <binding name="label">
                           <lookup name="prompt">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -107,7 +107,7 @@
                         <binding name="visible">
                           <lookup name="usb_pin_entry_visible">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -131,7 +131,7 @@
                         <binding name="visible">
                           <lookup name="qr_spinner_visible">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -142,7 +142,7 @@
                         <binding name="visible">
                           <lookup name="qr_code_visible">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -153,7 +153,7 @@
                         <binding name="label">
                           <lookup name="prompt">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -182,7 +182,7 @@
                         <binding name="child">
                           <lookup name="credentials">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>
@@ -222,7 +222,7 @@
                         <binding name="label">
                           <lookup name="prompt">
                             <lookup name="view-model">
-                              ExampleApplicationWindow
+                              CredentialsUiWindow
                             </lookup>
                           </lookup>
                         </binding>

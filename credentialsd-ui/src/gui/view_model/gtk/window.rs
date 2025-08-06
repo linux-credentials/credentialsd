@@ -9,7 +9,7 @@ use gtk::{
     glib::{self, clone},
 };
 
-use super::application::ExampleApplication;
+use super::application::CredentialsUi;
 use super::{ViewModel, device::DeviceObject};
 use crate::config::{APP_ID, PROFILE};
 use crate::gui::view_model::Transport;
@@ -22,9 +22,9 @@ mod imp {
     use super::*;
 
     #[derive(Debug, Properties, gtk::CompositeTemplate)]
-    #[properties(wrapper_type = super::ExampleApplicationWindow)]
+    #[properties(wrapper_type = super::CredentialsUiWindow)]
     #[template(resource = "/xyz/iinuwa/credentialsd/CredentialsUi/ui/window.ui")]
-    pub struct ExampleApplicationWindow {
+    pub struct CredentialsUiWindow {
         #[template_child]
         pub headerbar: TemplateChild<gtk::HeaderBar>,
         pub settings: gio::Settings,
@@ -42,7 +42,7 @@ mod imp {
     }
 
     #[gtk::template_callbacks]
-    impl ExampleApplicationWindow {
+    impl CredentialsUiWindow {
         #[template_callback]
         fn handle_usb_pin_entered(&self, entry: &gtk::PasswordEntry) {
             let view_model = &self.view_model.borrow();
@@ -58,7 +58,7 @@ mod imp {
         }
     }
 
-    impl Default for ExampleApplicationWindow {
+    impl Default for CredentialsUiWindow {
         fn default() -> Self {
             Self {
                 headerbar: TemplateChild::default(),
@@ -72,9 +72,9 @@ mod imp {
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for ExampleApplicationWindow {
-        const NAME: &'static str = "ExampleApplicationWindow";
-        type Type = super::ExampleApplicationWindow;
+    impl ObjectSubclass for CredentialsUiWindow {
+        const NAME: &'static str = "CredentialsUiWindow";
+        type Type = super::CredentialsUiWindow;
         type ParentType = gtk::ApplicationWindow;
 
         fn class_init(klass: &mut Self::Class) {
@@ -89,7 +89,7 @@ mod imp {
     }
 
     #[glib::derived_properties]
-    impl ObjectImpl for ExampleApplicationWindow {
+    impl ObjectImpl for CredentialsUiWindow {
         fn constructed(&self) {
             self.parent_constructed();
             let obj = self.obj();
@@ -104,8 +104,8 @@ mod imp {
         }
     }
 
-    impl WidgetImpl for ExampleApplicationWindow {}
-    impl WindowImpl for ExampleApplicationWindow {
+    impl WidgetImpl for CredentialsUiWindow {}
+    impl WindowImpl for CredentialsUiWindow {
         // Save window state on delete event
         fn close_request(&self) -> glib::Propagation {
             if let Some(vm) = self.view_model.borrow().as_ref() {
@@ -128,19 +128,19 @@ mod imp {
         }
     }
 
-    impl ApplicationWindowImpl for ExampleApplicationWindow {}
+    impl ApplicationWindowImpl for CredentialsUiWindow {}
 }
 
 glib::wrapper! {
-    pub struct ExampleApplicationWindow(ObjectSubclass<imp::ExampleApplicationWindow>)
+    pub struct CredentialsUiWindow(ObjectSubclass<imp::CredentialsUiWindow>)
         @extends gtk::Widget, gtk::Window, gtk::ApplicationWindow,
         @implements gio::ActionMap, gio::ActionGroup, gtk::Root;
 
 }
 
-impl ExampleApplicationWindow {
-    pub fn new(app: &ExampleApplication, view_model: ViewModel) -> Self {
-        let window: ExampleApplicationWindow = glib::Object::builder()
+impl CredentialsUiWindow {
+    pub fn new(app: &CredentialsUi, view_model: ViewModel) -> Self {
+        let window: CredentialsUiWindow = glib::Object::builder()
             .property("application", app)
             .property("view-model", view_model)
             .build();
