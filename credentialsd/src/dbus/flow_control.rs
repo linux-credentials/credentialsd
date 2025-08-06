@@ -7,7 +7,7 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 use credentialsd_common::model::{
     CredentialRequest, CredentialResponse, Error as CredentialServiceError, WebAuthnError,
 };
-use credentialsd_common::server::{BackgroundEvent, Device};
+use credentialsd_common::server::{BackgroundEvent, Device, RequestId};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -254,6 +254,11 @@ where
         Ok(())
     }
 
+    async fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()> {
+        self.svc.lock().await.cancel_request(request_id).await;
+        Ok(())
+    }
+
     #[zbus(signal)]
     async fn state_changed(
         emitter: &SignalEmitter<'_>,
@@ -334,6 +339,7 @@ pub mod test {
     use credentialsd_common::{
         client::FlowController,
         model::{BackgroundEvent, Device},
+        server::RequestId,
     };
     use futures_lite::{Stream, StreamExt};
     use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
@@ -450,8 +456,12 @@ pub mod test {
             }
         }
 
-        async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+        async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
             todo!();
+        }
+
+        async fn cancel_request(&self, _request_id: RequestId) -> Result<(), ()> {
+            todo!()
         }
     }
 
@@ -523,12 +533,12 @@ pub mod test {
                         DummyFlowResponse::GetDevices(rsp)
                     }
                     DummyFlowRequest::GetHybridCredential => {
-                        let rsp = self.get_hybrid_credential().await;
+                        self.get_hybrid_credential().await.unwrap();
                         DummyFlowResponse::GetHybridCredential
                     }
 
                     DummyFlowRequest::GetUsbCredential => {
-                        let rsp = self.get_usb_credential().await;
+                        self.get_usb_credential().await.unwrap();
                         DummyFlowResponse::GetUsbCredential
                     }
                     DummyFlowRequest::InitStream => {
@@ -656,7 +666,11 @@ pub mod test {
             Ok(())
         }
 
-        async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+        async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
+            todo!();
+        }
+
+        async fn cancel_request(&self, _request_id: RequestId) -> Result<(), ()> {
             todo!();
         }
     }

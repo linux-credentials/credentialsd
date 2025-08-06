@@ -31,9 +31,16 @@ fn run_gui<F: FlowController + Send + Sync + 'static>(
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
     let event_loop = async_std::task::spawn(async move {
-        let mut vm = view_model::ViewModel::new(operation, flow_controller, rx_event, tx_update);
+        let mut vm =
+            view_model::ViewModel::new(operation, flow_controller.clone(), rx_event, tx_update);
         vm.start_event_loop().await;
-        println!("event loop ended?");
+        tracing::debug!("Finishing user request.");
+        // If cancellation fails, that's fine.
+        let _ = flow_controller
+            .lock()
+            .await
+            .cancel_request(request.id)
+            .await;
     });
 
     view_model::gtk::start_gtk_app(tx_event, rx_update);

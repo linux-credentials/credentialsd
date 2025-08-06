@@ -1,5 +1,5 @@
 use async_std::stream::Stream;
-use credentialsd_common::client::FlowController;
+use credentialsd_common::{client::FlowController, server::RequestId};
 use futures_lite::StreamExt;
 use zbus::{Connection, zvariant};
 
@@ -100,5 +100,18 @@ impl FlowController for DbusCredentialClient {
             .select_credential(credential_id)
             .await
             .map_err(|err| tracing::error!("Failed to select credential: {err}"))
+    }
+
+    async fn cancel_request(&self, request_id: RequestId) -> Result<(), ()> {
+        if self
+            .proxy()
+            .await?
+            .cancel_request(request_id)
+            .await
+            .is_err()
+        {
+            tracing::warn!("Failed to cancel request {request_id}");
+        }
+        Ok(())
     }
 }

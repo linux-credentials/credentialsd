@@ -33,6 +33,7 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
     }
 }
 
+// TODO: this can be changed to infallible From
 impl TryFrom<crate::model::BackgroundEvent> for BackgroundEvent {
     type Error = zvariant::Error;
     fn try_from(value: crate::model::BackgroundEvent) -> Result<Self, Self::Error> {
@@ -326,6 +327,9 @@ impl From<HybridState> for Value<'_> {
         Value::from(fields)
     }
 }
+
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
 
 #[derive(Serialize, Deserialize, Type)]
 pub enum ServiceError {
@@ -625,6 +629,7 @@ impl From<UsbState> for Value<'_> {
 #[derive(Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
+    pub id: RequestId,
 }
 
 fn value_to_owned(value: &Value<'_>) -> OwnedValue {

@@ -188,6 +188,7 @@ pub enum ViewUpdate {
     HybridConnected,
 
     Completed,
+    Cancelled,
     Failed(String),
 }
 

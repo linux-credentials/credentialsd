@@ -4,7 +4,7 @@ use std::error::Error;
 
 use zbus::{fdo, proxy, Connection};
 
-use credentialsd_common::server::ViewRequest;
+use credentialsd_common::server::{RequestId, ViewRequest};
 
 use crate::credential_service::UiController;
 
@@ -16,6 +16,7 @@ use crate::credential_service::UiController;
 )]
 trait UiControlService {
     fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
+    fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
 }
 
 #[derive(Debug)]
@@ -181,7 +182,7 @@ pub mod test {
                 .unwrap();
         }
 
-        pub async fn select_credential(&self, cred_id: String) {
+        pub async fn select_credential(&self, _cred_id: String) {
             tracing::debug!(
                 target: "DummyUiServer",
                 "Received select_credential() request"

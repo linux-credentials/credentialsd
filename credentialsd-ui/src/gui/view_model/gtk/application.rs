@@ -11,6 +11,8 @@ use crate::config::{APP_ID, PKGDATADIR, PROFILE, VERSION};
 use crate::gui::view_model::{ViewEvent, ViewUpdate};
 
 mod imp {
+    use crate::gui::view_model::gtk::ModelState;
+
     use super::*;
     use glib::{WeakRef, clone};
     use std::{
@@ -62,6 +64,20 @@ mod imp {
                             // Wait to show confirmation before closing.
                             async_std::task::sleep(Duration::from_millis(500)).await;
                             gtk::prelude::WidgetExt::activate_action(&window2, "window.close", None)
+                                .unwrap()
+                        }
+                    ));
+                }
+            });
+            let window3 = window.clone();
+            // TODO: merge these state callbacks into a single function
+            vm2.clone().connect_state_notify(move |vm| {
+                if let ModelState::Cancelled = vm.state() {
+                    glib::spawn_future_local(clone!(
+                        #[weak]
+                        window3,
+                        async move {
+                            gtk::prelude::WidgetExt::activate_action(&window3, "window.close", None)
                                 .unwrap()
                         }
                     ));

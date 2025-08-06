@@ -174,6 +174,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                             .unwrap();
                     }
                 }
+                Event::View(ViewEvent::UserCancelled) => {
+                    break;
+                }
 
                 Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
                     match state {
@@ -269,13 +272,18 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         HybridState::UserCancelled => {
                             self.hybrid_qr_code_data = None;
+                            break;
                         }
                         HybridState::Failed => {
                             self.hybrid_qr_code_data = None;
                             self.tx_update.send(ViewUpdate::Failed(String::from("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
                         }
                     };
-                }
+                } /*
+                  Event::Background(BackgroundEvent::RequestCancelled(request_id)) => {
+                      break;
+                  }
+                  */
             };
         }
     }
@@ -287,6 +295,7 @@ pub enum ViewEvent {
     DeviceSelected(String),
     CredentialSelected(String),
     UsbPinEntered(String),
+    UserCancelled,
 }
 
 pub enum Event {
