@@ -18,16 +18,16 @@ import webauthn
 async def run(cmd):
     bus = await MessageBus().connect()
 
-    with open("../contrib/xyz.iinuwa.credentials.CredentialManager.xml", "r") as f:
+    with open("../contrib/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(
-        "xyz.iinuwa.credentials.Credentials",
-        "/xyz/iinuwa/credentials/Credentials",
+        "xyz.iinuwa.credentialsd.Credentials",
+        "/xyz/iinuwa/credentialsd/Credentials",
         introspection,
     )
 
-    interface = proxy_object.get_interface("xyz.iinuwa.credentials.Credentials1")
+    interface = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
 
     rp_id = "example.com"
     origin = "https://example.com"
@@ -76,9 +76,7 @@ async def create_password(interface):
         "password": Variant(
             "a{sv}",
             {
-                "origin": Variant(
-                    "s", "xyz.iinuwa.credentials.CredentialManager:local"
-                ),
+                "origin": Variant("s", "xyz.iinuwa.credentialsd.Credentials:local"),
                 "id": Variant("s", "test@example.com"),
                 "password": Variant("s", "abc123"),
             },
@@ -90,7 +88,7 @@ async def create_password(interface):
 
 async def get_password(interface):
     password_req = {
-        "origin": Variant("s", "xyz.iinuwa.credentials.CredentialManager:local"),
+        "origin": Variant("s", "xyz.iinuwa.credentialsd.Credentials:local"),
         "options": Variant(
             "aa{sv}",
             [
@@ -235,7 +233,7 @@ class VerificationTests(unittest.TestCase):
                 {"type": "public-key", "alg": -257},
             ],
         }
-        origin = "xyz.iinuwa.credentials.CredentialManager:local"
+        origin = "xyz.iinuwa.credentialsd.Credentials:local"
 
         auth_data = webauthn.verify_create_response(response, create_options, origin)
         self.assertEqual(response["id"], util.b64_encode(auth_data.cred_id))

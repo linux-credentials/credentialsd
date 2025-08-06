@@ -7,11 +7,11 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug Daemon (credsd)",
-            "program": "${workspaceFolder}/build/credsd/src/credsd",
+            "name": "Debug Daemon (credentialsd)",
+            "program": "${workspaceFolder}/build/credentialsd/src/credentialsd",
             "args": [],
             "env": {
-                "RUST_LOG": "credsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug"
+                "RUST_LOG": "credentialsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug"
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",
@@ -20,11 +20,11 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug UI (creds-ui)",
-            "program": "${workspaceFolder}/build/creds-ui/src/creds-ui",
+            "name": "Debug UI (credentialsd-ui)",
+            "program": "${workspaceFolder}/build/credentialsd-ui/src/credentialsd-ui",
             "args": [],
             "env": {
-                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/creds-ui/data",
+                "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/credentialsd-ui/data",
                 "RUST_LOG": "creds_ui=debug,zbus::trace,zbus::object_server::debug"
             },
             "sourceLanguages": ["rust"],
@@ -35,7 +35,7 @@
     "compounds": [
         {
             "name": "Server/Client",
-            "configurations": ["Debug UI (creds-ui)", "Debug Daemon (credsd)"]
+            "configurations": ["Debug UI (credentialsd-ui)", "Debug Daemon (credentialsd)"]
         }
     ]
 }

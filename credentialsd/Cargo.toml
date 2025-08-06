@@ -1,0 +1,30 @@
+[package]
+name = "credentialsd"
+version = "0.1.0"
+authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.sirringhaus@suse.com>", "Alfie Fresta <alfie.fresta@gmail.com>"]
+edition = "2021"
+license = "LGPL-3.0-only"
+
+[profile.release]
+lto = true
+
+[dependencies]
+async-stream = "0.3.6"
+async-trait = "0.1.88"
+base64 = "0.22.1"
+credentialsd-common = { path = "../credentialsd-common" }
+futures-lite = "2.6.0"
+libwebauthn = "~0.2.2"
+openssl = "0.10.72"
+ring = "0.17.14"
+rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12", "ring", "log", "logging", "prefer-post-quantum"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3"
+zbus = { version = "5.9.0", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+gio = "0.21.0"
+zbus = { version = "5.9.0", default-features = false, features = ["blocking-api", "tokio"] }

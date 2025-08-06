@@ -1,5 +1,5 @@
 project(
-  'xyz-iinuwa-credential-manager-portal-gtk',
+  'credentialsd',
   'rust',
   version: '0.1.0',
   meson_version: '>= 1.5.0',
@@ -20,6 +20,6 @@ meson.add_dist_script(
   meson.project_source_root(),
 )
 
-subdir('creds-lib')
-subdir('credsd')
-subdir('creds-ui')
+subdir('credentialsd-common')
+subdir('credentialsd')
+subdir('credentialsd-ui')

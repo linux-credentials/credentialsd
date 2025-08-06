@@ -36,8 +36,18 @@ jobs:
         # Probably has to do with forking the test processes.
         run: meson test --interactive
         working-directory: build/
-      - name: Check clippy recommendations
-        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path credsd/Cargo.toml --target-dir build/credsd/target/release
-      - name: Check formatting
+      - name: Check clippy recommendations (Common)
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path credentialsd-common/Cargo.toml --target-dir build/credentialsd-common/target/release
+      - name: Check clippy recommendations (UI)
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path credentialsd-ui/Cargo.toml --target-dir build/credentialsd-ui/target/release
+      - name: Check clippy recommendations (Server)
+        run: env CARGO_HOME=build/cargo-home cargo clippy --manifest-path credentialsd/Cargo.toml --target-dir build/credentialsd/target/release
+      - name: Check formatting (Common)
         run: cargo fmt --check
-        working-directory: credsd
+        working-directory: credentialsd-common
+      - name: Check formatting (UI)
+        run: cargo fmt --check
+        working-directory: credentialsd-ui
+      - name: Check formatting (Server)
+        run: cargo fmt --check
+        working-directory: credentialsd
