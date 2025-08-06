@@ -51,6 +51,9 @@ mod imp {
         #[property(get, set)]
         pub prompt: RefCell<String>,
 
+        #[property(get, set, builder(ModelState::Pending))]
+        pub state: RefCell<ModelState>,
+
         #[property(get, set)]
         pub completed: RefCell<bool>,
 
@@ -189,10 +192,14 @@ impl ViewModel {
                                     view_model.set_failed(true);
                                     view_model.set_prompt(error_msg);
                                 }
+                                ViewUpdate::Cancelled => {
+                                    view_model.set_state(ModelState::Cancelled)
+                                }
                             }
                         }
                         Err(e) => {
                             debug!("ViewModel event listener interrupted: {}", e);
+                            view_model.set_state(ModelState::Cancelled);
                             break;
                         }
                     }
@@ -360,4 +367,14 @@ pub fn start_gtk_app(
 
     let app = ExampleApplication::new(tx_event, rx_update);
     app.run();
+}
+
+#[derive(Clone, Copy, Debug, Default, glib::Enum)]
+#[enum_type(name = "ModelState")]
+pub enum ModelState {
+    #[default]
+    Pending,
+    Completed,
+    Failed,
+    Cancelled,
 }

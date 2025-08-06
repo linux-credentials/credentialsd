@@ -25,7 +25,7 @@
             "args": [],
             "env": {
                 "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/credentialsd-ui/data",
-                "RUST_LOG": "creds_ui=debug,zbus::trace,zbus::object_server::debug"
+                "RUST_LOG": "credentialsd_ui=debug,zbus::trace,zbus::object_server::debug"
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",

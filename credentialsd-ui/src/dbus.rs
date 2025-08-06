@@ -1,5 +1,5 @@
 use async_std::channel::Sender;
-use credentialsd_common::server::{BackgroundEvent, Device, ViewRequest};
+use credentialsd_common::server::{BackgroundEvent, Device, RequestId, ViewRequest};
 use zbus::{fdo, interface, proxy};
 
 #[proxy(
@@ -20,22 +20,20 @@ pub trait FlowControlService {
     async fn select_device(&self, device_id: String) -> fdo::Result<()>;
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()>;
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()>;
+    async fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
 
     #[zbus(signal)]
     async fn state_changed(update: BackgroundEvent) -> zbus::Result<()>;
 }
 
 pub struct UiControlService {
-    pub request_tx: Sender<crate::dbus::ViewRequest>,
+    pub request_tx: Sender<ViewRequest>,
 }
 
 /// These methods are called by the credential service to control the UI.
 #[interface(name = "xyz.iinuwa.credentialsd.UiControl1")]
 impl UiControlService {
-    async fn launch_ui(
-        &self,
-        request: credentialsd_common::server::ViewRequest,
-    ) -> fdo::Result<()> {
+    async fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()> {
         tracing::debug!("Received UI launch request");
         self.request_tx
             .send(request)

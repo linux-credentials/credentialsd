@@ -22,7 +22,7 @@ use credentialsd_common::{
         CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
         Transport,
     },
-    server::ViewRequest,
+    server::{RequestId, ViewRequest},
 };
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
@@ -42,10 +42,22 @@ pub trait UiController {
     ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
 }
 
-type RequestContext = (
-    CredentialRequest,
-    Sender<Result<CredentialResponse, CredentialServiceError>>,
-);
+#[derive(Debug)]
+struct RequestContext {
+    request: CredentialRequest,
+    response_channel: Sender<Result<CredentialResponse, CredentialServiceError>>,
+    request_id: RequestId,
+}
+
+impl RequestContext {
+    fn send_response(self, response: Result<CredentialResponse, CredentialServiceError>) {
+        if self.response_channel.send(response).is_err() {
+            tracing::error!(
+                "Attempted to send credential response to caller, but channel was closed."
+            );
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
@@ -91,7 +103,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         request: &CredentialRequest,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
-        {
+        let request_id = {
             let mut cred_request = self.ctx.lock().unwrap();
             if cred_request.is_some() {
                 tx.send(Err(CredentialServiceError::Internal(
@@ -100,14 +112,24 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
                 .expect("Send to local receiver to succeed");
                 return;
             } else {
-                _ = cred_request.insert((request.clone(), tx));
+                let request_id: RequestId = rand::random();
+                let ctx = RequestContext {
+                    request: request.clone(),
+                    response_channel: tx,
+                    request_id,
+                };
+                _ = cred_request.insert(ctx);
+                request_id
             }
         };
         let operation = match &request {
             CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
             CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
         };
-        let view_request = ViewRequest { operation };
+        let view_request = ViewRequest {
+            operation,
+            id: request_id,
+        };
 
         let launch_ui_response = self
             .ui_control_client
@@ -118,10 +140,30 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
             _ = self.ctx.lock().unwrap().take();
             let err = Err(CredentialServiceError::Internal(err));
-            let (_, tx) = self.ctx.lock().unwrap().take().unwrap();
-            tx.send(err).expect("Request handler to be listening");
+            let ctx = self.ctx.lock().unwrap().take().unwrap();
+            ctx.response_channel
+                .send(err)
+                .expect("Request handler to be listening");
         }
-        tracing::debug!("Finished setting up request");
+        tracing::debug!("Finished setting up request {request_id}");
+    }
+
+    pub async fn cancel_request(&self, request_id: RequestId) {
+        let mut guard = self.ctx.lock().expect("Lock to be taken");
+        if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id) {
+            if request_id == ctx.request_id {
+                tracing::debug!("Cancelling request {request_id}");
+                // TODO: cancel sub-tasks: hybrid and USB streams.
+
+                // It's fine if the requestor is no longer listening for the response.
+                // TODO: create Cancelled variant
+                _ = ctx
+                    .response_channel
+                    .send(Err(CredentialServiceError::Internal(format!(
+                        "Cancelled request {request_id}."
+                    ))));
+            }
+        }
     }
 
     pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
@@ -132,8 +174,8 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
-        if let Some((ref cred_request, _)) = *guard {
-            let stream = self.hybrid_handler.start(cred_request);
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.hybrid_handler.start(request);
             let ctx = self.ctx.clone();
             Box::pin(HybridStateStream { inner: stream, ctx })
         } else {
@@ -146,8 +188,8 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
 
     pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
-        if let Some((ref cred_request, _)) = *guard {
-            let stream = self.usb_handler.start(cred_request);
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.usb_handler.start(request);
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -237,12 +279,8 @@ where
 }
 
 fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialResponse) {
-    if let Some((_, responder)) = ctx.lock().unwrap().take() {
-        if responder.send(Ok(response)).is_err() {
-            tracing::error!(
-                "Attempted to send credential response to caller, but channel was closed."
-            );
-        }
+    if let Some(ctx) = ctx.lock().unwrap().take() {
+        ctx.send_response(Ok(response));
     } else {
         tracing::error!("Tried to consume context to respond to caller, but none was found.")
     }

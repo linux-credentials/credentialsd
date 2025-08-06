@@ -17,6 +17,8 @@ use crate::gui::view_model::Transport;
 mod imp {
     use gtk::Picture;
 
+    use crate::gui::view_model::ViewEvent;
+
     use super::*;
 
     #[derive(Debug, Properties, gtk::CompositeTemplate)]
@@ -106,6 +108,17 @@ mod imp {
     impl WindowImpl for ExampleApplicationWindow {
         // Save window state on delete event
         fn close_request(&self) -> glib::Propagation {
+            if let Some(vm) = self.view_model.borrow().as_ref() {
+                if vm
+                    .get_sender()
+                    .send_blocking(ViewEvent::UserCancelled)
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Failed to notify the backend service that the user cancelled the request."
+                    );
+                };
+            }
             if let Err(err) = self.obj().save_window_size() {
                 tracing::warn!("Failed to save window state, {}", &err);
             }

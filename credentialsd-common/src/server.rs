@@ -33,10 +33,9 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
     }
 }
 
-impl TryFrom<crate::model::BackgroundEvent> for BackgroundEvent {
-    type Error = zvariant::Error;
-    fn try_from(value: crate::model::BackgroundEvent) -> Result<Self, Self::Error> {
-        let event = match value {
+impl From<crate::model::BackgroundEvent> for BackgroundEvent {
+    fn from(value: crate::model::BackgroundEvent) -> Self {
+        match value {
             crate::model::BackgroundEvent::HybridQrStateChanged(state) => {
                 let state: HybridState = state.into();
                 let value = Value::new(state)
@@ -52,8 +51,7 @@ impl TryFrom<crate::model::BackgroundEvent> for BackgroundEvent {
 
                 BackgroundEvent::UsbStateChanged(value)
             }
-        };
-        Ok(event)
+        }
     }
 }
 
@@ -326,6 +324,9 @@ impl From<HybridState> for Value<'_> {
         Value::from(fields)
     }
 }
+
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
 
 #[derive(Serialize, Deserialize, Type)]
 pub enum ServiceError {
@@ -625,6 +626,7 @@ impl From<UsbState> for Value<'_> {
 #[derive(Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
+    pub id: RequestId,
 }
 
 fn value_to_owned(value: &Value<'_>) -> OwnedValue {
