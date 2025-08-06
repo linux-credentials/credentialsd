@@ -334,16 +334,16 @@ async def run(cmd, options, origin, top_origin):
     import os
     logging.info(os.getcwd())
 
-    with open('../../contrib/xyz.iinuwa.credentials.CredentialManager.xml', 'r') as f:
+    with open("../../contrib/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(
-        "xyz.iinuwa.credentials.Credentials",
-        "/xyz/iinuwa/credentials/Credentials",
+        "xyz.iinuwa.credentialsd.Credentials",
+        "/xyz/iinuwa/credentialsd/Credentials",
         introspection,
     )
 
-    interface = proxy_object.get_interface("xyz.iinuwa.credentials.Credentials1")
+    interface = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
     logging.debug(f"Connected to interface at {interface.path}")
 
     if cmd == 'create':

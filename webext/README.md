@@ -47,7 +47,7 @@ couple of options:
 3. Open Firefox and go to `about:debugging`
 4. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
 5. Build with `ninja -C ./build` and run the following binaries binary to start the D-Bus services.
-   - `GSCHEMA_SCHEMA_DIR=build/creds-ui/data ./build/creds-ui/target/debug/creds-ui`
-   - `./build/credsd/target/debug/credsd`
+   - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
+   - `./build/credentialsd/target/debug/credentialsd`
 6. Navigate to [https://webauthn.io]().
 7. Run through the registration and creation process.

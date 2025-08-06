@@ -44,10 +44,10 @@ ninja -C build
 
 ```shell
 # Run the server, with debug logging enabled
-export GSETTINGS_SCHEMA_DIR=build/creds-ui/data
-export RUST_LOG=credsd=debug,creds_ui=debug
-./build/credsd/target/debug/credsd &
-./build/creds-ui/target/debug/creds-ui
+export GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data
+export RUST_LOG=credentialsd=debug,credentials_ui=debug
+./build/credentialsd/target/debug/credentialsd &
+./build/credentialsd-ui/target/debug/credentialsd-ui
 ```
 
 ### Clients
