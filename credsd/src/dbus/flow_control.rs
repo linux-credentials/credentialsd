@@ -29,8 +29,8 @@ use crate::credential_service::{
     usb::UsbHandler,
     CredentialService, UiController, UsbState,
 };
-pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/FlowControl";
-pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.FlowControl";
+pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentials/FlowControl";
+pub const SERVICE_NAME: &str = "xyz.iinuwa.credentials.FlowControl";
 
 pub async fn start_flow_control_service<
     H: HybridHandler + Debug + Send + Sync + 'static,
@@ -157,7 +157,7 @@ where
                         tracing::error!("Failed to serialize state update: {err}");
                         break;
                     }
-                    Ok(event) => match send_state_update(&emitter, &signal_state, event).await {
+                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
                         Ok(_) => {}
                         Err(err) => {
                             tracing::error!("Failed to send state update to UI: {err}");
@@ -207,7 +207,7 @@ where
                         tracing::error!("Failed to serialize state update: {err}");
                         break;
                     }
-                    Ok(event) => match send_state_update(&emitter, &signal_state, event).await {
+                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
                         Ok(_) => {}
                         Err(err) => {
                             tracing::error!("Failed to send state update to UI: {err}");

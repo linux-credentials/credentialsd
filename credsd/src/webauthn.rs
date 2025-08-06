@@ -685,8 +685,8 @@ pub fn format_client_data_json(
     is_cross_origin: bool,
 ) -> String {
     let op_str = match op {
-        Operation::Create { .. } => "webauthn.create",
-        Operation::Get { .. } => "webauthn.get",
+        Operation::Create => "webauthn.create",
+        Operation::Get => "webauthn.get",
     };
     let cross_origin_str = if is_cross_origin { "true" } else { "false" };
     format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")

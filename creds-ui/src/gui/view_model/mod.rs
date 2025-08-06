@@ -61,8 +61,8 @@ impl<F: FlowController + Send> ViewModel<F> {
 
     async fn update_title(&mut self) {
         self.title = match self.operation {
-            Operation::Create { .. } => "Create new credential",
-            Operation::Get { .. } => "Use a credential",
+            Operation::Create => "Create new credential",
+            Operation::Get => "Use a credential",
         }
         .to_string();
         self.tx_update
@@ -158,12 +158,13 @@ impl<F: FlowController + Send> ViewModel<F> {
                         cred_id, self.selected_device
                     );
 
-                    if let Err(_) = self
+                    if self
                         .flow_controller
                         .lock()
                         .await
                         .select_credential(cred_id)
                         .await
+                        .is_err()
                     {
                         let error_msg = "Failed to select credential from device.";
                         tracing::error!(error_msg);

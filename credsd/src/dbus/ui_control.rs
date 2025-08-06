@@ -1,6 +1,6 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::{error::Error, future::Future};
+use std::error::Error;
 
 use zbus::{fdo, proxy, Connection};
 

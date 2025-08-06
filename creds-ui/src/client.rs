@@ -81,7 +81,7 @@ impl FlowController for DbusCredentialClient {
             .initiate_event_stream()
             .await
             .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
-            .and_then(|_| Ok(stream))
+            .map(|_| stream)
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {

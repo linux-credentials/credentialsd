@@ -15,7 +15,7 @@ use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
-use tokio::sync::{oneshot::Sender, Mutex as AsyncMutex};
+use tokio::sync::oneshot::Sender;
 
 use creds_lib::{
     model::{
@@ -133,7 +133,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some((ref cred_request, _)) = *guard {
-            let stream = self.hybrid_handler.start(&cred_request);
+            let stream = self.hybrid_handler.start(cred_request);
             let ctx = self.ctx.clone();
             Box::pin(HybridStateStream { inner: stream, ctx })
         } else {
@@ -147,7 +147,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some((ref cred_request, _)) = *guard {
-            let stream = self.usb_handler.start(&cred_request);
+            let stream = self.usb_handler.start(cred_request);
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -179,7 +179,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
-                    let response = match hybrid_response {
+                    let response = match &**hybrid_response {
                         AuthenticatorResponse::CredentialCreated(make_credential_response) => {
                             CredentialResponse::from_make_credential(
                                 make_credential_response,
@@ -250,13 +250,13 @@ fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialRes
 
 #[derive(Debug, Clone)]
 enum AuthenticatorResponse {
-    CredentialCreated(MakeCredentialResponse),
+    CredentialCreated(Box<MakeCredentialResponse>),
     CredentialsAsserted(GetAssertionResponse),
 }
 
 impl From<MakeCredentialResponse> for AuthenticatorResponse {
     fn from(value: MakeCredentialResponse) -> Self {
-        Self::CredentialCreated(value)
+        Self::CredentialCreated(Box::new(value))
     }
 }
 
@@ -307,7 +307,7 @@ mod test {
                 let hybrid_handler = DummyHybridHandler::new(vec![
                     HybridStateInternal::Init(qr_code),
                     HybridStateInternal::Connecting,
-                    HybridStateInternal::Completed(authenticator_response),
+                    HybridStateInternal::Completed(Box::new(authenticator_response)),
                 ]);
                 let usb_handler = InProcessUsbHandler {};
                 let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
