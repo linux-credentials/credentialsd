@@ -1,5 +1,4 @@
 use async_std::channel::{Receiver, Sender};
-use gettextrs::gettext;
 use tracing::{debug, info};
 
 use gtk::prelude::*;
@@ -128,13 +127,7 @@ impl CredentialsUi {
             })
             .build();
 
-        // About
-        let action_about = gio::ActionEntry::builder("about")
-            .activate(|app: &Self, _, _| {
-                app.show_about_dialog();
-            })
-            .build();
-        self.add_action_entries([action_quit, action_about]);
+        self.add_action_entries([action_quit]);
     }
 
     // Sets up keyboard shortcuts
@@ -153,21 +146,6 @@ impl CredentialsUi {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
-    }
-
-    fn show_about_dialog(&self) {
-        let dialog = gtk::AboutDialog::builder()
-            .logo_icon_name(APP_ID)
-            .license_type(gtk::License::Lgpl30Only)
-            .website("https://github.com/linux-credentials/linux-webauthn-portal-api")
-            .version(VERSION)
-            .transient_for(&self.main_window())
-            .translator_credits(gettext("translator-credits"))
-            .modal(true)
-            .authors(vec!["Isaiah Inuwa <isaiah.inuwa@gmail.com>"])
-            .build();
-
-        dialog.present();
     }
 
     pub fn run(&self) -> glib::ExitCode {
