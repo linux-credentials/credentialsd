@@ -17,7 +17,9 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, CredentialRequest, Error, GetAssertionResponseInternal};
+use credentialsd_common::model::{
+    Credential, CredentialRequest, Error, GetAssertionResponseInternal,
+};
 
 use super::{AuthenticatorResponse, CredentialResponse};
 
@@ -540,9 +542,11 @@ impl From<&UsbState> for credentialsd_common::model::UsbState {
             UsbState::Waiting => credentialsd_common::model::UsbState::Waiting,
             UsbState::SelectingDevice => credentialsd_common::model::UsbState::SelectingDevice,
             UsbState::Connected => credentialsd_common::model::UsbState::Connected,
-            UsbState::NeedsPin { attempts_left, .. } => credentialsd_common::model::UsbState::NeedsPin {
-                attempts_left: *attempts_left,
-            },
+            UsbState::NeedsPin { attempts_left, .. } => {
+                credentialsd_common::model::UsbState::NeedsPin {
+                    attempts_left: *attempts_left,
+                }
+            }
             UsbState::NeedsUserVerification { attempts_left } => {
                 credentialsd_common::model::UsbState::NeedsUserVerification {
                     attempts_left: *attempts_left,
