@@ -1,0 +1,18 @@
+option(
+  'profile',
+  type: 'combo',
+  choices: ['default', 'development'],
+  value: 'default',
+  description: 'The build profile for Credential Manager. One of "default" or "development".',
+)
+option(
+  'cargo_home',
+  type: 'string',
+  description: 'The directory to store files downloaded by Cargo',
+)
+option(
+  'cargo_offline',
+  type: 'boolean',
+  value: false,
+  description: 'Whether to perform an offline build with Cargo. Defaults to false to download crates from registries.',
+)

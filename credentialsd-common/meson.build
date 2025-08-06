@@ -35,5 +35,8 @@
 # cargo_options += [
 #   '--target-dir', meson.project_build_root() / meson.current_build_dir() / 'target',
 # ]
+# if get_option('cargo_offline') == true
+#   cargo_options += ['--offline']
+# endif
 #
 # subdir('src')
