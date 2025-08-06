@@ -28,10 +28,7 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     print!("Connecting to D-Bus as client...\t");
-    let dbus_client_conn = zbus::connection::Builder::session()?
-        .name("xyz.iinuwa.credentialsd.Credentialsd")?
-        .build()
-        .await?;
+    let dbus_client_conn = zbus::connection::Builder::session()?.build().await?;
     println!(" ✅");
 
     print!("Starting D-Bus UI -> Credential control service...");
