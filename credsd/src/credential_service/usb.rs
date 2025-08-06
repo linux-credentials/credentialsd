@@ -165,12 +165,12 @@ impl InProcessUsbHandler {
                     .cloned();
                 match assertion {
                     Some(assertion) => Ok(UsbStateInternal::Completed(
-                        CredentialResponse::GetPublicKeyCredentialResponse(
+                        CredentialResponse::GetPublicKeyCredentialResponse(Box::new(
                             GetAssertionResponseInternal::new(
                                 assertion,
                                 "cross-platform".to_string(),
                             ),
-                        ),
+                        )),
                     )),
                     None => Err(Error::NoCredentials),
                 }
@@ -201,7 +201,7 @@ impl InProcessUsbHandler {
                     Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
                 }
                 Ok(UsbUvMessage::NeedsUserPresence) => Ok(UsbStateInternal::NeedsUserPresence),
-                Ok(UsbUvMessage::ReceivedCredentials(response)) => match response {
+                Ok(UsbUvMessage::ReceivedCredentials(response)) => match *response {
                     AuthenticatorResponse::CredentialCreated(make_credential_response) => Ok(
                         UsbStateInternal::Completed(CredentialResponse::from_make_credential(
                             &make_credential_response,
@@ -307,12 +307,16 @@ async fn handle_events(
                         channel
                             .webauthn_make_credential(make_cred_request)
                             .await
-                            .map(|response| UsbUvMessage::ReceivedCredentials(response.into()))
+                            .map(|response| {
+                                UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
+                            })
                     }
                     CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
                         .webauthn_get_assertion(get_cred_request)
                         .await
-                        .map(|response| UsbUvMessage::ReceivedCredentials(response.into())),
+                        .map(|response| {
+                            UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
+                        }),
                 };
                 match response {
                     Ok(response) => {
@@ -613,5 +617,5 @@ enum UsbUvMessage {
         attempts_left: Option<u32>,
     },
     NeedsUserPresence,
-    ReceivedCredentials(AuthenticatorResponse),
+    ReceivedCredentials(Box<AuthenticatorResponse>),
 }

@@ -10,7 +10,6 @@ use creds_lib::{
         GetCredentialResponse,
     },
 };
-use serde::Deserialize;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{fdo, interface, Connection, DBusError};
 
@@ -20,9 +19,8 @@ use crate::dbus::{
     CredentialRequestController,
 };
 
-pub const INTERFACE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials1";
-pub const SERVICE_NAME: &'static str = "xyz.iinuwa.credentials.Credentials";
-pub const SERVICE_PATH: &'static str = "/xyz/iinuwa/credentials/Credentials";
+pub const SERVICE_NAME: &str = "xyz.iinuwa.credentials.Credentials";
+pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentials/Credentials";
 
 pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'static>(
     controller: C,
@@ -53,12 +51,10 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
-        let (origin, is_same_origin, _top_origin) = check_origin(
-            request.origin.as_ref().map(|s| s.as_str()),
-            request.is_same_origin,
-        )
-        .await
-        .map_err(Error::from)?;
+        let (_origin, is_same_origin, _top_origin) =
+            check_origin(request.origin.as_deref(), request.is_same_origin)
+                .await
+                .map_err(Error::from)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             if !is_same_origin {
                 // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
@@ -109,12 +105,10 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
-        let (origin, is_same_origin, _top_origin) = check_origin(
-            request.origin.as_ref().map(|s| s.as_str()),
-            request.is_same_origin,
-        )
-        .await
-        .map_err(Error::from)?;
+        let (_origin, is_same_origin, _top_origin) =
+            check_origin(request.origin.as_deref(), request.is_same_origin)
+                .await
+                .map_err(Error::from)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             if !is_same_origin {
                 // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
@@ -201,11 +195,12 @@ async fn check_origin(
         origin.clone()
     } else {
         tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-        return Err(WebAuthnError::NotAllowedError.into());
+        return Err(WebAuthnError::NotAllowedError);
     };
     Ok((origin, true, top_origin))
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(DBusError, Debug)]
 #[zbus(prefix = "xyz.iinuwa.credentials")]
 enum Error {

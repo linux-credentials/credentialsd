@@ -18,10 +18,10 @@ use creds_lib::model::Operation;
 use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
 
 pub use libwebauthn::ops::webauthn::{
-    Assertion, CredentialProtectionExtension, GetAssertionHmacOrPrfInput,
-    GetAssertionLargeBlobExtension, GetAssertionRequest, GetAssertionRequestExtensions,
-    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialResponse,
-    MakeCredentialsRequestExtensions, ResidentKeyRequirement, UserVerificationRequirement,
+    CredentialProtectionExtension, GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension,
+    GetAssertionRequest, GetAssertionRequestExtensions, MakeCredentialHmacOrPrfInput,
+    MakeCredentialRequest, MakeCredentialsRequestExtensions, ResidentKeyRequirement,
+    UserVerificationRequirement,
 };
 pub use libwebauthn::proto::ctap2::{
     Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
@@ -137,6 +137,7 @@ pub(crate) struct LargeBlobExtension {
     pub support: Option<MakeCredentialLargeBlobExtension>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read: Option<bool>,
+    #[allow(dead_code)] // TODO: Not currently used, but we should eventually implement
     #[serde(skip_serializing_if = "Option::is_none")]
     pub write: Option<String>,
 }
@@ -205,6 +206,7 @@ pub(crate) struct GetCredentialOptions {
 
     /// Contextual information from the RP to help the client guide the user
     /// through the authentication ceremony.
+    #[allow(dead_code)] // TODO: Not currently used, but we should eventually implement support for hints.
     #[serde(default)]
     pub(crate) hints: Vec<String>,
 
@@ -683,8 +685,8 @@ pub fn format_client_data_json(
     is_cross_origin: bool,
 ) -> String {
     let op_str = match op {
-        Operation::Create { .. } => "webauthn.create",
-        Operation::Get { .. } => "webauthn.get",
+        Operation::Create => "webauthn.create",
+        Operation::Get => "webauthn.get",
     };
     let cross_origin_str = if is_cross_origin { "true" } else { "false" };
     format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")

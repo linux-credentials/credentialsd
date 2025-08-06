@@ -124,7 +124,7 @@ impl HybridHandler for InternalHybridHandler {
                     }
                 };
                 let terminal_state = match response {
-                    Ok(auth_response) => HybridStateInternal::Completed(auth_response),
+                    Ok(auth_response) => HybridStateInternal::Completed(Box::new(auth_response)),
                     Err(_) => HybridStateInternal::Failed,
                 };
                 if let Err(err) = tx.send(terminal_state).await {
@@ -154,7 +154,7 @@ pub(super) enum HybridStateInternal {
     Connected,
 
     /// Authenticator data
-    Completed(AuthenticatorResponse),
+    Completed(Box<AuthenticatorResponse>),
 
     Failed,
     // TODO(cancellation)
@@ -341,7 +341,7 @@ pub(super) mod test {
                 states: vec![
                     HybridStateInternal::Init(qr_code),
                     HybridStateInternal::Connecting,
-                    HybridStateInternal::Completed(response.into()),
+                    HybridStateInternal::Completed(Box::new(response.into())),
                 ],
             }
         }

@@ -2,11 +2,10 @@ mod cbor;
 mod cose;
 mod credential_service;
 mod dbus;
-// mod model;
 mod serde;
 mod webauthn;
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 use crate::{
     credential_service::{
@@ -40,7 +39,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let credential_service = CredentialService::new(
         InternalHybridHandler::new(),
         InProcessUsbHandler {},
-        ui_controller,
+        Arc::new(ui_controller),
     );
     let (_flow_control_conn, initiator) =
         dbus::start_flow_control_service(credential_service).await?;

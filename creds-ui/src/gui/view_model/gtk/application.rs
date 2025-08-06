@@ -6,13 +6,13 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use super::{window::ExampleApplicationWindow, ViewModel};
+use super::{ViewModel, window::ExampleApplicationWindow};
 use crate::config::{APP_ID, PKGDATADIR, PROFILE, VERSION};
 use crate::gui::view_model::{ViewEvent, ViewUpdate};
 
 mod imp {
     use super::*;
-    use glib::{clone, WeakRef};
+    use glib::{WeakRef, clone};
     use std::{
         cell::{OnceCell, RefCell},
         time::Duration,
@@ -142,15 +142,13 @@ impl ExampleApplication {
     fn show_about_dialog(&self) {
         let dialog = gtk::AboutDialog::builder()
             .logo_icon_name(APP_ID)
-            // Insert your license of choice here
-            // .license_type(gtk::License::MitX11)
-            .website("https://github.com/iinuwa/linux-webauthn-portal-api")
+            .license_type(gtk::License::Lgpl30Only)
+            .website("https://github.com/linux-credentials/linux-webauthn-portal-api")
             .version(VERSION)
             .transient_for(&self.main_window())
             .translator_credits(gettext("translator-credits"))
             .modal(true)
-            .authors(vec!["Isaiah Inuwa"])
-            .artists(vec!["Isaiah Inuwa"])
+            .authors(vec!["Isaiah Inuwa <isaiah.inuwa@gmail.com>"])
             .build();
 
         dialog.present();

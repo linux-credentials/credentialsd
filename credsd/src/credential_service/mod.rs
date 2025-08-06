@@ -1,9 +1,10 @@
 pub mod hybrid;
-mod server;
 pub mod usb;
 
 use std::{
+    error::Error,
     fmt::Debug,
+    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
@@ -26,12 +27,20 @@ use creds_lib::{
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
 
-use hybrid::{HybridHandler, HybridState, HybridStateInternal};
-use usb::{UsbHandler, UsbStateInternal};
-pub use {
-    server::{CredentialManagementClient, UiController},
-    usb::UsbState,
+use self::{
+    hybrid::{HybridHandler, HybridState, HybridStateInternal},
+    usb::{UsbHandler, UsbStateInternal},
 };
+
+pub use usb::UsbState;
+
+/// Used by the credential service to control the UI.
+pub trait UiController {
+    fn launch_ui(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
+}
 
 type RequestContext = (
     CredentialRequest,
@@ -48,13 +57,13 @@ pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> 
     hybrid_handler: H,
     usb_handler: U,
 
-    ui_control_client: UC,
+    ui_control_client: Arc<UC>,
 }
 
 impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     CredentialService<H, U, UC>
 {
-    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: UC) -> Self {
+    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: Arc<UC>) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -110,8 +119,9 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             _ = self.ctx.lock().unwrap().take();
             let err = Err(CredentialServiceError::Internal(err));
             let (_, tx) = self.ctx.lock().unwrap().take().unwrap();
-            tx.send(err);
+            tx.send(err).expect("Request handler to be listening");
         }
+        tracing::debug!("Finished setting up request");
     }
 
     pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
@@ -123,7 +133,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some((ref cred_request, _)) = *guard {
-            let stream = self.hybrid_handler.start(&cred_request);
+            let stream = self.hybrid_handler.start(cred_request);
             let ctx = self.ctx.clone();
             Box::pin(HybridStateStream { inner: stream, ctx })
         } else {
@@ -137,7 +147,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some((ref cred_request, _)) = *guard {
-            let stream = self.usb_handler.start(&cred_request);
+            let stream = self.usb_handler.start(cred_request);
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -145,19 +155,6 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
                 "Attempted to start hybrid credential flow, but no request context was found."
             );
             todo!("Handle error when context is not set up.")
-        }
-    }
-
-    pub async fn complete_auth(
-        &self,
-        response: Result<CredentialResponse, CredentialServiceError>,
-    ) -> () {
-        if let Some((_request, responder)) = self.ctx.lock().unwrap().take() {
-            if responder.send(response).is_err() {
-                tracing::error!("Failed to send response to back to caller");
-            };
-        } else {
-            tracing::error!("No corresponding request for this");
         }
     }
 }
@@ -182,7 +179,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
                 if let HybridStateInternal::Completed(hybrid_response) = &state {
-                    let response = match hybrid_response {
+                    let response = match &**hybrid_response {
                         AuthenticatorResponse::CredentialCreated(make_credential_response) => {
                             CredentialResponse::from_make_credential(
                                 make_credential_response,
@@ -253,13 +250,13 @@ fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialRes
 
 #[derive(Debug, Clone)]
 enum AuthenticatorResponse {
-    CredentialCreated(MakeCredentialResponse),
+    CredentialCreated(Box<MakeCredentialResponse>),
     CredentialsAsserted(GetAssertionResponse),
 }
 
 impl From<MakeCredentialResponse> for AuthenticatorResponse {
     fn from(value: MakeCredentialResponse) -> Self {
-        Self::CredentialCreated(value)
+        Self::CredentialCreated(Box::new(value))
     }
 }
 
@@ -271,98 +268,117 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
-    use futures_lite::stream::StreamExt;
-
-    use crate::credential_service::usb::InProcessUsbHandler;
-    use creds_lib::{
-        model::CredentialRequest,
-        server::{CreateCredentialRequest, CreatePublicKeyCredentialRequest},
+    use libwebauthn::{
+        ops::webauthn::{ResidentKeyRequirement, UserVerificationRequirement},
+        proto::ctap2::{
+            Ctap2COSEAlgorithmIdentifier, Ctap2CredentialType, Ctap2PublicKeyCredentialRpEntity,
+            Ctap2PublicKeyCredentialType, Ctap2PublicKeyCredentialUserEntity,
+        },
     };
+    use tokio::sync::{oneshot, Mutex as AsyncMutex};
+
+    use crate::{
+        credential_service::usb::InProcessUsbHandler,
+        dbus::test::{DummyFlowServer, DummyUiServer},
+        webauthn,
+    };
+    use creds_lib::model::{CredentialRequest, MakeCredentialRequest, Operation};
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
         AuthenticatorResponse, CredentialService,
     };
 
-    /*
     #[test]
     fn test_hybrid_sets_credential() {
+        tracing_subscriber::fmt::init();
         let request = create_credential_request();
         let qr_code = String::from("FIDO:/078241338926040702789239694720083010994762289662861130514766991835876383562063181103169246410435938367110394959927031730060360967994421343201235185697538107096654083332");
         let authenticator_response = create_authenticator_response();
 
-        let hybrid_handler = DummyHybridHandler::new(vec![
-            HybridStateInternal::Init(qr_code),
-            HybridStateInternal::Connecting,
-            HybridStateInternal::Completed(authenticator_response),
-        ]);
-        let usb_handler = InProcessUsbHandler {};
-        let cred_service = Arc::new(CredentialService::new(hybrid_handler, usb_handler));
-        cred_service.init_request(&request).unwrap();
-        let mut stream = cred_service.get_hybrid_credential();
+        let (request_tx, request_rx) = oneshot::channel();
         tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
             .unwrap()
-            .block_on(async move { while let Some(_) = stream.next().await {} });
-        let cred_service = Arc::try_unwrap(cred_service).unwrap();
-        assert!(cred_service.complete_auth().is_some());
+            .block_on(async move {
+                let hybrid_handler = DummyHybridHandler::new(vec![
+                    HybridStateInternal::Init(qr_code),
+                    HybridStateInternal::Connecting,
+                    HybridStateInternal::Completed(Box::new(authenticator_response)),
+                ]);
+                let usb_handler = InProcessUsbHandler {};
+                let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
+                let ui_server = Arc::new(ui_server);
+                let user = ui_server.clone();
+                let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
+                    hybrid_handler,
+                    usb_handler,
+                    Arc::new(ui_client),
+                )));
+                let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());
+                ui_server.init(flow_client).await;
+
+                tokio::spawn(async move { ui_server.run().await });
+                tokio::spawn(async move { flow_server.run().await });
+                cred_service
+                    .lock()
+                    .await
+                    .init_request(&request, request_tx)
+                    .await;
+                user.request_hybrid_credential().await;
+                tokio::time::timeout(Duration::from_secs(5), request_rx)
+                    .await
+                    .expect("request to complete")
+                    .expect("response to be sent")
+                    .expect("a credential to be returned");
+            });
     }
 
     fn create_credential_request() -> CredentialRequest {
-        let request_json = r#"
-        {
-            "rp": {
-                "name": "webauthn.io",
-                "id": "webauthn.io"
+        let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
+        let origin = "webauthn.io".to_string();
+        let is_cross_origin = false;
+        let client_data_json = webauthn::format_client_data_json(
+            Operation::Create,
+            challenge,
+            &origin,
+            is_cross_origin,
+        );
+        let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
+        let make_request = MakeCredentialRequest {
+            hash: client_data_hash,
+            origin: "webauthn.io".to_string(),
+            relying_party: Ctap2PublicKeyCredentialRpEntity {
+                id: "webauthn.io".to_string(),
+                name: Some("webauthn.io".to_string()),
             },
-            "user": {
-                "id": "d2ViYXV0aG5pby0xMjM4OTF5",
-                "name": "123891y",
-                "displayName": "123891y"
+            user: Ctap2PublicKeyCredentialUserEntity {
+                id: "d2ViYXV0aG5pby0xMjM4OTF5".as_bytes().to_vec().into(),
+                name: Some("123891y".to_string()),
+                display_name: Some("123891y".to_string()),
             },
-            "challenge": "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ",
-            "pubKeyCredParams": [
-                {
-                    "type": "public-key",
-                    "alg": -8
+            resident_key: Some(ResidentKeyRequirement::Preferred),
+            user_verification: UserVerificationRequirement::Preferred,
+            algorithms: vec![
+                Ctap2CredentialType {
+                    algorithm: Ctap2COSEAlgorithmIdentifier::ES256,
+                    public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
                 },
-                {
-                    "type": "public-key",
-                    "alg": -7
+                Ctap2CredentialType {
+                    algorithm: Ctap2COSEAlgorithmIdentifier::EDDSA,
+                    public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
                 },
-                {
-                    "type": "public-key",
-                    "alg": -257
-                }
             ],
-            "timeout": 60000,
-            "excludeCredentials": [],
-            "authenticatorSelection": {
-                "residentKey": "preferred",
-                "requireResidentKey": false,
-                "userVerification": "preferred"
-            },
-            "attestation": "none",
-            "hints": [],
-            "extensions": {
-                "credProps": true
-            }
-        }"#.to_string();
+            exclude: None,
+            extensions: None,
+            timeout: Duration::from_secs(60),
+        };
 
-        let (req, _) = crate::dbus::model::create_credential_request_try_into_ctap2(
-            &CreateCredentialRequest {
-                origin: Some("webauthn.io".to_string()),
-                is_same_origin: Some(true),
-                r#type: "public-key".to_string(),
-                public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
-            },
-        )
-        .unwrap();
-        CredentialRequest::CreatePublicKeyCredentialRequest(req)
+        CredentialRequest::CreatePublicKeyCredentialRequest(make_request)
     }
-    */
 
     fn create_authenticator_response() -> AuthenticatorResponse {
         use libwebauthn::{

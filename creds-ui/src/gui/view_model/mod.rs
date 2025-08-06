@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use creds_lib::{
-    client::CredentialServiceClient,
+    client::FlowController,
     model::{
         BackgroundEvent, Credential, Device, Error, HybridState, Operation, Transport, UsbState,
         ViewUpdate,
@@ -19,14 +19,13 @@ use creds_lib::{
 };
 
 #[derive(Debug)]
-pub(crate) struct ViewModel<C>
+pub(crate) struct ViewModel<F>
 where
-    C: CredentialServiceClient + Send,
+    F: FlowController + Send,
 {
-    credential_service: Arc<AsyncMutex<C>>,
+    flow_controller: Arc<AsyncMutex<F>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
-    bg_event: Receiver<BackgroundEvent>,
     title: String,
     operation: Operation,
 
@@ -35,31 +34,26 @@ where
     selected_device: Option<Device>,
 
     // providers: Vec<Provider>,
-    usb_cred_tx: Option<Arc<AsyncMutex<Sender<String>>>>,
-
     hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
     // hybrid_linked_state: HybridState,
 }
 
-impl<C: CredentialServiceClient + Send> ViewModel<C> {
+impl<F: FlowController + Send> ViewModel<F> {
     pub(crate) fn new(
         operation: Operation,
-        credential_service: Arc<AsyncMutex<C>>,
+        flow_controller: Arc<AsyncMutex<F>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
-        let (bg_update, bg_event) = async_std::channel::unbounded::<BackgroundEvent>();
         Self {
-            credential_service,
+            flow_controller,
             rx_event,
             tx_update,
-            bg_event,
             operation,
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
-            usb_cred_tx: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
         }
@@ -67,8 +61,8 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
 
     async fn update_title(&mut self) {
         self.title = match self.operation {
-            Operation::Create { .. } => "Create new credential",
-            Operation::Get { .. } => "Use a credential",
+            Operation::Create => "Create new credential",
+            Operation::Get => "Use a credential",
         }
         .to_string();
         self.tx_update
@@ -79,7 +73,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
 
     async fn update_devices(&mut self) {
         let devices = self
-            .credential_service
+            .flow_controller
             .lock()
             .await
             .get_available_public_key_devices()
@@ -117,11 +111,11 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
         // start discovery for newly selected device
         match device.transport {
             Transport::Usb => {
-                let mut cred_service = self.credential_service.lock().await;
+                let mut cred_service = self.flow_controller.lock().await;
                 (*cred_service).get_usb_credential().await.unwrap();
             }
             Transport::HybridQr => {
-                let mut cred_service = self.credential_service.lock().await;
+                let mut cred_service = self.flow_controller.lock().await;
                 cred_service.get_hybrid_credential().await.unwrap();
             }
             _ => {
@@ -138,7 +132,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
     pub(crate) async fn start_event_loop(&mut self) {
         let view_events = self.rx_event.clone().map(Event::View);
         let bg_events = {
-            let mut cred_service = self.credential_service.lock().await;
+            let mut cred_service = self.flow_controller.lock().await;
             cred_service.initiate_event_stream().await.unwrap()
         };
         let mut all_events = view_events.merge(bg_events.map(Event::Background));
@@ -153,7 +147,7 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                     println!("Selected device {id}");
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
-                    let mut cred_service = self.credential_service.lock().await;
+                    let mut cred_service = self.flow_controller.lock().await;
                     if cred_service.enter_client_pin(pin).await.is_err() {
                         error!("Failed to send pin to device");
                     }
@@ -164,12 +158,13 @@ impl<C: CredentialServiceClient + Send> ViewModel<C> {
                         cred_id, self.selected_device
                     );
 
-                    if let Err(_) = self
-                        .credential_service
+                    if self
+                        .flow_controller
                         .lock()
                         .await
                         .select_credential(cred_id)
                         .await
+                        .is_err()
                     {
                         let error_msg = "Failed to select credential from device.";
                         tracing::error!(error_msg);

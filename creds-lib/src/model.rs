@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{SerializeDict, Type};
+use zvariant::{SerializeDict, Type};
 
 pub use libwebauthn::ops::webauthn::{
     Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
@@ -22,8 +22,8 @@ pub enum CredentialRequest {
 
 #[derive(Clone, Debug)]
 pub enum CredentialResponse {
-    CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal),
-    GetPublicKeyCredentialResponse(GetAssertionResponseInternal),
+    CreatePublicKeyCredentialResponse(Box<MakeCredentialResponseInternal>),
+    GetPublicKeyCredentialResponse(Box<GetAssertionResponseInternal>),
 }
 
 impl CredentialResponse {
@@ -32,17 +32,18 @@ impl CredentialResponse {
         transports: &[&str],
         modality: &str,
     ) -> CredentialResponse {
-        CredentialResponse::CreatePublicKeyCredentialResponse(MakeCredentialResponseInternal::new(
-            response.clone(),
-            transports.iter().map(|s| s.to_string()).collect(),
-            modality.to_string(),
+        CredentialResponse::CreatePublicKeyCredentialResponse(Box::new(
+            MakeCredentialResponseInternal::new(
+                response.clone(),
+                transports.iter().map(|s| s.to_string()).collect(),
+                modality.to_string(),
+            ),
         ))
     }
 
     pub fn from_get_assertion(assertion: &Assertion, modality: &str) -> CredentialResponse {
-        CredentialResponse::GetPublicKeyCredentialResponse(GetAssertionResponseInternal::new(
-            assertion.clone(),
-            modality.to_string(),
+        CredentialResponse::GetPublicKeyCredentialResponse(Box::new(
+            GetAssertionResponseInternal::new(assertion.clone(), modality.to_string()),
         ))
     }
 }
@@ -260,6 +261,7 @@ pub enum UsbState {
     Failed(Error),
 }
 
+#[derive(Debug)]
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
     HybridQrStateChanged(HybridState),

@@ -5,7 +5,7 @@ use futures_lite::Stream;
 use crate::model::{BackgroundEvent, Device};
 
 /// Used for communication from trusted UI to credential service
-pub trait CredentialServiceClient {
+pub trait FlowController {
     fn get_available_public_key_devices(
         &self,
     ) -> impl Future<Output = Result<Vec<Device>, ()>> + Send;

@@ -1,5 +1,5 @@
 use async_std::stream::Stream;
-use creds_lib::client::CredentialServiceClient;
+use creds_lib::client::FlowController;
 use futures_lite::StreamExt;
 use zbus::{Connection, zvariant};
 
@@ -20,7 +20,7 @@ impl DbusCredentialClient {
     }
 }
 
-impl CredentialServiceClient for DbusCredentialClient {
+impl FlowController for DbusCredentialClient {
     async fn get_available_public_key_devices(
         &self,
     ) -> std::result::Result<Vec<creds_lib::model::Device>, ()> {
@@ -81,7 +81,7 @@ impl CredentialServiceClient for DbusCredentialClient {
             .initiate_event_stream()
             .await
             .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
-            .and_then(|_| Ok(stream))
+            .map(|_| stream)
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {

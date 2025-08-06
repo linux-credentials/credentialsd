@@ -1,9 +1,11 @@
+//! Types for serializing across D-Bus instances
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
+use zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
 
-use crate::model::{Operation, ViewUpdate};
+use crate::model::Operation;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum BackgroundEvent {
@@ -96,89 +98,6 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
     }
 }
 
-/// Updates to send to the client
-#[derive(Serialize, Deserialize, Type)]
-pub enum ClientUpdate {
-    SetTitle(OwnedValue),
-    SetDevices(OwnedValue),
-    SetCredentials(OwnedValue),
-
-    WaitingForDevice(OwnedValue),
-    SelectingDevice(OwnedValue),
-
-    UsbNeedsPin(OwnedValue),
-    UsbNeedsUserVerification(OwnedValue),
-    UsbNeedsUserPresence(OwnedValue),
-
-    HybridNeedsQrCode(OwnedValue),
-    HybridConnecting(OwnedValue),
-    HybridConnected(OwnedValue),
-
-    Completed(OwnedValue),
-    Failed(OwnedValue),
-}
-
-impl TryFrom<ClientUpdate> for ViewUpdate {
-    type Error = zvariant::Error;
-    fn try_from(value: ClientUpdate) -> std::result::Result<ViewUpdate, Self::Error> {
-        match value {
-            ClientUpdate::SetTitle(v) => v.try_into().map(Self::SetTitle),
-            ClientUpdate::SetDevices(v) => {
-                let dbus_devices: Vec<Device> = Value::<'_>::from(v).try_into()?;
-                let devices: std::result::Result<Vec<crate::model::Device>, zvariant::Error> =
-                    dbus_devices
-                        .into_iter()
-                        .map(|d| {
-                            d.try_into().map_err(|_| {
-                                zvariant::Error::Message(
-                                    "Could not deserialize devices".to_string(),
-                                )
-                            })
-                        })
-                        .collect();
-                Ok(Self::SetDevices(devices?))
-            }
-            ClientUpdate::SetCredentials(v) => {
-                let dbus_credentials: Vec<Credential> = Value::<'_>::from(v).try_into()?;
-                let credentials: std::result::Result<
-                    Vec<crate::model::Credential>,
-                    zvariant::Error,
-                > = dbus_credentials
-                    .into_iter()
-                    .map(|creds| Ok(creds.into()))
-                    .collect();
-                Ok(Self::SetCredentials(credentials?))
-            }
-
-            ClientUpdate::WaitingForDevice(v) => {
-                let dbus_device: Device = Value::<'_>::from(v).try_into()?;
-                let device: crate::model::Device = dbus_device.try_into().map_err(|_| {
-                    zvariant::Error::Message("Could not deserialize device".to_string())
-                })?;
-                Ok(Self::WaitingForDevice(device))
-            }
-            ClientUpdate::SelectingDevice(_) => Ok(Self::SelectingDevice),
-
-            ClientUpdate::UsbNeedsPin(v) => v.try_into().map(|x: i32| {
-                let attempts_left = if x == -1 { None } else { Some(x as u32) };
-                Self::UsbNeedsPin { attempts_left }
-            }),
-            ClientUpdate::UsbNeedsUserVerification(v) => v.try_into().map(|x: i32| {
-                let attempts_left = if x == -1 { None } else { Some(x as u32) };
-                Self::UsbNeedsUserVerification { attempts_left }
-            }),
-            ClientUpdate::UsbNeedsUserPresence(_) => Ok(Self::UsbNeedsUserPresence),
-
-            ClientUpdate::HybridNeedsQrCode(v) => v.try_into().map(Self::HybridNeedsQrCode),
-            ClientUpdate::HybridConnecting(_) => Ok(Self::HybridConnecting),
-            ClientUpdate::HybridConnected(_) => Ok(Self::HybridConnected),
-
-            ClientUpdate::Completed(_) => Ok(Self::Completed),
-            ClientUpdate::Failed(v) => v.try_into().map(Self::Failed),
-        }
-    }
-}
-
 #[derive(SerializeDict, DeserializeDict, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct Credential {
@@ -206,18 +125,6 @@ impl From<crate::model::Credential> for Credential {
         }
     }
 }
-
-/*
-impl TryFrom<Value<'_>> for Credential {
-    type Error = zvariant::Error;
-    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zvariant::to_bytes(ctx, &value)?;
-        let credential: Credential = encoded.deserialize()?.0;
-        Ok(credential)
-    }
-}
-    */
 
 #[derive(SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "a{sv}")]
