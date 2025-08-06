@@ -23,3 +23,4 @@ meson.add_dist_script(
 subdir('credentialsd-common')
 subdir('credentialsd')
 subdir('credentialsd-ui')
+subdir('dbus')
