@@ -16,7 +16,7 @@ use qrcode::QrCode;
 use tracing::debug;
 
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
-use application::ExampleApplication;
+use application::CredentialsUi;
 
 use super::Transport;
 use super::{Credential, Device};
@@ -365,7 +365,7 @@ pub fn start_gtk_app(
     let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
     gio::resources_register(&res);
 
-    let app = ExampleApplication::new(tx_event, rx_update);
+    let app = CredentialsUi::new(tx_event, rx_update);
     app.run();
 }
 

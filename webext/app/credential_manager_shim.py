@@ -18,6 +18,8 @@ logging.basicConfig(
     filename="/tmp/credential_manager_shim.log", encoding="utf-8", level=logging.DEBUG
 )
 
+DBUS_DOC_FILE = "@DBUS_DOC_FILE@"
+
 
 def getMessage():
     logging.debug("blocking on read")
@@ -353,7 +355,7 @@ async def run(cmd, options, origin, top_origin):
 
     logging.info(os.getcwd())
 
-    with open("../../contrib/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
+    with open(DBUS_DOC_FILE, "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(

@@ -1,6 +1,6 @@
 let requestCounter = 0;
 const pendingRequests = {}
-var webauthnPort = browser.runtime.connect({ name: "credential_manager_shim" });
+var webauthnPort = browser.runtime.connect({ name: "credentialsd-helper" });
 console.log("loading content")
 
 webauthnPort.onMessage.addListener(({ requestId, data, error }) => {

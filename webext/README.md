@@ -7,9 +7,9 @@ This requires some setup to make it work:
 
 # Prerequisites
 
-Currently, this web extension relies on the `dbus-next` to interact with D-Bus
-services. If you have that package installed in your system Python, this
-should work. You can test using the following:
+Currently, this web extension relies on the `dbus-next` Python package to
+interact with D-Bus services. If you have that package installed in your system
+Python, this should work. You can test using the following:
 
 ```shell
 python3 -c 'import dbus_next; print("dbus-next is installed")'
@@ -35,10 +35,28 @@ couple of options:
   pip3 install dbus-next
   echo "Change the first line in webext/app/credential_manager_shim.py to:"
   echo "#!$(readlink -f ./env/bin/python3)"
-  # Update the shebang to point to the absolute path to webext/env/bin/python3
   ```
 
 # Setup Instructions
+
+## For Testing
+
+1. Run the install script for the repository:
+    ```shell
+    meson setup -Dprofile=default -Dprefix=/usr/local build-release
+    cd build-release
+    meson install
+    mkdir -p ~/.mozilla/native-messaging-hosts/
+    ln -s /usr/local/lib64/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.json ~/.mozilla/native-messaging-hosts/
+    ```
+   Note that since it is installing to `/usr/local`, Meson will ask you to use `sudo` to elevate privileges to install.
+2. Log out and log back in again to restart the D-Bus session bus.
+2. Open Firefox and go to `about:debugging`.
+3. Click "This Firefox" > Load Temporary Extension. Select `/usr/local/share/credentialsd/credentialsd-firefox-helper.xpi`.
+4. Navigate to [https://webauthn.io]().
+5. Run through the registration and creation process.
+
+## For Development
 
 (Note: Paths are relative to root of this repository)
 

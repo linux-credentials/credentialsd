@@ -1,12 +1,11 @@
 use async_std::channel::{Receiver, Sender};
-use gettextrs::gettext;
 use tracing::{debug, info};
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use super::{ViewModel, window::ExampleApplicationWindow};
+use super::{ViewModel, window::CredentialsUiWindow};
 use crate::config::{APP_ID, PKGDATADIR, PROFILE, VERSION};
 use crate::gui::view_model::{ViewEvent, ViewUpdate};
 
@@ -21,25 +20,25 @@ mod imp {
     };
 
     #[derive(Debug, Default)]
-    pub struct ExampleApplication {
-        pub window: OnceCell<WeakRef<ExampleApplicationWindow>>,
+    pub struct CredentialsUi {
+        pub window: OnceCell<WeakRef<CredentialsUiWindow>>,
 
         pub(super) tx: RefCell<Option<Sender<ViewEvent>>>,
         pub(super) rx: RefCell<Option<Receiver<ViewUpdate>>>,
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for ExampleApplication {
-        const NAME: &'static str = "ExampleApplication";
-        type Type = super::ExampleApplication;
+    impl ObjectSubclass for CredentialsUi {
+        const NAME: &'static str = "CredentialsUi";
+        type Type = super::CredentialsUi;
         type ParentType = gtk::Application;
     }
 
-    impl ObjectImpl for ExampleApplication {}
+    impl ObjectImpl for CredentialsUi {}
 
-    impl ApplicationImpl for ExampleApplication {
+    impl ApplicationImpl for CredentialsUi {
         fn activate(&self) {
-            debug!("GtkApplication<ExampleApplication>::activate");
+            debug!("GtkApplication<CredentialsUi>::activate");
             self.parent_activate();
             let app = self.obj();
 
@@ -53,7 +52,7 @@ mod imp {
             let rx = self.rx.take().expect("receiver to be initiated");
             let view_model = ViewModel::new(tx, rx);
             let vm2 = view_model.clone();
-            let window = ExampleApplicationWindow::new(&app, view_model);
+            let window = CredentialsUiWindow::new(&app, view_model);
             let window2 = window.clone();
             vm2.clone().connect_completed_notify(move |vm| {
                 if vm.completed() {
@@ -91,7 +90,7 @@ mod imp {
         }
 
         fn startup(&self) {
-            debug!("GtkApplication<ExampleApplication>::startup");
+            debug!("GtkApplication<CredentialsUi>::startup");
             self.parent_startup();
             let app = self.obj();
 
@@ -104,17 +103,17 @@ mod imp {
         }
     }
 
-    impl GtkApplicationImpl for ExampleApplication {}
+    impl GtkApplicationImpl for CredentialsUi {}
 }
 
 glib::wrapper! {
-    pub struct ExampleApplication(ObjectSubclass<imp::ExampleApplication>)
+    pub struct CredentialsUi(ObjectSubclass<imp::CredentialsUi>)
         @extends gio::Application, gtk::Application,
         @implements gio::ActionMap, gio::ActionGroup;
 }
 
-impl ExampleApplication {
-    fn main_window(&self) -> ExampleApplicationWindow {
+impl CredentialsUi {
+    fn main_window(&self) -> CredentialsUiWindow {
         self.imp().window.get().unwrap().upgrade().unwrap()
     }
 
@@ -128,13 +127,7 @@ impl ExampleApplication {
             })
             .build();
 
-        // About
-        let action_about = gio::ActionEntry::builder("about")
-            .activate(|app: &Self, _, _| {
-                app.show_about_dialog();
-            })
-            .build();
-        self.add_action_entries([action_quit, action_about]);
+        self.add_action_entries([action_quit]);
     }
 
     // Sets up keyboard shortcuts
@@ -153,21 +146,6 @@ impl ExampleApplication {
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
-    }
-
-    fn show_about_dialog(&self) {
-        let dialog = gtk::AboutDialog::builder()
-            .logo_icon_name(APP_ID)
-            .license_type(gtk::License::Lgpl30Only)
-            .website("https://github.com/linux-credentials/linux-webauthn-portal-api")
-            .version(VERSION)
-            .transient_for(&self.main_window())
-            .translator_credits(gettext("translator-credits"))
-            .modal(true)
-            .authors(vec!["Isaiah Inuwa <isaiah.inuwa@gmail.com>"])
-            .build();
-
-        dialog.present();
     }
 
     pub fn run(&self) -> glib::ExitCode {
