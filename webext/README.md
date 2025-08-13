@@ -55,7 +55,7 @@ couple of options:
 1. Copy `webext/app/credential_manager_shim.json` to `~/.mozilla/native-messaging-hosts/credential_manager_shim.json`.
 2. In `webext/app/credential_manager_shim.py`, point the `DBUS_DOC_FILE`
    variable to the absolute path to
-   `contrib/xyz.iinuwa.credentialsd.Credentials.xml`.
+   `doc/xyz.iinuwa.credentialsd.Credentials.xml`.
 3. In the copied file, replace the `path` key with the absolute path to `webext/app/credential_manager_shim.py`
 4. Open Firefox and go to `about:debugging`
 5. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`

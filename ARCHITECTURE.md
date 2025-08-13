@@ -204,10 +204,6 @@ cd demo_client/
 ./main.py get
 ```
 
-## `contrib/`
-
-Various helper files.
-
 # Future Goals
 
 ## LSM Hardening
