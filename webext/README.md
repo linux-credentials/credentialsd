@@ -1,7 +1,8 @@
 This is a web extension that allows browsers to connect to the D-Bus service
 provided by this project. It can be used for testing.
 
-Currently, this is written only for Firefox; there will be some slight API tweaks required to make this work in Chrome.
+Currently, this is written only for Firefox; there will be some slight API
+tweaks required to make this work in Chrome.
 
 This requires some setup to make it work:
 
@@ -41,16 +42,7 @@ couple of options:
 
 ## For Testing
 
-1. Run the install script for the repository:
-    ```shell
-    meson setup -Dprofile=default -Dprefix=/usr/local build-release
-    cd build-release
-    meson install
-    mkdir -p ~/.mozilla/native-messaging-hosts/
-    ln -s /usr/local/lib64/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.json ~/.mozilla/native-messaging-hosts/
-    ```
-   Note that since it is installing to `/usr/local`, Meson will ask you to use `sudo` to elevate privileges to install.
-2. Log out and log back in again to restart the D-Bus session bus.
+1. Follow the instructions in the ["For Installing/Testing" section of `BUILDING.md`](/BUILDING.md#for-installing-testing).
 2. Open Firefox and go to `about:debugging`.
 3. Click "This Firefox" > Load Temporary Extension. Select `/usr/local/share/credentialsd/credentialsd-firefox-helper.xpi`.
 4. Navigate to [https://webauthn.io]().
@@ -61,11 +53,14 @@ couple of options:
 (Note: Paths are relative to root of this repository)
 
 1. Copy `webext/app/credential_manager_shim.json` to `~/.mozilla/native-messaging-hosts/credential_manager_shim.json`.
-2. In the copied file, replace the `path` key with the absolute path to `webext/app/credential_manager_shim.py`
-3. Open Firefox and go to `about:debugging`
-4. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
-5. Build with `ninja -C ./build` and run the following binaries binary to start the D-Bus services.
+2. In `webext/app/credential_manager_shim.py`, point the `DBUS_DOC_FILE`
+   variable to the absolute path to
+   `contrib/xyz.iinuwa.credentialsd.Credentials.xml`.
+3. In the copied file, replace the `path` key with the absolute path to `webext/app/credential_manager_shim.py`
+4. Open Firefox and go to `about:debugging`
+5. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
+6. Build with `ninja -C ./build` and run the following binaries binary to start the D-Bus services.
    - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
    - `./build/credentialsd/target/debug/credentialsd`
-6. Navigate to [https://webauthn.io]().
-7. Run through the registration and creation process.
+7. Navigate to [https://webauthn.io]().
+8. Run through the registration and creation process.
