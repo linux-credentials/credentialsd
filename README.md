@@ -4,57 +4,54 @@ A Linux Credential Manager API.
 
 (Previously called `linux-webauthn-platform-api`.)
 
-## How to run
+## How to install
 
-### Build Requirements
+### From packages
 
-This project uses Meson and Ninja.
+We have [precompiled RPM packages for Fedora and openSUSE][obs-packages] hosted
+by Open Build Services (OBS). We also copy these for released versions to the
+[release page][release-page].
 
-Package requirements:
+There are several sub-packages:
 
-- GTK4
-- gettext
-- libdbus-1
-- libssl/openssl
-- libudev
-- desktop-file-utils
+- `credentialsd`: The core credential service
+- `credentialsd-ui`: The reference implementation of the UI component for
+  credentialsd.
+- `credentialsd-webextension`: Binaries and manifest files required for the
+  Firefox add-on to function
 
-Using the web extension also requires `python3-dbus-next`.
+[obs-packages]: https://build.opensuse.org/package/show/home:MSirringhaus:webauthn_devel/credentialsd
+[release-page]: https://github.com/linux-credentials/credentialsd/releases
 
-For example, on Ubuntu:
+### From source
 
-```shell
-sudo apt update && sudo apt install \
-  # Build dependencies
-  curl git build-essential \
-  # Meson/Ninja dependencies
-  python3 python3-pip python3-setuptools python3-wheel ninja-build \
-  # project dependencies
-  libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
-  # packaging dependencies
-  desktop-file-utils \
-```
+Alternatively, you can build the project yourself using the instructions in
+[BUILDING.md](/BUILDING.md).
 
-### Compiling
+## How to use
 
-```shell
-git clone https://github.com/linux-credentials/credentialsd
-cd credentialsd
-meson setup build -Dprofile=development
-ninja -C build
-```
+Right now, there are two ways to use this service.
 
-### Running the server
+### Experimental Firefox Add-On
 
-```shell
-# Run the server, with debug logging enabled
-export GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data
-export RUST_LOG=credentialsd=debug,credentials_ui=debug
-./build/credentialsd/target/debug/credentialsd &
-./build/credentialsd-ui/target/debug/credentialsd-ui
-```
+There is an add-on that you can install in Firefox 140+ that allows you to test
+`credentialsd` without a custom Firefox build. You can get the XPI from the
+[releases page][release-page] for the corresponding version of
+`credentialsd-webextension` package that you installed.
 
-### Clients
+Currently, this add-on only works for https://webauthn.io and
+https://demo.yubico.com, but can be used to test various WebAuthn options and
+hardware.
+
+### Experimental Firefox Build
+
+There is also an experimental Firefox build that contains a patch to interact
+with `credentialsd` directly without an add-on. You can access a
+[Flatpak package for it on OBS][firefox-patch-flatpak] as well.
+
+[firefox-patch-flatpak]: https://download.opensuse.org/repositories/home:/MSirringhaus:/webauthn_devel/openSUSE_Factory_flatpak/
+
+## Clients
 
 There is a demo client in the `demo_client`. It mimics an RP, saving the created public keys to a local file and verifying assertions against it.
 
@@ -64,7 +61,7 @@ cd demo_client/
 ./main.py get
 ```
 
-There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [webext/README.md]().
+There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [/webext/README.md]().
 
 ## Goals
 
@@ -109,4 +106,4 @@ Alternatively, lock out the credential based on incorrect attempts.
 
 # License
 
-See the [LICENSE.md](LICENSE.md) file for license rights and limitations (LGPL-3.0-only).
+See the [LICENSE.md](/LICENSE.md) file for license rights and limitations (LGPL-3.0-only).
