@@ -1,6 +1,8 @@
-🚧 Excuse the mess, work in progress! 🚧
+# credentialsd
 
-# Linux Credential Manager API
+A Linux Credential Manager API.
+
+(Previously called `linux-webauthn-platform-api`.)
 
 ## How to run
 
@@ -16,6 +18,8 @@ Package requirements:
 - libssl/openssl
 - libudev
 - desktop-file-utils
+
+Using the web extension also requires `python3-dbus-next`.
 
 For example, on Ubuntu:
 
@@ -34,8 +38,8 @@ sudo apt update && sudo apt install \
 ### Compiling
 
 ```shell
-git clone https://github.com/linux-credentials/linux-webauthn-platform-api
-cd linux-webauthn-platform-api
+git clone https://github.com/linux-credentials/credentialsd
+cd credentialsd
 meson setup build -Dprofile=development
 ninja -C build
 ```
