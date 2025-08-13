@@ -151,6 +151,10 @@ Alternatively, lock out the credential based on incorrect attempts.
 - authenticator-rs
 - webauthn-rs
 
+# Security Policy
+
+See [SECURITY.md](/SECURITY.md) for our security policy.
+
 # License
 
 See the [LICENSE.md](LICENSE.md) file for license rights and limitations (LGPL-3.0-only).
