@@ -336,6 +336,9 @@ pub enum ServiceError {
     /// No matching credentials were found on the device.
     NoCredentials,
 
+    /// Credential was already registered with this device (credential ID contained in excludeCredentials)
+    CredentialExcluded,
+
     /// Too many incorrect PIN attempts, and authenticator must be removed and
     /// reinserted to continue any more PIN attempts.
     ///
@@ -363,6 +366,7 @@ impl From<ServiceError> for crate::model::Error {
         match value {
             ServiceError::AuthenticatorError => Self::AuthenticatorError,
             ServiceError::NoCredentials => Self::NoCredentials,
+            ServiceError::CredentialExcluded => Self::CredentialExcluded,
             ServiceError::PinAttemptsExhausted => Self::PinAttemptsExhausted,
             // TODO: this is bogus, we should refactor to remove the tuple field
             // and let the client decide how to render the error.
@@ -439,6 +443,7 @@ impl TryFrom<UsbState> for crate::model::UsbState {
                     match error_code.as_ref() {
                         "AuthenticatorError" => ServiceError::AuthenticatorError,
                         "NoCredentials" => ServiceError::NoCredentials,
+                        "CredentialExcluded" => ServiceError::CredentialExcluded,
                         "PinAttemptsExhausted" => ServiceError::PinAttemptsExhausted,
                         _ => ServiceError::Internal,
                     }

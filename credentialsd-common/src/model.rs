@@ -274,6 +274,8 @@ pub enum Error {
     AuthenticatorError,
     /// No matching credentials were found on the device.
     NoCredentials,
+    /// Credential was already registered with this device (credential ID contained in excludeCredentials)
+    CredentialExcluded,
     /// Too many incorrect PIN attempts, and authenticator must be removed and
     /// reinserted to continue any more PIN attempts.
     ///
@@ -292,6 +294,7 @@ impl Display for Error {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
             Self::NoCredentials => f.write_str("NoCredentials"),
+            Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
             Self::Internal(s) => write!(f, "InternalError: {s}"),
         }
