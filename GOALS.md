@@ -1,8 +1,23 @@
 # Goals
 
-The goal of this repository is to define a spec for clients (apps, browsers,
-etc.) to retrieve user credentials in a uniform way across Linux desktop
-environments.
+The goal of this repository is to define a spec and implementation for clients
+(apps, browsers, etc.) to retrieve user credentials in a uniform way across
+Linux desktop environments.
+
+## Motivation
+
+Our primary motivation is to get passkey into the hands of users. Passkeys are
+growing as a powerful authentication mechanism for users. As the ecosystem
+becomes more mature, browsers are deferring access to passkeys to OS APIs on
+other platforms, like Windows Hello, Keychain on macOS and iOS, and
+Credential Manager on Android.
+
+On Linux, there is no OS API so handling passkeys is entirely up to the browser,
+which is at a disadvantage to the OS in terms of hardware access and desktop
+integration. This situation also requires each individual browser or application
+to reimplement the same features. We want to change that!
+
+## Direction
 
 Some high-level goals:
 
@@ -25,7 +40,8 @@ Some non-goals:
 
 - Fully integrate with any specific desktop environment. Each desktop
   environment (GNOME, KDE, etc.) has its own UI and UX conventions, as well as
-  system configuration methods (e.g., GNOME Settings), which this API will need to integrate with.
+  system configuration methods (e.g., GNOME Settings), which this API will need
+  to integrate with.
   Because of the variation, we intend to leave integration with these other
   components to developers more familiar with each of the desktop environments.
   For now, we are using bare GTK to build a UI for testing, but any UI
@@ -42,7 +58,7 @@ Some non-goals:
   process is transparent enough that someone else could design something that
   works for BSDs.
 
-## Current Work
+## Progress
 
 - April 2025: Added web extension for testing in Firefox.
 - March 2025: Integrated libwebauthn to support USB authenticators.

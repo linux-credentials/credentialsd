@@ -4,12 +4,18 @@ A Linux Credential Manager API.
 
 (Previously called `linux-webauthn-platform-api`.)
 
+## Goals
+
+The primary goal of this project is to provide a spec and reference
+implementation of an API to mediate access to web credentials, initially local
+and remote FIDO2 authenticators. See [GOALS.md](/GOALS.md) for more information.
+
 ## How to install
 
 ### From packages
 
 We have [precompiled RPM packages for Fedora and openSUSE][obs-packages] hosted
-by Open Build Services (OBS). We also copy these for released versions to the
+by the Open Build Service (OBS). We also copy these for released versions to the
 [release page][release-page].
 
 There are several sub-packages:
@@ -62,12 +68,6 @@ cd demo_client/
 ```
 
 There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [/webext/README.md]().
-
-## Goals
-
-The primary goal of this project is to provide a spec and reference
-implementation of an API to mediate access to web credentials, initially local
-and remote FIDO2 authenticators. See [GOALS.md](/GOALS.md) for more information.
 
 ## Mockups
 

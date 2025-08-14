@@ -7,7 +7,7 @@ This project uses Meson, Ninja, and Cargo.
 We use Meson 1.5.0+. If your package manager has an older version, you can
 install a new version [using the pip module][meson-pip-install].
 
-There is currently no documented minimum support Rust version (MSRV), but 1.83+
+There is currently no documented minimum support Rust version (MSRV), but 1.85+
 should work.
 
 [meson-pip-install]: https://mesonbuild.com/Quick-guide.html#installation-using-python
@@ -60,7 +60,9 @@ sudo dnf install \
 
 # For Installing/Testing
 
-If you are interested in installing the program, you can use `meson install` to install the details.
+If you are interested in installing the program, you can use `meson install` to
+install the details. (If you would like to test without installing, you can
+follow the [build instructions for development](#for-development) below.)
 
 ```shell
 git clone https://github.com/linux-credentials/credentialsd
@@ -70,13 +72,22 @@ cd build-release
 meson install
 ```
 
-Note that since it Meson is installing to `/usr/local`, Meson will ask you to use `sudo` to elevate privileges to install.
+Note that since Meson is installing to `/usr/local`, it will ask you to use
+`sudo` to elevate privileges to install.
 
-The first time you run this, you must log out and log back in again to restart the D-Bus session bus for it to automatically start the D-Bus services on-demand.
+## Running the installed server
 
-### Testing with Firefox Web Add-On
+When using the installed server, systemd or D-Bus should take care of starting
+the services on demand, so you don't need to start it manually.
 
-Note: If you are testing the Firefox web extension, you will need to link the native messaging manifest to your home directory, since Firefox does not read from `/usr/local`:
+The first time you install this, though, you must log out and log back in again
+for the service activation files to take effect.
+
+## Testing installed builds with Firefox Web Add-On
+
+Note: If you are testing the Firefox web extension, you will need to link the
+native messaging manifest to your home directory, since Firefox does not read
+from `/usr/local`:
 
 ```shell
 mkdir -p ~/.mozilla/native-messaging-hosts/
@@ -92,7 +103,7 @@ meson setup -Dprofile=development build
 ninja -C build
 ```
 
-## Running the server
+## Running the server for development
 
 To run the required services during development, you need to add some
 environment variables.
@@ -104,6 +115,11 @@ export RUST_LOG=credentialsd=debug,credentials_ui=debug
 ./build/credentialsd/target/debug/credentialsd &
 ./build/credentialsd-ui/target/debug/credentialsd-ui
 ```
+
+## Testing development builds with Firefox Web Add-On
+
+If you are using the Firefox add-on to build, follow the instructions for
+development in [`webext/README.md`](/webext/README.md#for-development).
 
 # For Packaging
 
