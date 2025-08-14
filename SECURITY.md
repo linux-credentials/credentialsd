@@ -1,12 +1,13 @@
 # credentialsd Security Policy
 
-This policy outlines our intentions for addressing security issues and practices
-for security researchers investigating this project.
+Since this project handles very sensitive data, we, the maintainers of
+credentialsd, take security seriously. This policy outlines our intentions for
+addressing security issues and practices for security researchers investigating
+this project.
 
 ## Submitting Vulnerability Reports
 
-Since this project handles very sensitive data, we take security seriously. If
-you have discovered a security vulnerability in this project, please report it
+If you have discovered a security vulnerability in this project, please report it
 to us privately via the process below.
 
 We use GitHub for private vulnerability disclosure. To report a vulnerability:
@@ -34,7 +35,7 @@ We only support the latest published release. We may backport patches when
 possible to help users running on distributions that package older versions of
 our software.
 
-## Threat Model
+# Threat Model
 
 We do not currently have a formally defined threat model; we will continue to
 document it over time. However, the basic security guarantees we would like to
@@ -42,17 +43,17 @@ achieve are defined below.
 
 Please note, that if you believe you have discovered a security problem outside
 of this scope, we still want to know about it! We would still like to discuss
-the issue privately, but we may not decide to address it within the response
+the issue privately, but we may decide to address it beyond the response
 time described above.
 
-### Definitons
+## Definitons
 
 - _privileged client_: A client that is allowed to make requests for credentials
   for any origin.
 - _unprivileged client_: A client that is allowed to make requests for
   credentials for only a preconfigured set of origins.
 
-### Scope
+## Scope
 
 - Privileged clients may request credentials via this service[^1] for any origin.
 - The list of privileged clients cannot change without:
@@ -68,5 +69,5 @@ time described above.
     data), so those are out of scope.
 
 [^2]:
-    In the future we may offer stricter configuration where privileged clients
-    must include permission metadata be signed by a trusted party.
+    In the future we may offer a stricter guarantee that privileged clients
+    must include permission in application metadata signed by a trusted party.
