@@ -55,6 +55,8 @@ time described above.
 
 ## Scope
 
+Here is the current list of items that are in scope:
+
 - Privileged clients may request credentials via this service[^1] for any origin.
 - The list of privileged clients cannot change without:
   - `root` privileges, or
@@ -62,6 +64,15 @@ time described above.
 - The list of unprivileged clients cannot change without:
   - `root` privileges, or
   - user consent[^2]
+
+We implicitly trust the kernel and D-Bus, so any attacks that exploit those are
+out of scope for this project.
+
+Some other attacks that are explicitly out of scope are those that require:
+
+- physical access
+- direct access to authenticators
+- root privilege escalation
 
 [^1]:
     Various systems may allow users to interact with authenticators directly
