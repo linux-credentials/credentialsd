@@ -21,12 +21,12 @@ We use GitHub for private vulnerability disclosure. To report a vulnerability:
 
 ## Expected Response
 
-We will acknowledge the receipt of the report immediately and will work with
-you. We seek to investigate issues within 30 days.
+We aim to acknowledge the receipt of the report as soon as possible and will
+work with you. We seek to investigate issues within 30 days.
 
 If the issue is confirmed upon investigation, we will collaborate with you to
 remediate the vulnerability. Depending on the severity or developer
-availability, we may request more time to remediate the issue before allowing
+availability, we may request more time to remediate the issue before
 public disclosure.
 
 # Supported Releases
