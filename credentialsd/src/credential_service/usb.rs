@@ -343,6 +343,7 @@ async fn handle_events(
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,
             });
             if let Err(err) = signal_tx.send(response).await {

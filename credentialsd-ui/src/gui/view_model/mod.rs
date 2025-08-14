@@ -230,6 +230,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 Error::AuthenticatorError | Error::Internal(_) => {
                                     "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
                                 }
+                                Error::CredentialExcluded => {
+                                    "This credential is already registered on this authenticator."
+                                }
                             });
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))
