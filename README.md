@@ -57,18 +57,6 @@ with `credentialsd` directly without an add-on. You can access a
 
 [firefox-patch-flatpak]: https://download.opensuse.org/repositories/home:/MSirringhaus:/webauthn_devel/openSUSE_Factory_flatpak/
 
-## Clients
-
-There is a demo client in the `demo_client`. It mimics an RP, saving the created public keys to a local file and verifying assertions against it.
-
-```shell
-cd demo_client/
-./main.py create
-./main.py get
-```
-
-There is also a demo web extension that can be used to test the service in Firefox. Instructions are in [/webext/README.md]().
-
 ## Mockups
 
 Here are some mockups of what this would look like for a user:

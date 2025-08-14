@@ -18,7 +18,7 @@ import webauthn
 async def run(cmd):
     bus = await MessageBus().connect()
 
-    with open("../contrib/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
+    with open("../doc/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(

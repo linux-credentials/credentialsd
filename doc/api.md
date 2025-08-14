@@ -1,6 +1,7 @@
 # API Overview
 
 There are three main API defined by this specification:
+
 - [Gateway API](#gateway-api)
 - [Flow Control API](#flow-control-api)
 - [UI Control API](#ui-control-api)
@@ -59,6 +60,78 @@ _privileged_ client: a client that is trusted to set any origin for its requests
 _relying party_: an entity wishing to auhtenticate a user
 _unprivileged client_: a client that is constrained to use a predetermined set of origin(s)
 
+# General Notes
+
+## D-Bus/JSON serialization
+
+> TODO: rename fields to snake_case so that this note is true in all cases.
+
+This API is modelled after the [Credential Management API][credman-api]. The
+top-level fields corresponding to `navigator.credentials.create()` and `get()`
+are passed as fields in D-Bus dictionaries using snake_case, according to D-Bus
+convention.
+
+So where Credential Management takes:
+
+```json
+{
+  "origin": "example.com",
+  "topOrigin": "example.com",
+  "password": true
+}
+```
+
+this API takes:
+
+```
+[a{sv}] {
+    origin: Variant(""),
+    top_origin: Variant(""), // topOrigin is changed to top_origin
+    password: Variant(true),
+}
+```
+
+However, for the complex requests and responses in the WebAuthn `create()` and `get()`
+methods, this API passes JSON-encoded data as a string. Field and enum values
+inside the JSON string should remain in camelCase.
+
+Additionally, `ArrayBuffer` objects, which are valid in JavaScript but cannot be
+serialized in JSON, must be encoded as base64url strings with padding removed.
+
+So if a client passed this in JavaScript:
+
+```javascript
+{
+  "origin": "example.com",
+  "topOrigin": "example.com",
+  "publicKey": {
+    "challenge": new Uint8Array([97, 32, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
+    "excludeCredentials": [
+        {"type:" "public-key", "alg": -7}
+    ],
+    // ...
+  }
+}
+```
+
+it would pass this request to this API:
+
+```
+[a{sv}] {
+  origin: Variant(''),
+  top_origin: Variant(''),                      // top-level fields topOrigin and publicKey are
+  public_key: Variant([a{sv}] {                 // changed to snake_case
+    registration_request_json: [s] '{           // <- JSON-encoded string
+        "challenge": "YSBjaGFsbGVuZ2U",         // buffer is encoded as base64url without padding
+        "excludeCredentials": [                 // "excludeCredentials" is not changed to snake_case
+            {"type": "public-key", "alg": -7}   // "public-key" is not changed to snake_case
+        ]
+        // ...
+    }'
+  })
+}
+```
+
 # Gateway API
 
 The Gateway is the entrypoint for public clients to retrieve and store
@@ -95,6 +168,7 @@ CredentialType[s] [
 ```
 
 #### Request context
+
 > TODO: replace is_same_origin with topOrigin, required if origin is set.
 
 > TODO: Should we say that `origin` will be optional in the future?
@@ -117,6 +191,7 @@ suffix, as defined by the [Public Suffix List][PSL].
 [PSL]: https://github.com/publicsuffix/list
 
 #### Credential Types
+
 > TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
 
 Currently, there is only one supported type of `CreateCredentialRequest`,
@@ -138,9 +213,10 @@ corresponds to WebAuthn credentials:
 type.
 
 ### Response
+
 > TODO: Should we group common types in their own section for reference?
->       CredentialType will be referenced in the request and response of both create
->       and get methods.
+> CredentialType will be referenced in the request and response of both create
+> and get methods.
 
 `CreateCredentialResponse` is a polymorphic type that depends on the type of
 the request sent. Its `type` field is a string specifies what kind of
@@ -208,6 +284,7 @@ When multiple credential types are specified, the request context applies to
 all credentials.
 
 #### Credential Types
+
 > TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
 
 Currently, there is only one supported type of credential, specified by the
@@ -226,9 +303,10 @@ GetPublicKeyCredentialOptions[a{sv}] {
 [def-pubkeycred-request-options]: https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialrequestoptions
 
 ### Response
+
 > TODO: Should we group common types in their own section for reference?
->       CredentialType will be referenced in the request and response of both create
->       and get methods.
+> CredentialType will be referenced in the request and response of both create
+> and get methods.
 
 `GetCredentialResponse` is a polymorphic type that depends on the type of the
 request sent. Its `type` field is a string specifies what kind of credential it
@@ -419,10 +497,11 @@ The device needs evidence of user presence (e.g. touch) to release the credentia
 `value`: No associated value.
 
 #### UsbState::SELECT_CREDENTIAL
+
 > TODO: Change tense of verb to match other states -> SELECTING_CREDENTIAL
 
 > TODO: field names of Credential type are confusing: "name" is an ID, and
->       "username" is a name. We should flip them.
+> "username" is a name. We should flip them.
 
 Multiple credentials have been found and the user has to select which to use
 
@@ -468,6 +547,7 @@ ServiceError[?] [
     INTERNAL,
 ]
 ```
+
 #### ServiceError::AUTHENTICATOR_ERROR
 
 Some unknown error with the authenticator occurred.
@@ -497,6 +577,7 @@ Something went wrong with the credential service itself, not the authenticator.
 `type`: `"INTERNAL"`
 
 ### HybridState
+
 > TODO: Failed has no reason
 
 ```
@@ -588,7 +669,7 @@ Failed to receive a credential from the hybrid authenticator.
 > you would normally think as devices. Maybe "sources" works better?
 
 > TODO: CredentialMetadata is a bad name here, since this more corresponds to
-the "devices" or "sources" concept. Change to DeviceMetadata?
+> the "devices" or "sources" concept. Change to DeviceMetadata?
 
 This retrieves the various "devices" that the user can choose from to fulfill
 the request, filtered by the request origin and other request options.
@@ -683,6 +764,7 @@ selects which credential to release based on the authenticator.
 ### Response
 
 None.
+
 ### Errors
 
 TBD.
@@ -754,6 +836,7 @@ authentication methods, and the user's device can offer a consistent user
 interface.
 
 So the Credentials API differs from the Secret Service API in two main ways:
+
 - It supports specific credential formats (e.g. WebAuthn/FIDO2 credentials),
   rather than general secrets.
 - It is primarily focused on authenticating to relying parties.
