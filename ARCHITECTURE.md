@@ -117,15 +117,18 @@ they do not live in `credentialsd-common`).
 ### `credentialsd/src/webauthn.rs`
 
 Types and functions needed to repackage requests from and responses to
-JSON-strings according to the [WebAuthn spec](webauthn-3). With one notable
-deviation from the spec: Since we use JSON strings for requests and responses,
-raw binary fields need to be base64url-encoded strings. It is the
-responsibility of the application using this service to de/construct the field
-accordingly.
+JSON-strings according to the [WebAuthn spec](webauthn-3).
+
+There is one notable deviation from the spec: since we use JSON strings for
+requests and responses, raw binary fields need to be base64url-encoded strings.
+(See the note on [D-Bus/JSON serialization][dbus-json-serialization] in the API
+docs.) It is the responsibility of the application using this service to
+de-/construct the field accordingly.
 
 Re-exports many types from `libwebauthn`.
 
 [webauthn-3]: https://www.w3.org/TR/webauthn-3
+[dbus-json-serialization]: /doc/api.md#d-busjson-serialization
 
 ### `credentialsd/tests`
 
