@@ -15,8 +15,8 @@ Welcome! Thanks for looking into contributing to our project!
 
 # Ways to Contribute
 
-We are looking This document below primarily focuses on writing code for this
-project, but there are many ways you can help out:
+This document below primarily focuses on writing code for this
+project, but there are many different ways you can help out:
 
 - **Testing**: We only have access to a limited set of hardware and accounts.
   Installing the project and using it yourself is a great way to get us more
@@ -49,7 +49,8 @@ Here is a list of helpful resources you can consult:
 
 ## Documentation
 
-Before getting started, it may help you to read the documentation. Take a look at these:
+To help you get started, we have provided documentation for various parts of the
+project. Take a look at these:
 
 - [credentialsd API Specification](/doc/api.md)
 - [ARCHITECTURE.md](/ARCHITECTURE.md), our architecture guide.
@@ -98,7 +99,8 @@ For internal consistency, credentialsd uses `snake_case` for D-Bus field names
 and `SCREAMING_SNAKE_CASE` for enum values. This is consistent with D-Bus
 conventions, but it is distinct from Web Credential Management/WebAuthn
 conventions, which this API is based on. Values specified within JSON string
-payloads should stick to the naming conventions as specified in the WebAuthn.
+payloads should stick to the naming conventions as documented in the WebAuthn
+spec.
 
 ### Code Formatting and Linting
 
@@ -149,6 +151,11 @@ Write commit messages using the imperative mood, as if completing the sentence:
 "If applied, this commit will \_\_\_." For example, use "Fix some bug" instead
 of "Fixed some bug" or "Add a feature" instead of "Added a feature".
 
+Some examples:
+
+- "daemon: Allow clients to cancel their own requests"
+- "ui: Allow users to go back to device selection"
+
 (Take a look at this [blog post][commit-messages-guide] for more information on
 writing good commit messages.)
 
@@ -183,5 +190,5 @@ make sure that your changes can build and pass all tests, as well as running the
 formatting and linting tools [mentioned above](#code-formatting-and-linting).
 
 You should also follow the install instructions in [`BUILDING.md`](/BUILDING.md)
-and execute authentication flows in a browser the to ensure that everything
+and execute authentication flows in a browser to ensure that everything
 still works as it should.
