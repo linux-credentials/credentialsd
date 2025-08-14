@@ -1,4 +1,5 @@
 pub mod hybrid;
+mod platform;
 pub mod usb;
 
 use std::{
@@ -25,10 +26,13 @@ use credentialsd_common::{
     server::{RequestId, ViewRequest},
 };
 
-use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
+use crate::credential_service::{
+    hybrid::HybridEvent, platform::PlatformStateStream, usb::UsbEvent,
+};
 
 use self::{
     hybrid::{HybridHandler, HybridState, HybridStateInternal},
+    platform::{PlatformHandler, PlatformState},
     usb::{UsbHandler, UsbStateInternal},
 };
 
@@ -60,7 +64,8 @@ impl RequestContext {
 }
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, P: PlatformHandler, U: UsbHandler, UC: UiController>
+{
     devices: Vec<Device>,
 
     /// Current request and channel to respond to caller.
@@ -68,14 +73,24 @@ pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> 
 
     hybrid_handler: H,
     usb_handler: U,
+    platform_handler: P,
 
     ui_control_client: Arc<UC>,
 }
 
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
-    CredentialService<H, U, UC>
+impl<
+        H: HybridHandler + Debug,
+        P: PlatformHandler,
+        U: UsbHandler + Debug,
+        UC: UiController + Debug,
+    > CredentialService<H, P, U, UC>
 {
-    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: Arc<UC>) -> Self {
+    pub fn new(
+        hybrid_handler: H,
+        platform_handler: P,
+        usb_handler: U,
+        ui_control_client: Arc<UC>,
+    ) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -93,6 +108,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
 
             hybrid_handler,
             usb_handler,
+            platform_handler,
 
             ui_control_client,
         }
@@ -194,7 +210,23 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
             tracing::error!(
-                "Attempted to start hybrid credential flow, but no request context was found."
+                "Attempted to start USB credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
+    }
+
+    pub fn get_platform_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = PlatformState> + Send + 'static>> {
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.platform_handler.start(request);
+            let ctx = self.ctx.clone();
+            Box::pin(PlatformStateStream::new(stream, ctx))
+        } else {
+            tracing::error!(
+                "Attempted to start platform authenticator flow, but no request context was found."
             );
             todo!("Handle error when context is not set up.")
         }
