@@ -17,12 +17,18 @@ Controler and UI Controller work together to guide the user through the
 process of selecting an appropriate credential based on the request received by
 the Gateway.
 
-The **UI Control API** is used to launch a UI for the user to respond to
-authenticator requests for user interaction. The **Flow Controller** mediates
-authenticator requests for user interaction. The UI Controller and Flow
-Controller pass user interaction request and action messages back and forth
-until the authenticator releases the credential. Then, the Flow Controller
-sends the credential to the Gateway, which relays the credential to the client.
+The **UI Controller** is used to launch a UI for the user to respond to
+authenticator requests for user interaction. The **Flow Controller** interacts
+with the OS and hardware, like detecting available transports and
+authenticators. It then relays the information needed for the UI to guide the
+user through the authentication flow, like prompts for a user to enter their PIN
+or touch the device. The UI Controller takes user input and responds back to the
+Flow Controller.
+
+The UI Controller and Flow Controller pass user interaction request and action
+messages back and forth until the authenticator releases the credential. Then,
+the Flow Controller sends the credential to the Gateway, which relays the
+credential to the client.
 
 Here is a diagram of the intended usage and interactions between the APIs.
 
@@ -110,9 +116,16 @@ they do not live in `credentialsd-common`).
 
 ### `credentialsd/src/webauthn.rs`
 
-Types and functions to deal with WebAuthn data.
+Types and functions needed to repackage requests from and responses to
+JSON-strings according to the [WebAuthn spec](webauthn-3). With one notable
+deviation from the spec: Since we use JSON strings for requests and responses,
+raw binary fields need to be base64url-encoded strings. It is the
+responsibility of the application using this service to de/construct the field
+accordingly.
 
 Re-exports many types from `libwebauthn`.
+
+[webauthn-3]: https://www.w3.org/TR/webauthn-3
 
 ### `credentialsd/tests`
 
