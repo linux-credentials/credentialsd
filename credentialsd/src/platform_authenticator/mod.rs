@@ -23,7 +23,7 @@ fn create_passkey(
     todo!()
 }
 
-struct InternalTransport;
+pub struct InternalTransport;
 impl Transport for InternalTransport {}
 impl Display for InternalTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -51,7 +51,7 @@ impl Display for PlatformAuthenticator {
     }
 }
 
-struct PlatformAuthenticatorChannel<'a> {
+pub struct PlatformAuthenticatorChannel<'a> {
     device: &'a PlatformAuthenticator,
     ux_update_sender: broadcast::Sender<PlatformUxUpdate>,
     auth_token_data: Option<AuthTokenData>,

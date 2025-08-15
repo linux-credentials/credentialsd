@@ -30,10 +30,21 @@ pub trait PlatformHandler {
         request: &CredentialRequest,
     ) -> impl Stream<Item = PlatformEvent> + Unpin + Send + Sized + 'static;
 }
-struct PlatformHandlerImpl {
+
+#[derive(Debug)]
+pub struct InMemoryPlatformHandler {
     task: Mutex<Option<AbortHandle>>,
 }
-impl PlatformHandler for PlatformHandlerImpl {
+
+impl InMemoryPlatformHandler {
+    pub fn new() -> Self {
+        Self {
+            task: Mutex::new(None),
+        }
+    }
+}
+
+impl PlatformHandler for InMemoryPlatformHandler {
     fn start(
         &self,
         request: &CredentialRequest,

@@ -24,6 +24,7 @@ use zbus::{
     ObjectServer,
 };
 
+use crate::credential_service::platform::PlatformHandler;
 use crate::credential_service::{
     hybrid::{HybridHandler, HybridState},
     usb::UsbHandler,
@@ -34,10 +35,11 @@ pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
 
 pub async fn start_flow_control_service<
     H: HybridHandler + Debug + Send + Sync + 'static,
+    P: PlatformHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
     UC: UiController + Debug + Send + Sync + 'static,
 >(
-    credential_service: CredentialService<H, U, UC>,
+    credential_service: CredentialService<H, P, U, UC>,
 ) -> zbus::Result<(
     Connection,
     Sender<(
@@ -72,9 +74,9 @@ pub async fn start_flow_control_service<
     Ok((conn, initiator_tx))
 }
 
-struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+struct FlowControlService<H: HybridHandler, P: PlatformHandler, U: UsbHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
-    svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+    svc: Arc<AsyncMutex<CredentialService<H, P, U, UC>>>,
     usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
@@ -92,9 +94,10 @@ struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
         default_service = "xyz.iinuwa.credentialsd.FlowControl",
     )
 )]
-impl<H, U, UC> FlowControlService<H, U, UC>
+impl<H, P, U, UC> FlowControlService<H, P, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync + 'static,
+    P: PlatformHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
     UC: UiController + Debug + Send + Sync + 'static,
 {
@@ -138,7 +141,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, P, U, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -191,7 +194,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, P, U, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -346,6 +349,7 @@ pub mod test {
 
     use crate::credential_service::{
         hybrid::{HybridHandler, HybridState},
+        platform::PlatformHandler,
         usb::UsbHandler,
         CredentialService, UiController, UsbState,
     };
@@ -466,14 +470,15 @@ pub mod test {
     }
 
     #[derive(Debug)]
-    pub struct DummyFlowServer<H, U, UC>
+    pub struct DummyFlowServer<H, P, U, UC>
     where
         H: HybridHandler + Debug + Send + Sync,
+        P: PlatformHandler + Debug + Send + Sync,
         U: UsbHandler + Debug + Send + Sync,
         UC: UiController + Debug + Send + Sync,
     {
         rx: mpsc::Receiver<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
-        svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+        svc: Arc<AsyncMutex<CredentialService<H, P, U, UC>>>,
         bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
         usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
         usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
@@ -482,9 +487,10 @@ pub mod test {
 
     impl<
             H: HybridHandler + Debug + Send + Sync,
+            P: PlatformHandler + Debug + Send + Sync,
             U: UsbHandler + Debug + Send + Sync,
             UC: UiController + Debug + Send + Sync,
-        > DummyFlowServer<H, U, UC>
+        > DummyFlowServer<H, P, U, UC>
     {
         /*
         async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
@@ -506,7 +512,9 @@ pub mod test {
             }
         }
         */
-        pub fn new(svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>) -> (Self, DummyFlowClient) {
+        pub fn new(
+            svc: Arc<AsyncMutex<CredentialService<H, P, U, UC>>>,
+        ) -> (Self, DummyFlowClient) {
             let (request_tx, request_rx) = mpsc::channel(32);
             let server = Self {
                 rx: request_rx,
@@ -677,9 +685,10 @@ pub mod test {
 
     impl<
             H: HybridHandler + Debug + Send + Sync,
+            P: PlatformHandler + Debug + Send + Sync,
             U: UsbHandler + Debug + Send + Sync,
             UC: UiController + Debug + Send + Sync,
-        > Drop for DummyFlowServer<H, U, UC>
+        > Drop for DummyFlowServer<H, P, U, UC>
     {
         fn drop(&mut self) {
             if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
