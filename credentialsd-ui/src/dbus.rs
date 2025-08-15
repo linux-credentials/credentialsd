@@ -15,10 +15,12 @@ pub trait FlowControlService {
 
     async fn get_hybrid_credential(&self) -> fdo::Result<()>;
 
+    async fn get_platform_credential(&self) -> fdo::Result<()>;
     async fn get_usb_credential(&self) -> fdo::Result<()>;
 
     async fn select_device(&self, device_id: String) -> fdo::Result<()>;
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()>;
+    async fn enter_platform_client_pin(&self, pin: String) -> fdo::Result<()>;
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()>;
     async fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
 

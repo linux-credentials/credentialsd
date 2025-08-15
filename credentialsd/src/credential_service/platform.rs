@@ -255,21 +255,26 @@ pub(super) enum PlatformStateInternal {
 pub enum PlatformState {
     NeedsPin {
         attempts_left: Option<u32>,
+        pin_tx: mpsc::Sender<String>,
     },
     SelectingCredential {
         creds: Vec<Credential>,
         cred_tx: mpsc::Sender<String>,
     },
     Failed(credentialsd_common::model::Error),
-    Completed(CredentialResponse),
+    Completed,
 }
 
 impl From<PlatformStateInternal> for PlatformState {
     fn from(value: PlatformStateInternal) -> Self {
         match value {
-            PlatformStateInternal::NeedsPin { attempts_left, .. } => {
-                Self::NeedsPin { attempts_left }
-            }
+            PlatformStateInternal::NeedsPin {
+                attempts_left,
+                pin_tx,
+            } => Self::NeedsPin {
+                attempts_left,
+                pin_tx,
+            },
             PlatformStateInternal::SelectingCredential { response, cred_tx } => {
                 Self::SelectingCredential {
                     creds: assertions_to_metadata(&response.assertions),
@@ -278,7 +283,28 @@ impl From<PlatformStateInternal> for PlatformState {
             }
 
             PlatformStateInternal::Failed(err) => Self::Failed(err),
-            PlatformStateInternal::Completed(response) => Self::Completed(response),
+            PlatformStateInternal::Completed(_) => Self::Completed,
+        }
+    }
+}
+
+impl From<&PlatformState> for credentialsd_common::model::PlatformState {
+    fn from(value: &PlatformState) -> Self {
+        match value {
+            PlatformState::NeedsPin { attempts_left, .. } => {
+                credentialsd_common::model::PlatformState::NeedsPin {
+                    attempts_left: attempts_left.clone(),
+                }
+            }
+            PlatformState::SelectingCredential { creds, .. } => {
+                credentialsd_common::model::PlatformState::SelectingCredential {
+                    creds: creds.clone(),
+                }
+            }
+            PlatformState::Completed => credentialsd_common::model::PlatformState::Completed,
+            PlatformState::Failed(error) => {
+                credentialsd_common::model::PlatformState::Failed(error.clone().into())
+            }
         }
     }
 }

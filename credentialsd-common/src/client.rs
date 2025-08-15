@@ -14,6 +14,7 @@ pub trait FlowController {
     ) -> impl Future<Output = Result<Vec<Device>, ()>> + Send;
 
     fn get_hybrid_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
+    fn get_platform_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
     fn get_usb_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
     fn initiate_event_stream(
         &mut self,
@@ -21,6 +22,10 @@ pub trait FlowController {
         Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>,
     > + Send;
     fn enter_client_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
+    fn enter_platform_client_pin(
+        &mut self,
+        pin: String,
+    ) -> impl Future<Output = Result<(), ()>> + Send;
     fn select_credential(
         &self,
         credential_id: String,

@@ -53,6 +53,15 @@ impl FlowController for DbusCredentialClient {
             .map_err(|_| ())
     }
 
+    async fn get_platform_credential(&mut self) -> std::result::Result<(), ()> {
+        self.proxy()
+            .await?
+            .get_platform_credential()
+            .await
+            .inspect_err(|err| tracing::error!("Failed to start platform credential flow: {err}"))
+            .map_err(|_| ())
+    }
+
     async fn initiate_event_stream(
         &mut self,
     ) -> std::result::Result<
@@ -90,6 +99,15 @@ impl FlowController for DbusCredentialClient {
         self.proxy()
             .await?
             .enter_client_pin(pin)
+            .await
+            .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
+    }
+
+    // TODO: Instead of making this a separate method, have the server keep track of state and send a request ID to client to return.
+    async fn enter_platform_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
+        self.proxy()
+            .await?
+            .enter_platform_client_pin(pin)
             .await
             .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
     }

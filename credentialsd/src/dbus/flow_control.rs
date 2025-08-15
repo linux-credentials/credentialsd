@@ -24,7 +24,7 @@ use zbus::{
     ObjectServer,
 };
 
-use crate::credential_service::platform::PlatformHandler;
+use crate::credential_service::platform::{PlatformHandler, PlatformState};
 use crate::credential_service::{
     hybrid::{HybridHandler, HybridState},
     usb::UsbHandler,
@@ -60,6 +60,9 @@ pub async fn start_flow_control_service<
                 usb_cred_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
                 hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+                platform_pin_tx: Arc::new(AsyncMutex::new(None)),
+                platform_cred_tx: Arc::new(AsyncMutex::new(None)),
+                platform_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
             },
         )?
         .build()
@@ -81,6 +84,9 @@ struct FlowControlService<H: HybridHandler, P: PlatformHandler, U: UsbHandler, U
     usb_cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    platform_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    platform_cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    platform_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
 /// The following methods are for communication between the [trusted]
@@ -184,6 +190,71 @@ where
         Ok(())
     }
 
+    async fn get_platform_credential(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let mut stream = self.svc.lock().await.get_platform_credential();
+        let platform_pin_tx = self.platform_pin_tx.clone();
+        let platform_cred_tx = self.platform_cred_tx.clone();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, P, U, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                match credentialsd_common::model::BackgroundEvent::PlatformStateChanged(
+                    (&state).into(),
+                )
+                .try_into()
+                {
+                    Err(err) => {
+                        tracing::error!("Failed to serialize state update: {err}");
+                        break;
+                    }
+                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("Failed to send state update to UI: {err}");
+                            break;
+                        }
+                    },
+                };
+                match state {
+                    PlatformState::NeedsPin { pin_tx, .. } => {
+                        let mut platform_pin_tx = platform_pin_tx.lock().await;
+                        let _ = platform_pin_tx.insert(pin_tx);
+                    }
+                    PlatformState::SelectingCredential { cred_tx, .. } => {
+                        let mut platform_cred_tx = platform_cred_tx.lock().await;
+                        let _ = platform_cred_tx.insert(cred_tx);
+                    }
+                    PlatformState::Completed | PlatformState::Failed(_) => {
+                        break;
+                    }
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self
+            .platform_event_forwarder_task
+            .lock()
+            .await
+            .replace(task)
+        {
+            prev_task.abort();
+        }
+        Ok(())
+    }
+
     async fn get_usb_credential(
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
@@ -244,6 +315,13 @@ where
     }
 
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
+        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+            pin_tx.send(pin).await.unwrap();
+        }
+        Ok(())
+    }
+
+    async fn enter_platform_client_pin(&self, pin: String) -> fdo::Result<()> {
         if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
         }
@@ -360,6 +438,7 @@ pub mod test {
         EnterClientPin(String),
         GetDevices,
         GetHybridCredential,
+        GetPlatformCredential,
         GetUsbCredential,
         InitStream,
     }
@@ -429,6 +508,18 @@ pub mod test {
             }
         }
 
+        async fn get_platform_credential(&mut self) -> Result<(), ()> {
+            let response = self
+                .send(DummyFlowRequest::GetPlatformCredential)
+                .await
+                .unwrap();
+            if let DummyFlowResponse::GetUsbCredential = response {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
         async fn get_usb_credential(&mut self) -> Result<(), ()> {
             let response = self.send(DummyFlowRequest::GetUsbCredential).await.unwrap();
             if let DummyFlowResponse::GetUsbCredential = response {
@@ -451,6 +542,15 @@ pub mod test {
         }
 
         async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::EnterClientPin(Ok(()))) =
+                self.send(DummyFlowRequest::EnterClientPin(pin)).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+        async fn enter_platform_client_pin(&mut self, pin: String) -> Result<(), ()> {
             if let Ok(DummyFlowResponse::EnterClientPin(Ok(()))) =
                 self.send(DummyFlowRequest::EnterClientPin(pin)).await
             {
