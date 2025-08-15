@@ -175,7 +175,7 @@ async fn handle_updates(
                 let (pin_tx, mut pin_rx): (mpsc::Sender<String>, mpsc::Receiver<String>) =
                     mpsc::channel(1);
                 let attempts_left = pin_request.attempts_left.clone();
-                let task = tokio::task::spawn_local(async move {
+                let task = tokio::task::spawn(async move {
                     match pin_rx.recv().await {
                         Some(pin) => match pin_request.send_pin(&pin) {
                             Ok(()) => {}
