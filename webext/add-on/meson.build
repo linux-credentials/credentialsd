@@ -1,4 +1,3 @@
-fs = import('fs')
 zip = find_program('zip')
 
 addon_dir = datadir / 'credentialsd'
