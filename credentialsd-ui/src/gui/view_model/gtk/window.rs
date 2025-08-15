@@ -39,6 +39,9 @@ mod imp {
 
         #[template_child]
         pub qr_code_pic: TemplateChild<Picture>,
+
+        #[template_child]
+        pub platform_pin_entry: TemplateChild<gtk::PasswordEntry>,
     }
 
     #[gtk::template_callbacks]
@@ -56,6 +59,20 @@ mod imp {
                 }
             ));
         }
+
+        #[template_callback]
+        fn handle_platform_pin_entered(&self, entry: &gtk::PasswordEntry) {
+            let view_model = &self.view_model.borrow();
+            let view_model = view_model.as_ref().unwrap();
+            let pin = entry.text().to_string();
+            glib::spawn_future_local(clone!(
+                #[weak]
+                view_model,
+                async move {
+                    view_model.send_platform_device_pin(pin).await;
+                }
+            ));
+        }
     }
 
     impl Default for CredentialsUiWindow {
@@ -67,6 +84,7 @@ mod imp {
                 stack: TemplateChild::default(),
                 usb_pin_entry: TemplateChild::default(),
                 qr_code_pic: TemplateChild::default(),
+                platform_pin_entry: TemplateChild::default(),
             }
         }
     }
@@ -164,6 +182,7 @@ impl CredentialsUiWindow {
                 match d.transport().try_into() {
                     Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
                     Ok(Transport::HybridQr) => stack.set_visible_child_name("hybrid_qr"),
+                    Ok(Transport::Internal) => stack.set_visible_child_name("platform"),
                     _ => {}
                 };
             }

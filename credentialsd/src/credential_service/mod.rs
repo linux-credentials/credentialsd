@@ -100,6 +100,10 @@ impl<
                 id: String::from("1"),
                 transport: Transport::HybridQr,
             },
+            Device {
+                id: String::from("2"),
+                transport: Transport::Internal,
+            },
         ];
         Self {
             devices,

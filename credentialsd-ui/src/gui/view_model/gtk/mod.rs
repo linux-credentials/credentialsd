@@ -73,6 +73,10 @@ mod imp {
 
         #[property(get, set)]
         pub qr_spinner_visible: RefCell<bool>,
+
+        // Platform authenticator fields
+        #[property(get, set)]
+        pub platform_pin_entry_visible: RefCell<bool>,
     }
 
     // The central trait for subclassing a GObject
@@ -309,7 +313,7 @@ impl ViewModel {
             Transport::HybridQr => {
                 self.set_prompt("");
             }
-            Transport::Internal => {}
+            Transport::Internal => self.set_prompt(""),
             _ => {
                 todo!();
             }
@@ -324,6 +328,10 @@ impl ViewModel {
 
     pub async fn send_usb_device_pin(&self, pin: String) {
         self.send_event(ViewEvent::UsbPinEntered(pin)).await;
+    }
+
+    pub async fn send_platform_device_pin(&self, pin: String) {
+        self.send_event(ViewEvent::PlatformPinEntered(pin)).await;
     }
 
     fn draw_qr_code(&self, qr_data: &str) -> Texture {

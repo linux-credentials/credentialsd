@@ -11,6 +11,7 @@ use crate::model::Operation;
 pub enum BackgroundEvent {
     UsbStateChanged(OwnedValue),
     HybridStateChanged(OwnedValue),
+    PlatformStateChanged(OwnedValue),
 }
 
 impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
@@ -27,6 +28,11 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
                 UsbState::try_from(Value::<'_>::from(usb_state_val))
                     .and_then(crate::model::UsbState::try_from)
                     .map(crate::model::BackgroundEvent::UsbStateChanged)
+            }
+            BackgroundEvent::PlatformStateChanged(state_val) => {
+                PlatformState::try_from(Value::<'_>::from(state_val))
+                    .and_then(crate::model::PlatformState::try_from)
+                    .map(crate::model::BackgroundEvent::PlatformStateChanged)
             }
         }?;
         Ok(ret)
@@ -50,6 +56,13 @@ impl From<crate::model::BackgroundEvent> for BackgroundEvent {
                     .expect("non-file descriptor value to succeed");
 
                 BackgroundEvent::UsbStateChanged(value)
+            }
+            crate::model::BackgroundEvent::PlatformStateChanged(state) => {
+                let state: PlatformState = state.into();
+                let value = Value::new(state)
+                    .try_to_owned()
+                    .expect("non-file descriptor value to succeed");
+                BackgroundEvent::PlatformStateChanged(value)
             }
         }
     }
@@ -279,7 +292,7 @@ impl TryFrom<Value<'_>> for HybridState {
             "CONNECTING" => Ok(Self::Connecting(value_to_owned(value))),
             "CONNECTED" => Ok(Self::Connected(value_to_owned(value))),
             "COMPLETED" => Ok(Self::Completed(value_to_owned(value))),
-            "USER_CANCELLED" => Ok(Self::Completed(value_to_owned(value))),
+            "USER_CANCELLED" => Ok(Self::UserCancelled(value_to_owned(value))),
             "FAILED" => Ok(Self::Failed(value_to_owned(value))),
             _ => Err(zvariant::Error::Message(format!(
                 "Invalid HybridState type passed: {tag}"
@@ -325,6 +338,131 @@ impl From<HybridState> for Value<'_> {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub enum PlatformState {
+    /// Authenticator needs PIN.
+    NeedsPin(OwnedValue),
+
+    /// Multiple assertions received, awaiting user selection.
+    SelectingCredential(OwnedValue),
+
+    /// Credential received over tunnel.
+    Completed(OwnedValue),
+
+    /// Failed to receive a credential
+    Failed(OwnedValue),
+}
+
+impl From<crate::model::PlatformState> for PlatformState {
+    fn from(value: crate::model::PlatformState) -> Self {
+        match value {
+            crate::model::PlatformState::NeedsPin { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => num as i32,
+                    None => -1,
+                };
+                PlatformState::NeedsPin(OwnedValue::from(num))
+            }
+            crate::model::PlatformState::SelectingCredential { creds } => {
+                let creds: Vec<Credential> = creds.into_iter().map(Credential::from).collect();
+                let value = Value::new(creds)
+                    .try_to_owned()
+                    .expect("All non-file descriptors to convert to OwnedValue successfully");
+                PlatformState::SelectingCredential(value)
+            }
+            crate::model::PlatformState::Failed(err) => {
+                let err = Value::<'_>::from(err.to_string())
+                    .try_to_owned()
+                    .expect("non-file descriptor value to convert");
+                PlatformState::Failed(err)
+            }
+            crate::model::PlatformState::Completed => {
+                PlatformState::Completed(OwnedValue::from(false))
+            }
+        }
+    }
+}
+impl TryFrom<PlatformState> for crate::model::PlatformState {
+    type Error = zvariant::Error;
+    fn try_from(value: PlatformState) -> std::result::Result<Self, Self::Error> {
+        let ret = match value {
+            PlatformState::NeedsPin(value) => value.try_into().map(|attempts_left: i32| {
+                let attempts_left = if attempts_left < 0 {
+                    None
+                } else {
+                    Some(u32::try_from(attempts_left).unwrap())
+                };
+                Self::NeedsPin { attempts_left }
+            }),
+            PlatformState::SelectingCredential(value) => value
+                .try_into()
+                .map(|creds: Vec<Credential>| {
+                    creds
+                        .into_iter()
+                        .map(crate::model::Credential::from)
+                        .collect()
+                })
+                .map(|creds| Self::SelectingCredential { creds }),
+            PlatformState::Completed(_) => Ok(Self::Completed),
+            PlatformState::Failed(value) => {
+                let error: ServiceError = Value::<'_>::from(value).try_into()?;
+                Ok(Self::Failed(error.into()))
+            }
+        }?;
+        Ok(ret)
+    }
+}
+
+impl TryFrom<Value<'_>> for PlatformState {
+    type Error = zvariant::Error;
+    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
+        let fields: HashMap<String, Value<'_>> = value.try_into()?;
+        let tag = fields
+            .get("type")
+            .ok_or(zvariant::Error::Message(
+                "Expected a dictionary with `type` key".to_string(),
+            ))
+            .and_then(|t| t.try_into())?;
+        let value = fields.get("value").ok_or(zvariant::Error::Message(
+            "Expected a dictionary with `value` key".to_string(),
+        ))?;
+        match tag {
+            "NEEDS_PIN" => Ok(Self::NeedsPin(value_to_owned(value))),
+            "SELECTING_CREDENTIAL" => Ok(Self::SelectingCredential(value_to_owned(value))),
+            "COMPLETED" => Ok(Self::Completed(value_to_owned(value))),
+            "FAILED" => Ok(Self::Failed(value_to_owned(value))),
+            _ => Err(zvariant::Error::Message(format!(
+                "Invalid PlatformState type passed: {tag}"
+            ))),
+        }
+    }
+}
+
+impl From<PlatformState> for Value<'_> {
+    fn from(value: PlatformState) -> Self {
+        let mut fields = HashMap::new();
+        match value {
+            PlatformState::NeedsPin(owned_value) => {
+                fields.insert("type", value_to_owned(&Value::from("NEEDS_PIN")));
+                fields.insert("value", owned_value);
+            }
+            PlatformState::SelectingCredential(owned_value) => {
+                fields.insert("type", value_to_owned(&Value::from("SELECTING_CREDENTIAL")));
+                fields.insert("value", owned_value);
+            }
+            PlatformState::Completed(owned_value) => {
+                fields.insert("type", value_to_owned(&Value::from("COMPLETED")));
+                fields.insert("value", owned_value);
+            }
+            PlatformState::Failed(owned_value) => {
+                fields.insert("type", value_to_owned(&Value::from("FAILED")));
+                fields.insert("value", owned_value);
+            }
+        }
+        Value::from(fields)
+    }
+}
+
 /// Identifier for a request to be used for cancellation.
 pub type RequestId = u32;
 
@@ -354,10 +492,17 @@ pub enum ServiceError {
 impl TryFrom<Value<'_>> for ServiceError {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zvariant::to_bytes(ctx, &value)?;
-        let obj: Self = encoded.deserialize()?.0;
-        Ok(obj)
+        if let Value::Str(error_code) = value {
+            Ok(match error_code.as_str() {
+                "AuthenticatorError" => ServiceError::AuthenticatorError,
+                "NoCredentials" => ServiceError::NoCredentials,
+                "CredentialExcluded" => ServiceError::CredentialExcluded,
+                "PinAttemptsExhausted" => ServiceError::PinAttemptsExhausted,
+                _ => ServiceError::Internal,
+            })
+        } else {
+            Err(zvariant::Error::IncorrectType)
+        }
     }
 }
 

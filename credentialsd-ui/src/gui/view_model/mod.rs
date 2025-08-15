@@ -7,6 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
+use credentialsd_common::model::PlatformState;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -102,6 +103,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                 Transport::HybridQr => {
                     todo!("Implement cancellation for Hybrid QR");
                 }
+                Transport::Internal => {
+                    todo!("Implement cancellation for platform authenticator");
+                }
                 _ => {
                     todo!();
                 }
@@ -117,6 +121,10 @@ impl<F: FlowController + Send> ViewModel<F> {
             Transport::HybridQr => {
                 let mut cred_service = self.flow_controller.lock().await;
                 cred_service.get_hybrid_credential().await.unwrap();
+            }
+            Transport::Internal => {
+                let mut cred_service = self.flow_controller.lock().await;
+                cred_service.get_platform_credential().await.unwrap();
             }
             _ => {
                 todo!()
@@ -145,6 +153,12 @@ impl<F: FlowController + Send> ViewModel<F> {
                 Event::View(ViewEvent::DeviceSelected(id)) => {
                     self.select_device(&id).await;
                     println!("Selected device {id}");
+                }
+                Event::View(ViewEvent::PlatformPinEntered(pin)) => {
+                    let mut cred_service = self.flow_controller.lock().await;
+                    if cred_service.enter_client_pin(pin).await.is_err() {
+                        error!("Failed to send pin to device");
+                    }
                 }
                 Event::View(ViewEvent::UsbPinEntered(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
@@ -220,20 +234,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         // TODO: Provide more specific error messages using the wrapped Error.
                         UsbState::Failed(err) => {
-                            let error_msg = String::from(match err {
-                                Error::NoCredentials => {
-                                    "No matching credentials found on this authenticator."
-                                }
-                                Error::PinAttemptsExhausted => {
-                                    "No more PIN attempts allowed. Try removing your device and plugging it back in."
-                                }
-                                Error::AuthenticatorError | Error::Internal(_) => {
-                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
-                                }
-                                Error::CredentialExcluded => {
-                                    "This credential is already registered on this authenticator."
-                                }
-                            });
+                            let error_msg = error_to_description(&err);
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))
                                 .await
@@ -282,22 +283,58 @@ impl<F: FlowController + Send> ViewModel<F> {
                             self.tx_update.send(ViewUpdate::Failed(String::from("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
                         }
                     };
-                } /*
-                  Event::Background(BackgroundEvent::RequestCancelled(request_id)) => {
-                      break;
-                  }
-                  */
+                }
+                Event::Background(BackgroundEvent::PlatformStateChanged(state)) => {
+                    tracing::debug!("Received HybridQrState::{:?}", &state);
+                    match state {
+                        PlatformState::NeedsPin { attempts_left } => {
+                            self.tx_update
+                                .send(ViewUpdate::UsbNeedsPin { attempts_left })
+                                .await
+                                .unwrap();
+                        }
+                        PlatformState::SelectingCredential { creds } => {
+                            self.tx_update
+                                .send(ViewUpdate::SetCredentials(creds))
+                                .await
+                                .unwrap();
+                        }
+                        PlatformState::Failed(err) => {
+                            let error_msg = error_to_description(&err);
+                            self.tx_update
+                                .send(ViewUpdate::Failed(error_msg))
+                                .await
+                                .unwrap();
+                        }
+                        PlatformState::Completed => {
+                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                        }
+                    }
+                }
             };
         }
     }
 }
 
+fn error_to_description(err: &Error) -> String {
+    String::from(match err {
+        Error::NoCredentials => "No matching credentials found on this authenticator.",
+        Error::PinAttemptsExhausted => {
+            "No more PIN attempts allowed. Try removing your device and plugging it back in."
+        }
+        Error::AuthenticatorError | Error::Internal(_) => {
+            "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
+        }
+        Error::CredentialExcluded => "This credential is already registered on this authenticator.",
+    })
+}
 #[derive(Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
     DeviceSelected(String),
     CredentialSelected(String),
     UsbPinEntered(String),
+    PlatformPinEntered(String),
     UserCancelled,
 }
 

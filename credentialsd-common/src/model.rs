@@ -217,6 +217,14 @@ pub enum HybridState {
     Failed,
 }
 
+#[derive(Debug, Clone)]
+pub enum PlatformState {
+    NeedsPin { attempts_left: Option<u32> },
+    SelectingCredential { creds: Vec<Credential> },
+    Failed(Error),
+    Completed,
+}
+
 /// Used to share public state between credential service and UI.
 #[derive(Clone, Debug, Default)]
 pub enum UsbState {
@@ -266,6 +274,7 @@ pub enum UsbState {
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
     HybridQrStateChanged(HybridState),
+    PlatformStateChanged(PlatformState),
 }
 
 #[derive(Debug, Clone)]

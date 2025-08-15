@@ -154,6 +154,43 @@
 
             <child>
               <object class="GtkStackPage">
+                <property name="name">platform</property>
+                <property name="title">Retrieving credentials stored on this device</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <binding name="label">
+                          <lookup name="prompt">
+                            <lookup name="view-model">
+                              CredentialsUiWindow
+                            </lookup>
+                          </lookup>
+                        </binding>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkPasswordEntry" id="platform_pin_entry">
+                        <signal name="activate" handler="handle_platform_pin_entered" swapped="true"/>
+                        <binding name="visible">
+                          <lookup name="platform_pin_entry_visible">
+                            <lookup name="view-model">
+                              CredentialsUiWindow
+                            </lookup>
+                          </lookup>
+                        </binding>
+                        <property name="placeholder-text">Enter your device PIN</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+
+            <child>
+              <object class="GtkStackPage">
                 <property name="name">choose_credential</property>
                 <property name="title">Choose credential</property>
                 <property name="child">
