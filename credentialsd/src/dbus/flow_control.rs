@@ -322,7 +322,7 @@ where
     }
 
     async fn enter_platform_client_pin(&self, pin: String) -> fdo::Result<()> {
-        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+        if let Some(pin_tx) = self.platform_pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
         }
         Ok(())

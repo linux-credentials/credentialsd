@@ -187,6 +187,8 @@ pub enum ViewUpdate {
     HybridConnecting,
     HybridConnected,
 
+    PlatformNeedsPin { attempts_left: Option<u32> },
+
     Completed,
     Cancelled,
     Failed(String),

@@ -125,6 +125,7 @@ impl ViewModel {
                         Ok(update) => {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_pin_entry_visible(false);
+                            view_model.set_platform_pin_entry_visible(false);
                             match update {
                                 ViewUpdate::SetTitle(title) => view_model.set_title(title),
                                 ViewUpdate::SetDevices(devices) => {
@@ -186,6 +187,19 @@ impl ViewModel {
                                         "Device connected. Follow the instructions on your device",
                                     );
                                     view_model.set_qr_spinner_visible(false);
+                                }
+                                ViewUpdate::PlatformNeedsPin { attempts_left } => {
+                                    let prompt = match attempts_left {
+                                        Some(1) => {
+                                            "Enter your PIN. 1 attempt remaining.".to_string()
+                                        }
+                                        Some(attempts_left) => format!(
+                                            "Enter your PIN. {attempts_left} attempts remaining."
+                                        ),
+                                        None => "Enter your PIN.".to_string(),
+                                    };
+                                    view_model.set_prompt(prompt);
+                                    view_model.set_platform_pin_entry_visible(true);
                                 }
                                 ViewUpdate::Completed => {
                                     view_model.set_qr_spinner_visible(false);

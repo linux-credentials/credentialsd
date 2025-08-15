@@ -156,7 +156,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                 }
                 Event::View(ViewEvent::PlatformPinEntered(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
-                    if cred_service.enter_client_pin(pin).await.is_err() {
+                    if cred_service.enter_platform_client_pin(pin).await.is_err() {
                         error!("Failed to send pin to device");
                     }
                 }
@@ -289,7 +289,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                     match state {
                         PlatformState::NeedsPin { attempts_left } => {
                             self.tx_update
-                                .send(ViewUpdate::UsbNeedsPin { attempts_left })
+                                .send(ViewUpdate::PlatformNeedsPin { attempts_left })
                                 .await
                                 .unwrap();
                         }
