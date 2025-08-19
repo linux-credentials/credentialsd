@@ -36,7 +36,10 @@ pub(super) fn create_credential_request_try_into_ctap2(
     if request.public_key.is_none() {
         return Err(WebAuthnError::NotSupportedError);
     }
-    let options = request.public_key.as_ref().unwrap();
+    let options = request.public_key.as_ref().ok_or_else(|| {
+        tracing::info!("Invalid request: missing public_key");
+        WebAuthnError::TypeError
+    })?;
 
     let request_value =
         serde_json::from_str::<serde_json::Value>(&options.request_json).map_err(|err| {
@@ -208,25 +211,29 @@ pub(super) fn create_credential_request_try_into_ctap2(
 pub(super) fn create_credential_response_try_from_ctap2(
     response: &MakeCredentialResponseInternal,
     client_data_json: String,
-) -> std::result::Result<CreatePublicKeyCredentialResponse, fdo::Error> {
+) -> std::result::Result<CreatePublicKeyCredentialResponse, String> {
     let auth_data = &response.ctap.authenticator_data;
-    let attested_credential = auth_data.attested_credential.as_ref().ok_or_else(|| {
-        fdo::Error::Failed("Invalid credential received from authenticator".to_string())
-    })?;
+    let attested_credential = auth_data
+        .attested_credential
+        .as_ref()
+        .ok_or_else(|| "missing attested credential data".to_string())?;
 
-    let unsigned_extensions =
-        serde_json::to_string(&response.ctap.unsigned_extensions_output).unwrap();
-    let authenticator_data_blob = auth_data.to_response_bytes().unwrap();
+    let unsigned_extensions = serde_json::to_string(&response.ctap.unsigned_extensions_output)
+        .map_err(|err| format!("failed to serialized unsigned extensions output: {err}"))
+        .unwrap();
+    let authenticator_data_blob = auth_data
+        .to_response_bytes()
+        .map_err(|err| format!("failed to serialize authenticator data into bytes: {err}"))?;
     let attestation_statement = (&response.ctap.attestation_statement)
         .try_into()
-        .map_err(|_| fdo::Error::Failed("Could not serialize attestation statement".to_string()))?;
+        .map_err(|_| "Could not serialize attestation statement".to_string())?;
     let attestation_object = webauthn::create_attestation_object(
         &authenticator_data_blob,
         &attestation_statement,
         response.ctap.enterprise_attestation.unwrap_or(false),
     )
-    .map_err(|_| zbus::Error::Failure("Failed to create attestation object".to_string()))?;
-    // do we need to check that the client_data_hash is the same?
+    .map_err(|_| "Failed to create attestation object".to_string())?;
+    // TODO: do we need to check that the client_data_hash is the same?
     let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
         attested_credential.credential_id.clone(),
         attestation_object,
@@ -260,8 +267,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
                 tracing::info!("Received invalid request JSON: {:?}", e);
                 WebAuthnError::TypeError
             })
-        })
-        .unwrap();
+        })?;
     let mut allow: Vec<Ctap2PublicKeyCredentialDescriptor> = options
         .allow_credentials
         .iter()
@@ -290,6 +296,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
             return Err(WebAuthnError::TypeError);
         }
     };
+
     let client_data_json = webauthn::format_client_data_json(
         Operation::Get,
         &options.challenge,
@@ -367,12 +374,12 @@ pub(super) fn get_credential_request_try_into_ctap2(
 pub(super) fn get_credential_response_try_from_ctap2(
     response: &GetAssertionResponseInternal,
     client_data_json: String,
-) -> std::result::Result<GetPublicKeyCredentialResponse, fdo::Error> {
+) -> std::result::Result<GetPublicKeyCredentialResponse, String> {
     let authenticator_data_blob = response
         .ctap
         .authenticator_data
         .to_response_bytes()
-        .unwrap();
+        .map_err(|err| format!("Failed to parse authenticator data: {err}"))?;
 
     // We can't just do this here, because we need encode all byte arrays for the JS-communication:
     // let unsigned_extensions = response
