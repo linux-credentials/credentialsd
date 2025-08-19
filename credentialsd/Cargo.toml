@@ -12,6 +12,7 @@ lto = true
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 base64 = "0.22.1"
+coset = "0.3.8"
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"
 libwebauthn = { path = "../../libwebauthn/libwebauthn" }

@@ -645,6 +645,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "base64",
+ "coset",
  "credentialsd-common",
  "futures-lite",
  "gio",

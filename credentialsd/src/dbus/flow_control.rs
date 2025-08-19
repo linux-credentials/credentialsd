@@ -25,6 +25,7 @@ use zbus::{
 };
 
 use crate::credential_service::platform::{PlatformHandler, PlatformState};
+use crate::credential_service::UserId;
 use crate::credential_service::{
     hybrid::{HybridHandler, HybridState},
     usb::UsbHandler,
@@ -43,6 +44,7 @@ pub async fn start_flow_control_service<
 ) -> zbus::Result<(
     Connection,
     Sender<(
+        UserId,
         CredentialRequest,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
@@ -70,8 +72,8 @@ pub async fn start_flow_control_service<
     let (initiator_tx, mut initiator_rx) = mpsc::channel(2);
     tokio::spawn(async move {
         let svc = svc2;
-        while let Some((msg, tx)) = initiator_rx.recv().await {
-            svc.lock().await.init_request(&msg, tx).await;
+        while let Some((uid, msg, tx)) = initiator_rx.recv().await {
+            svc.lock().await.init_request(uid, &msg, tx).await;
         }
     });
     Ok((conn, initiator_tx))
@@ -380,12 +382,14 @@ enum SignalState {
 pub trait CredentialRequestController {
     fn request_credential(
         &self,
+        user_id: UserId,
         request: CredentialRequest,
     ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
 }
 
 pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
+        UserId,
         CredentialRequest,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
@@ -394,11 +398,12 @@ pub struct CredentialRequestControllerClient {
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
+        user_id: UserId,
         request: CredentialRequest,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
         // TODO: We need a PlatformError variant.
-        self.initiator.send((request, tx)).await.unwrap();
+        self.initiator.send((user_id, request, tx)).await.unwrap();
         rx.await
             .map_err(|_| {
                 tracing::error!("Credential response channel closed prematurely");
@@ -450,6 +455,7 @@ pub mod test {
         EnterClientPin(Result<(), ()>),
         GetDevices(Vec<Device>),
         GetHybridCredential,
+        GetPlatformCredential,
         GetUsbCredential,
         InitStream(Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>),
     }
@@ -460,6 +466,7 @@ pub mod test {
                 Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
                 Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
                 Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
+                Self::GetPlatformCredential => f.debug_tuple("GetPlatformCredential").finish(),
                 Self::GetUsbCredential => f.debug_tuple("GetUsbCredential").finish(),
                 Self::InitStream(_) => f
                     .debug_tuple("InitStream")
@@ -644,7 +651,10 @@ pub mod test {
                         self.get_hybrid_credential().await.unwrap();
                         DummyFlowResponse::GetHybridCredential
                     }
-
+                    DummyFlowRequest::GetPlatformCredential => {
+                        self.get_usb_credential().await.unwrap();
+                        DummyFlowResponse::GetPlatformCredential
+                    }
                     DummyFlowRequest::GetUsbCredential => {
                         self.get_usb_credential().await.unwrap();
                         DummyFlowResponse::GetUsbCredential

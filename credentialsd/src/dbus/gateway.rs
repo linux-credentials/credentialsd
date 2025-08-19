@@ -13,10 +13,13 @@ use credentialsd_common::{
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{fdo, interface, Connection, DBusError};
 
-use crate::dbus::{
-    create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
-    get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
-    CredentialRequestController,
+use crate::{
+    credential_service::UserId,
+    dbus::{
+        create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
+        get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
+        CredentialRequestController,
+    },
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
@@ -50,6 +53,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
     async fn create_credential(
         &self,
         request: CreateCredentialRequest,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<CreateCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
             check_origin(request.origin.as_deref(), request.is_same_origin)
@@ -70,11 +74,12 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
+            let uid = get_uid_from_connection(conn).await?;
             let response = self
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(uid, cred_request)
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -104,6 +109,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
     async fn get_credential(
         &self,
         request: GetCredentialRequest,
+        #[zbus(connection)] conn: &Connection,
     ) -> Result<GetCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
             check_origin(request.origin.as_deref(), request.is_same_origin)
@@ -130,11 +136,12 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 })?;
             let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
 
+            let uid = get_uid_from_connection(conn).await?;
             let response = self
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(uid, cred_request)
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
@@ -198,6 +205,22 @@ async fn check_origin(
         return Err(WebAuthnError::NotAllowedError);
     };
     Ok((origin, true, top_origin))
+}
+
+async fn get_uid_from_connection(connection: &Connection) -> Result<UserId, zbus::Error> {
+    connection
+        .peer_credentials()
+        .await
+        .map_err(|err| {
+            zbus::Error::Failure(format!(
+                "Failed to retrieve user ID from peer connection: {err}"
+            ))
+        })
+        .and_then(|peer| {
+            peer.unix_user_id().map(|uid| uid as UserId).ok_or_else(|| {
+                zbus::Error::Failure("Failed to retrieve user ID from peer connection".to_string())
+            })
+        })
 }
 
 #[allow(clippy::enum_variant_names)]

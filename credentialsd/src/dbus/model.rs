@@ -49,7 +49,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
             serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok()
         })
         .ok_or_else(|| webauthn::Error::Internal("JSON missing `rp` field".to_string()))?;
-    let user =
+    let mut user =
         json.get("user")
             .ok_or(webauthn::Error::Internal(
                 "JSON missing `user` field".to_string(),
@@ -61,6 +61,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
                         webauthn::Error::Internal(msg)
                     })
             })?;
+    user.id = URL_SAFE_NO_PAD.decode(user.id).unwrap().into();
     let other_options =
         serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
             .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;

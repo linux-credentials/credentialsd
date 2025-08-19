@@ -51,7 +51,11 @@ struct RequestContext {
     request: CredentialRequest,
     response_channel: Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
+    user_id: UserId,
 }
+
+/// Identifier for local Linux user.
+pub type UserId = u32;
 
 impl RequestContext {
     fn send_response(self, response: Result<CredentialResponse, CredentialServiceError>) {
@@ -120,6 +124,7 @@ impl<
 
     pub async fn init_request(
         &self,
+        user_id: UserId,
         request: &CredentialRequest,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
@@ -137,6 +142,7 @@ impl<
                     request: request.clone(),
                     response_channel: tx,
                     request_id,
+                    user_id: user_id,
                 };
                 _ = cred_request.insert(ctx);
                 request_id
@@ -224,8 +230,13 @@ impl<
         &self,
     ) -> Pin<Box<dyn Stream<Item = PlatformState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.platform_handler.start(request);
+        if let Some(RequestContext {
+            ref request,
+            user_id,
+            ..
+        }) = *guard
+        {
+            let stream = self.platform_handler.start(user_id, request);
             let ctx = self.ctx.clone();
             Box::pin(PlatformStateStream::new(stream, ctx))
         } else {

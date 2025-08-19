@@ -285,7 +285,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                     };
                 }
                 Event::Background(BackgroundEvent::PlatformStateChanged(state)) => {
-                    tracing::debug!("Received HybridQrState::{:?}", &state);
+                    tracing::debug!("Received PlatformState::{:?}", &state);
                     match state {
                         PlatformState::NeedsPin { attempts_left } => {
                             self.tx_update

@@ -11,6 +11,7 @@ use credentialsd_common::model::{Assertion, Credential, CredentialRequest, Crede
 use futures_lite::{FutureExt, Stream, StreamExt};
 use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
+    proto::CtapError,
     transport::{Channel, Device},
     webauthn::WebAuthn,
 };
@@ -20,13 +21,14 @@ use tokio::{
 };
 
 use crate::{
-    credential_service::{AuthenticatorResponse, RequestContext},
+    credential_service::{AuthenticatorResponse, RequestContext, UserId},
     platform_authenticator::{PlatformAuthenticator, PlatformUxUpdate},
 };
 
 pub trait PlatformHandler {
     fn start(
         &self,
+        uid: UserId,
         request: &CredentialRequest,
     ) -> impl Stream<Item = PlatformEvent> + Unpin + Send + Sized + 'static;
 }
@@ -47,13 +49,14 @@ impl InMemoryPlatformHandler {
 impl PlatformHandler for InMemoryPlatformHandler {
     fn start(
         &self,
+        user_id: UserId,
         request: &CredentialRequest,
     ) -> impl Stream<Item = PlatformEvent> + Unpin + Send + Sized + 'static {
         let (tx, mut rx) = mpsc::channel(256);
         let request = request.clone();
         let task = tokio::spawn(async move {
             tracing::debug!("Starting platform authenticator operation");
-            if let Err(err) = execute_flow(tx, &request).await {
+            if let Err(err) = execute_flow(user_id, &request, tx).await {
                 tracing::error!("Failed to run platform authenticator flow to completion: {err}");
             }
         })
@@ -70,10 +73,11 @@ impl PlatformHandler for InMemoryPlatformHandler {
 }
 
 async fn execute_flow(
-    tx: mpsc::Sender<PlatformStateInternal>,
+    uid: UserId,
     request: &CredentialRequest,
+    tx: mpsc::Sender<PlatformStateInternal>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut device = PlatformAuthenticator {};
+    let mut device = PlatformAuthenticator::new(uid);
     let mut channel = device.channel().await?;
     let state_tx = tx.clone();
     let mut ux_updates_rx = channel.get_ux_update_receiver();
@@ -88,17 +92,17 @@ async fn execute_flow(
             CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
                 match channel.webauthn_make_credential(make_request).await {
                     Ok(response) => break Ok(response.into()),
-                    Err(libwebauthn::webauthn::Error::Ctap(ctap_error)) => {
-                        if ctap_error.is_retryable_user_error() {
-                            tracing::debug!("Retrying credential creation operation because of CTAP error: {:?}", ctap_error);
-                            continue;
-                        } else {
-                            tracing::error!(
-                                "Received CTAP unrecoverable CTAP error: {:?}",
-                                ctap_error
-                            );
-                            break Err(credentialsd_common::model::Error::AuthenticatorError);
-                        }
+                    Err(libwebauthn::webauthn::Error::Ctap(CtapError::CredentialExcluded)) => {
+                        break Err(credentialsd_common::model::Error::CredentialExcluded);
+                    }
+                    Err(libwebauthn::webauthn::Error::Ctap(ctap_error))
+                        if ctap_error.is_retryable_user_error() =>
+                    {
+                        tracing::debug!(
+                            "Retrying credential creation operation because of CTAP error: {:?}",
+                            ctap_error
+                        );
+                        continue;
                     }
                     Err(err) => {
                         tracing::error!(
@@ -112,20 +116,17 @@ async fn execute_flow(
             CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
                 match channel.webauthn_get_assertion(get_request).await {
                     Ok(response) => break Ok(response.into()),
-                    Err(libwebauthn::webauthn::Error::Ctap(ctap_error)) => {
-                        if ctap_error.is_retryable_user_error() {
-                            tracing::debug!(
-                                "Retrying assertion operation because of CTAP error: {:?}",
-                                ctap_error
-                            );
-                            continue;
-                        } else {
-                            tracing::error!(
-                                "Received CTAP unrecoverable CTAP error: {:?}",
-                                ctap_error
-                            );
-                            break Err(credentialsd_common::model::Error::AuthenticatorError);
-                        }
+                    Err(libwebauthn::webauthn::Error::Ctap(CtapError::NoCredentials)) => {
+                        break Err(credentialsd_common::model::Error::NoCredentials);
+                    }
+                    Err(libwebauthn::webauthn::Error::Ctap(ctap_error))
+                        if ctap_error.is_retryable_user_error() =>
+                    {
+                        tracing::debug!(
+                            "Retrying assertion operation because of CTAP error: {:?}",
+                            ctap_error
+                        );
+                        continue;
                     }
                     Err(err) => {
                         tracing::error!(
@@ -197,7 +198,7 @@ async fn handle_updates(
             ),
         };
         if let Err(err) = state_tx.send(state.clone()).await {
-            tracing::error!({ ?err, ?state }, "Failed to send hybrid update");
+            tracing::error!({ ?err, ?state }, "Failed to send platform update");
         }
     }
     if let Some(task) = pin_wait_task.take() {
@@ -329,11 +330,7 @@ fn assertions_to_metadata(assertions: &[Assertion]) -> Vec<Credential> {
                 .as_ref()
                 .and_then(|u| u.name.clone())
                 .unwrap_or_else(|| String::from("<unknown>")),
-            username: x
-                .user
-                .as_ref()
-                .map(|u| u.display_name.clone())
-                .unwrap_or_default(),
+            username: x.user.as_ref().map(|u| u.display_name.clone()),
         })
         .collect()
 }

@@ -516,11 +516,7 @@ impl From<UsbStateInternal> for UsbState {
                                 .as_ref()
                                 .and_then(|u| u.name.clone())
                                 .unwrap_or_else(|| String::from("<unknown>")),
-                            username: x
-                                .user
-                                .as_ref()
-                                .map(|u| u.display_name.clone())
-                                .unwrap_or_default(),
+                            username: x.user.as_ref().map(|u| u.display_name.clone()), // .unwrap_or_default(),
                         })
                         .collect(),
                     cred_tx,
