@@ -8,62 +8,81 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use zbus::fdo;
 
 use credentialsd_common::{
-    model::{GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation},
+    model::{
+        GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation, WebAuthnError,
+    },
     server::{
         CreateCredentialRequest, CreatePublicKeyCredentialResponse, GetCredentialRequest,
         GetPublicKeyCredentialResponse,
     },
 };
 
-use crate::webauthn::{
-    self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,
-    Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity,
-    GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
-    GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
-    MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
-    PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
+use crate::{
+    cose::CoseKeyAlgorithmIdentifier,
+    webauthn::{
+        self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,
+        Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity,
+        GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
+        GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
+        MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
+        PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
+    },
 };
 
 // Helper functions for translating D-Bus types into internal types
 pub(super) fn create_credential_request_try_into_ctap2(
     request: &CreateCredentialRequest,
-) -> std::result::Result<(MakeCredentialRequest, String), webauthn::Error> {
+) -> std::result::Result<(MakeCredentialRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
-        return Err(webauthn::Error::NotSupported);
+        return Err(WebAuthnError::NotSupportedError);
     }
     let options = request.public_key.as_ref().unwrap();
 
-    let request_value = serde_json::from_str::<serde_json::Value>(&options.request_json)
-        .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
-    let json = request_value
-        .as_object()
-        .ok_or_else(|| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+    let request_value =
+        serde_json::from_str::<serde_json::Value>(&options.request_json).map_err(|err| {
+            tracing::info!("Invalid request JSON: {err}");
+            WebAuthnError::TypeError
+        })?;
+    let json = request_value.as_object().ok_or_else(|| {
+        tracing::info!("Invalid request JSON: not an object");
+        WebAuthnError::TypeError
+    })?;
     let challenge = json
         .get("challenge")
         .and_then(|c| c.as_str())
-        .ok_or_else(|| webauthn::Error::Internal("JSON missing `challenge` field".to_string()))?
+        .ok_or_else(|| {
+            tracing::info!("JSON missing `challenge` field.");
+            WebAuthnError::TypeError
+        })?
         .to_owned();
     let rp = json
         .get("rp")
         .and_then(|val| {
             serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok()
         })
-        .ok_or_else(|| webauthn::Error::Internal("JSON missing `rp` field".to_string()))?;
+        .ok_or_else(|| {
+            tracing::info!("JSON missing `rp` field");
+            WebAuthnError::TypeError
+        })?;
     let user =
         json.get("user")
-            .ok_or(webauthn::Error::Internal(
-                "JSON missing `user` field".to_string(),
-            ))
+            .ok_or_else(|| {
+                tracing::info!("JSON missing `user` field.");
+                WebAuthnError::TypeError
+            })
             .and_then(|val| {
                 serde_json::from_str::<Ctap2PublicKeyCredentialUserEntity>(&val.to_string())
                     .map_err(|e| {
-                        let msg = format!("JSON missing `user` field: {e}");
-                        webauthn::Error::Internal(msg)
+                        tracing::info!("JSON missing `user` field: {e}");
+                        WebAuthnError::TypeError
                     })
             })?;
     let other_options =
         serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
-            .map_err(|_| webauthn::Error::Internal("Invalid request JSON".to_string()))?;
+            .map_err(|e| {
+                tracing::info!("Received invalid request JSON: {e}");
+                WebAuthnError::TypeError
+            })?;
     let (resident_key, user_verification) =
         if let Some(authenticator_selection) = other_options.authenticator_selection {
             let resident_key = match authenticator_selection.resident_key.as_deref() {
@@ -127,23 +146,23 @@ pub(super) fn create_credential_request_try_into_ctap2(
         None
     };
 
-    let credential_parameters = request_value
-        .clone()
-        .get("pubKeyCredParams")
-        .ok_or_else(|| {
-            webauthn::Error::Internal(
-                "Request JSON missing or invalid `pubKeyCredParams` key".to_string(),
-            )
-        })
-        .and_then(|val| -> std::result::Result<Vec<_>, webauthn::Error> {
-            serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string()).map_err(
-                |e| {
-                    webauthn::Error::Internal(format!(
-                        "Request JSON missing or invalid `pubKeyCredParams` key: {e}"
-                    ))
-                },
-            )
-        })?;
+    let credential_parameters = match request_value.clone().get("pubKeyCredParams") {
+        // https://www.w3.org/TR/webauthn-3/#sctn-createCredential Section 5.1.3.10
+        // Default to ES256 and RS256 if no params are given.
+        None => Ok(vec![
+            PublicKeyCredentialParameters {
+                alg: CoseKeyAlgorithmIdentifier::ES256.into(),
+            },
+            PublicKeyCredentialParameters {
+                alg: CoseKeyAlgorithmIdentifier::RS256.into(),
+            },
+        ]),
+        Some(val) => serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string())
+            .map_err(|e| {
+                tracing::info!("Request JSON missing or invalid `pubKeyCredParams` key: {e}.");
+                WebAuthnError::TypeError
+            }),
+    }?;
     let algorithms = credential_parameters
         .iter()
         .filter_map(|p| p.try_into().ok())
@@ -161,9 +180,8 @@ pub(super) fn create_credential_request_try_into_ctap2(
         // origin should always be set on request either by client or D-Bus service,
         // so this shouldn't be called
         (None, _) => {
-            return Err(webauthn::Error::Internal(
-                "Error reading origin from request".to_string(),
-            ));
+            tracing::info!("Error reading origin from request.");
+            return Err(WebAuthnError::TypeError);
         }
     };
     let client_data_json =
@@ -226,19 +244,22 @@ pub(super) fn create_credential_response_try_from_ctap2(
 
 pub(super) fn get_credential_request_try_into_ctap2(
     request: &GetCredentialRequest,
-) -> std::result::Result<(GetAssertionRequest, String), webauthn::Error> {
+) -> std::result::Result<(GetAssertionRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
-        return Err(webauthn::Error::NotSupported);
+        return Err(WebAuthnError::NotSupportedError);
     }
     let options: webauthn::GetCredentialOptions = request
         .public_key
         .as_ref()
-        .ok_or(webauthn::Error::Internal(
-            ("Invalid request: no \"public-key\" options specified").to_string(),
-        ))
+        .ok_or_else(|| {
+            tracing::info!("Invalid request: no \"publicKey\" options specified.");
+            WebAuthnError::TypeError
+        })
         .and_then(|o| {
-            serde_json::from_str(&o.request_json)
-                .map_err(|e| webauthn::Error::Internal(format!("Invalid request JSON: {:?}", e)))
+            serde_json::from_str(&o.request_json).map_err(|e| {
+                tracing::info!("Received invalid request JSON: {:?}", e);
+                WebAuthnError::TypeError
+            })
         })
         .unwrap();
     let mut allow: Vec<Ctap2PublicKeyCredentialDescriptor> = options
@@ -265,9 +286,8 @@ pub(super) fn get_credential_request_try_into_ctap2(
         // origin should always be set on request either by client or D-Bus service,
         // so this shouldn't be called
         (None, _) => {
-            return Err(webauthn::Error::Internal(
-                "Error reading origin from request".to_string(),
-            ));
+            tracing::info!("Error reading origin from client request.");
+            return Err(WebAuthnError::TypeError);
         }
     };
     let client_data_json = webauthn::format_client_data_json(
@@ -287,9 +307,8 @@ pub(super) fn get_credential_request_try_into_ctap2(
         "preferred" => UserVerificationRequirement::Preferred,
         "discouraged" => UserVerificationRequirement::Discouraged,
         _ => {
-            return Err(webauthn::Error::Internal(
-                "Invalid user verification requirement specified".to_string(),
-            ));
+            tracing::info!("Invalid user verification requirement specified by client.");
+            return Err(WebAuthnError::TypeError);
         }
     };
     let relying_party_id = options.rp_id.unwrap_or_else(|| {

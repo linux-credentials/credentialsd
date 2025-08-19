@@ -301,6 +301,7 @@ impl Display for Error {
     }
 }
 
+#[derive(Debug)]
 pub enum WebAuthnError {
     /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
     /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
@@ -336,4 +337,20 @@ pub enum WebAuthnError {
     /// The options argument was not a valid `CredentialCreationOptions` value, or
     /// the value of `user.id` was empty or was longer than 64 bytes.
     TypeError,
+}
+
+impl std::error::Error for WebAuthnError {}
+
+impl Display for WebAuthnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            WebAuthnError::AbortError => "Operation was aborted by client.",
+            WebAuthnError::ConstraintError => "Resident key or user verification requirement was not able to be met.",
+            WebAuthnError::InvalidStateError => "A user consented to create a new credential after trying to use an authenticator with a previously registered credential.",
+            WebAuthnError::NotSupportedError => "Operation parameters are not supported.",
+            WebAuthnError::SecurityError => "Validation of the client context for given RP ID failed.",
+            WebAuthnError::NotAllowedError => "An unspecified error occurred, and the operation is not allowed to continue.",
+            WebAuthnError::TypeError => "Invalid parameters specified.",
+        })
+    }
 }

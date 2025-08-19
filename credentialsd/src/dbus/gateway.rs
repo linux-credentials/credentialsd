@@ -64,9 +64,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             }
             let (make_cred_request, client_data_json) =
                 create_credential_request_try_into_ctap2(&request).map_err(|e| {
-                    tracing::error!("Could not parse passkey creation request: {e:?}");
-                    WebAuthnError::TypeError
+                    if let WebAuthnError::TypeError = e {
+                        tracing::error!(
+                            "Could not parse passkey creation request. Rejecting request."
+                        );
+                    }
+                    e
                 })?;
+            if make_cred_request.algorithms.is_empty() {
+                tracing::info!("No supported algorithms given in request. Rejecting request.");
+                return Err(Error::NotSupportedError);
+            }
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
