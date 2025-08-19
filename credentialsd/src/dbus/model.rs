@@ -312,6 +312,8 @@ pub(super) fn get_credential_request_try_into_ctap2(
         }
     };
     let relying_party_id = options.rp_id.unwrap_or_else(|| {
+        // TODO: We're assuming that the origin is `<scheme>://data`, which is
+        // currently checked by the caller, but we should encode this in a type.
         let (_, effective_domain) = origin.rsplit_once('/').unwrap();
         effective_domain.to_string()
     });

@@ -198,6 +198,10 @@ async fn check_origin(
         );
         return Err(WebAuthnError::SecurityError);
     };
+    if !origin.starts_with("https://") {
+        tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
+        return Err(WebAuthnError::SecurityError);
+    }
     let is_same_origin = is_same_origin.unwrap_or(false);
     let top_origin = if is_same_origin {
         origin.clone()
@@ -262,5 +266,27 @@ impl From<WebAuthnError> for Error {
             WebAuthnError::NotAllowedError => Self::NotAllowedError,
             WebAuthnError::TypeError => Self::TypeError,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::future::Future;
+
+    use credentialsd_common::model::WebAuthnError;
+
+    use crate::dbus::gateway::check_origin;
+
+    #[tokio::test]
+    async fn test_only_https_origins() {
+        let check = |origin: &'static str| async { check_origin(Some(origin), Some(true)).await };
+        assert!(matches!(
+            check("https://example.com").await,
+            Ok((o, ..)) if o == "https://example.com"
+        ));
+        assert!(matches!(
+            check("http://example.com").await,
+            Err(WebAuthnError::SecurityError)
+        ));
     }
 }
