@@ -46,9 +46,15 @@ sequenceDiagram
 
 ## [unreleased]
 
+### Breaking Changes
+
+- (UI Controller): Renamed `InitiateEventStream()` to `Subscribe()`
+
 ## [0.1.0] - 2025-08-14
 
-### Added
+### Breaking Changes
+
+### Improvements
 
 - Initial release.
 
@@ -376,9 +382,7 @@ See the WebAuthn spec for meanings of the [client capability keys][def-client-ca
 
 The Flow Control API is used by the UI to pass user interactions through the Flow Controller to the authenticator.
 
-## InitiateEventStream()
-
-> TODO: Rename to Subscribe()?
+## Subscribe()
 
 > TODO: Is a signal here safe? Do we need to have the client set up an
 > endpoint to send a unicast message instead? The QR code in hybrid flow contains
@@ -702,7 +706,7 @@ Initializes a FIDO hybrid authenticator flow.
 
 ### Request
 
-The UI client should subscribe to the `StateChanged` and call `InitiateEventStream()` before calling this method.
+The UI client should subscribe to the `StateChanged` and call `Subscribe()` before calling this method.
 
 ### Response
 
@@ -718,7 +722,7 @@ Initializes a FIDO USB authenticator flow.
 
 ### Request
 
-The UI client should subscribe to the `StateChanged` and call `InitiateEventStream()` before calling this method.
+The UI client should subscribe to the `StateChanged` and call `Subscribe()` before calling this method.
 
 ### Response
 
