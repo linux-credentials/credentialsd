@@ -2,15 +2,92 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-use zvariant::{self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Type, Value};
+use serde::{
+    Deserialize, Serialize,
+    de::{Error, SeqAccess, Visitor},
+    ser::SerializeTuple,
+};
+use zvariant::{
+    self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Signature, Type, Value,
+    signature::Fields,
+};
 
 use crate::model::Operation;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug)]
+
 pub enum BackgroundEvent {
-    UsbStateChanged(OwnedValue),
+    UsbStateChanged(UsbState),
     HybridStateChanged(OwnedValue),
+}
+
+impl Type for BackgroundEvent {
+    const SIGNATURE: &'static Signature = &Signature::Structure(Fields::Static {
+        fields: &[&Signature::U8, &Signature::Variant],
+    });
+}
+
+impl Serialize for BackgroundEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut tuple = serializer.serialize_tuple(2)?;
+        match self {
+            Self::UsbStateChanged(state) => {
+                tuple.serialize_element(&0x01)?;
+                tuple.serialize_element(state)?;
+            }
+            Self::HybridStateChanged(value) => {
+                tuple.serialize_element(&0x02)?;
+                tuple.serialize_element(value)?;
+            }
+        };
+        tuple.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for BackgroundEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TupleVisitor;
+        impl<'de> Visitor<'de> for TupleVisitor {
+            type Value = BackgroundEvent;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("enum BackgroundEvent")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<BackgroundEvent, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let tag = seq
+                    .next_element::<u8>()?
+                    .ok_or_else(|| V::Error::custom("missing tag"))?;
+                let value = seq
+                    .next_element::<OwnedValue>()?
+                    .ok_or_else(|| V::Error::custom("enum value not found"))?;
+                match tag {
+                    0x01 => Ok(BackgroundEvent::UsbStateChanged(
+                        Value::<'_>::from(value).try_into().map_err(|err| {
+                            V::Error::custom(format!("could not deserialize UsbState: {err}"))
+                        })?,
+                    )),
+                    0x02 => Ok(BackgroundEvent::HybridStateChanged(
+                        value.try_to_owned().unwrap(),
+                    )),
+                    _ => Err(V::Error::custom(format!(
+                        "Unknown BackgroundEvent tag: {tag}"
+                    ))),
+                }
+            }
+        }
+
+        deserializer.deserialize_tuple(2, TupleVisitor)
+    }
 }
 
 impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
@@ -44,12 +121,13 @@ impl From<crate::model::BackgroundEvent> for BackgroundEvent {
                 BackgroundEvent::HybridStateChanged(value)
             }
             crate::model::BackgroundEvent::UsbStateChanged(state) => {
+                BackgroundEvent::UsbStateChanged(state.into())
+                /*
                 let state: UsbState = state.into();
                 let value = Value::new(state)
                     .try_to_owned()
                     .expect("non-file descriptor value to succeed");
-
-                BackgroundEvent::UsbStateChanged(value)
+                */
             }
         }
     }
@@ -378,7 +456,7 @@ impl From<ServiceError> for crate::model::Error {
 }
 
 /// Used to de-/serialize state D-Bus and model::UsbState.
-#[derive(Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum UsbState {
     Idle(OwnedValue),
     Waiting(OwnedValue),
@@ -638,4 +716,31 @@ fn value_to_owned(value: &Value<'_>) -> OwnedValue {
     value
         .try_to_owned()
         .expect("non-file descriptor values to succeed")
+}
+
+#[cfg(test)]
+mod test {
+    use zvariant::{Type, Value};
+
+    use crate::server::{BackgroundEvent, HybridState};
+
+    #[test]
+    fn test_serialize_hybrid_state() {
+        let state: HybridState = crate::model::HybridState::Completed.into();
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        let data = zvariant::to_bytes(ctx, &state).unwrap();
+        assert_eq!("(uv)", HybridState::SIGNATURE.to_string());
+        assert_eq!(&[0, 0, 0, 4, 1, b'b', 0, 0, 0, 0, 0, 0], data.bytes());
+    }
+
+    #[test]
+    fn test_serialize_background_hybrid_event() {
+        let state: HybridState = crate::model::HybridState::Completed.into();
+        let event = BackgroundEvent::HybridStateChanged(Value::from(state).try_to_owned().unwrap());
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        let data = zvariant::to_bytes(ctx, &event).unwrap();
+        assert_eq!("(yv)", BackgroundEvent::SIGNATURE.to_string());
+        let expected = b"\x02\x04(uv)\0\0\0\0\x04\x01b\0\0\0\0\0";
+        assert_eq!(expected, data.bytes());
+    }
 }
