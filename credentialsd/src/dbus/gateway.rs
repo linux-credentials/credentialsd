@@ -214,7 +214,7 @@ async fn check_origin(
 
 #[allow(clippy::enum_variant_names)]
 #[derive(DBusError, Debug)]
-#[zbus(prefix = "xyz.iinuwa.credentials")]
+#[zbus(prefix = "xyz.iinuwa.credentialsd")]
 enum Error {
     #[zbus(error)]
     ZBus(zbus::Error),
