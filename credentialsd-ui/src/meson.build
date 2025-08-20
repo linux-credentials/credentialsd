@@ -56,7 +56,7 @@ custom_target(
 )
 
 test(
-  'cargo-unit-tests',
+  'credentials-ui cargo-unit-tests',
   cargo,
   env: [cargo_env],
   args: [

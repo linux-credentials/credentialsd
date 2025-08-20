@@ -1,16 +1,16 @@
 # Currently, we're not building this with meson and just letting cargo path dependencies for the other projects build this lib.
 # Not efficient, since the UI and daemon projects will build it separately, but leaving it this way for now.
 
-# if get_option('profile') == 'default'
-#   cargo_options += ['--release']
-#   rust_target = 'release'
-#   message('Building in release mode')
-# else
-#   rust_target = 'debug'
-#   message('Building in debug mode')
-# endif
-#
-# cargo_env = ['CARGO_HOME=' + cargo_home]
+if get_option('profile') == 'default'
+  cargo_options += ['--release']
+  rust_target = 'release'
+  message('Building in release mode')
+else
+  rust_target = 'debug'
+  message('Building in debug mode')
+endif
+
+cargo_env = ['CARGO_HOME=' + cargo_home]
 #
 # custom_target(
 #   'cargo-build',
@@ -32,3 +32,16 @@
 #     '@OUTPUT@',
 #   ],
 # )
+test(
+  'credentialsd-common cargo-unit-tests',
+  cargo,
+  env: [cargo_env],
+  args: [
+    'test',
+    '--lib',
+    '--no-fail-fast', cargo_options,
+    '--',
+    '--nocapture',
+  ],
+  protocol: 'exitcode',
+)

@@ -4,12 +4,12 @@ use std::collections::HashMap;
 
 use serde::{
     Deserialize, Serialize,
-    de::{Error, SeqAccess, Visitor},
-    ser::SerializeTuple,
+    de::{DeserializeSeed, Error, SeqAccess, Visitor},
+    ser::{Error as _, SerializeTuple},
 };
 use zvariant::{
-    self, DeserializeDict, LE, Optional, OwnedValue, SerializeDict, Signature, Type, Value,
-    signature::Fields,
+    self, DeserializeDict, DynamicDeserialize, LE, Optional, OwnedValue, SerializeDict, Signature,
+    Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
 use crate::model::Operation;
@@ -18,13 +18,15 @@ use crate::model::Operation;
 
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
-    HybridStateChanged(OwnedValue),
+    HybridStateChanged(crate::model::HybridState),
 }
 
+const TAG_VALUE_SIGNATURE: &'static Signature = &Signature::Structure(Fields::Static {
+    fields: &[&Signature::U8, &Signature::Variant],
+});
+
 impl Type for BackgroundEvent {
-    const SIGNATURE: &'static Signature = &Signature::Structure(Fields::Static {
-        fields: &[&Signature::U8, &Signature::Variant],
-    });
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
 
 impl Serialize for BackgroundEvent {
@@ -32,15 +34,20 @@ impl Serialize for BackgroundEvent {
     where
         S: serde::Serializer,
     {
-        let mut tuple = serializer.serialize_tuple(2)?;
+        let mut tuple = serializer.serialize_tuple(3)?;
         match self {
             Self::UsbStateChanged(state) => {
-                tuple.serialize_element(&0x01)?;
+                tuple.serialize_element(&0x01_u8)?;
                 tuple.serialize_element(state)?;
             }
-            Self::HybridStateChanged(value) => {
-                tuple.serialize_element(&0x02)?;
-                tuple.serialize_element(value)?;
+            Self::HybridStateChanged(state) => {
+                tuple.serialize_element(&0x02_u8)?;
+                let structure: Structure<'_> = state.try_into().map_err(|err| {
+                    S::Error::custom(format!(
+                        "could not convert HybridState to a structure: {err}"
+                    ))
+                })?;
+                tuple.serialize_element(&Value::Structure(structure))?;
             }
         };
         tuple.end()
@@ -67,17 +74,20 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
                 let tag = seq
                     .next_element::<u8>()?
                     .ok_or_else(|| V::Error::custom("missing tag"))?;
-                let value = seq
-                    .next_element::<OwnedValue>()?
-                    .ok_or_else(|| V::Error::custom("enum value not found"))?;
                 match tag {
-                    0x01 => Ok(BackgroundEvent::UsbStateChanged(
-                        Value::<'_>::from(value).try_into().map_err(|err| {
-                            V::Error::custom(format!("could not deserialize UsbState: {err}"))
-                        })?,
-                    )),
+                    0x01 => {
+                        let value = seq
+                            .next_element::<OwnedValue>()?
+                            .ok_or_else(|| V::Error::custom("enum value not found"))?;
+                        Ok(BackgroundEvent::UsbStateChanged(
+                            Value::<'_>::from(value).try_into().map_err(|err| {
+                                V::Error::custom(format!("could not deserialize UsbState: {err}"))
+                            })?,
+                        ))
+                    }
                     0x02 => Ok(BackgroundEvent::HybridStateChanged(
-                        value.try_to_owned().unwrap(),
+                        seq.next_element::<crate::model::HybridState>()?
+                            .ok_or_else(|| V::Error::custom("could not deserialize HybridState"))?,
                     )),
                     _ => Err(V::Error::custom(format!(
                         "Unknown BackgroundEvent tag: {tag}"
@@ -95,11 +105,9 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
 
     fn try_from(value: BackgroundEvent) -> Result<Self, Self::Error> {
         let ret = match value {
-            BackgroundEvent::HybridStateChanged(hybrid_state_val) => {
-                HybridState::try_from(Value::<'_>::from(hybrid_state_val))
-                    .and_then(crate::model::HybridState::try_from)
-                    .map(crate::model::BackgroundEvent::HybridQrStateChanged)
-            }
+            BackgroundEvent::HybridStateChanged(hybrid_state_val) => Ok(
+                crate::model::BackgroundEvent::HybridQrStateChanged(hybrid_state_val),
+            ),
             BackgroundEvent::UsbStateChanged(usb_state_val) => {
                 UsbState::try_from(Value::<'_>::from(usb_state_val))
                     .and_then(crate::model::UsbState::try_from)
@@ -114,11 +122,7 @@ impl From<crate::model::BackgroundEvent> for BackgroundEvent {
     fn from(value: crate::model::BackgroundEvent) -> Self {
         match value {
             crate::model::BackgroundEvent::HybridQrStateChanged(state) => {
-                let state: HybridState = state.into();
-                let value = Value::new(state)
-                    .try_to_owned()
-                    .expect("non-file descriptor value to succeed");
-                BackgroundEvent::HybridStateChanged(value)
+                BackgroundEvent::HybridStateChanged(state.into())
             }
             crate::model::BackgroundEvent::UsbStateChanged(state) => {
                 BackgroundEvent::UsbStateChanged(state.into())
@@ -280,7 +284,8 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Deserialize, Type)]
+#[zvariant(signature = "(yv)")]
 pub enum HybridState {
     /// Default state, not listening for hybrid transport.
     Idle(OwnedValue),
@@ -323,6 +328,7 @@ impl From<crate::model::HybridState> for HybridState {
         }
     }
 }
+
 impl TryFrom<HybridState> for crate::model::HybridState {
     type Error = zvariant::Error;
     fn try_from(value: HybridState) -> std::result::Result<Self, Self::Error> {
@@ -341,66 +347,155 @@ impl TryFrom<HybridState> for crate::model::HybridState {
 impl TryFrom<Value<'_>> for HybridState {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let fields: HashMap<String, Value<'_>> = value.try_into()?;
-        let tag = fields
-            .get("type")
-            .ok_or(zvariant::Error::Message(
-                "Expected a dictionary with `type` key".to_string(),
-            ))
-            .and_then(|t| t.try_into())?;
-        let value = fields.get("value").ok_or(zvariant::Error::Message(
-            "Expected a dictionary with `value` key".to_string(),
-        ))?;
-        match tag {
-            "IDLE" => Ok(Self::Idle(value_to_owned(value))),
-            "STARTED" => Ok(Self::Started(value_to_owned(value))),
-            "CONNECTING" => Ok(Self::Connecting(value_to_owned(value))),
-            "CONNECTED" => Ok(Self::Connected(value_to_owned(value))),
-            "COMPLETED" => Ok(Self::Completed(value_to_owned(value))),
-            "USER_CANCELLED" => Ok(Self::Completed(value_to_owned(value))),
-            "FAILED" => Ok(Self::Failed(value_to_owned(value))),
-            _ => Err(zvariant::Error::Message(format!(
-                "Invalid HybridState type passed: {tag}"
-            ))),
+        if &value.value_signature() != &TAG_VALUE_SIGNATURE {
+            return Err(zvariant::Error::SignatureMismatch(
+                value.value_signature().clone(),
+                format!("expected {TAG_VALUE_SIGNATURE}"),
+            ));
+        }
+        if let Value::Structure(structure) = value {
+            let fields = structure.into_fields();
+            let tag: u8 = fields[0].downcast_ref()?;
+            let value = &fields[1];
+            return match tag {
+                0x01 => Ok(Self::Idle(value_to_owned(value))),
+                0x02 => Ok(Self::Started(value_to_owned(value))),
+                0x03 => Ok(Self::Connecting(value_to_owned(value))),
+                0x04 => Ok(Self::Connected(value_to_owned(value))),
+                0x05 => Ok(Self::Completed(value_to_owned(value))),
+                0x06 => Ok(Self::UserCancelled(value_to_owned(value))),
+                0x07 => Ok(Self::Failed(value_to_owned(value))),
+                _ => Err(zvariant::Error::Message(format!(
+                    "Invalid HybridState type passed: {tag}"
+                ))),
+            };
+        } else {
+            return Err(zvariant::Error::IncorrectType);
         }
     }
 }
 
 impl From<HybridState> for Value<'_> {
-    fn from(value: HybridState) -> Self {
-        let mut fields = HashMap::new();
-        match value {
-            HybridState::Idle(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("IDLE")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::Started(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("STARTED")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::Connecting(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("CONNECTING")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::Connected(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("CONNECTED")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::Completed(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("COMPLETED")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::UserCancelled(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("USER_CANCELLED")));
-                fields.insert("value", owned_value);
-            }
-            HybridState::Failed(owned_value) => {
-                fields.insert("type", value_to_owned(&Value::from("FAILED")));
-                fields.insert("value", owned_value);
-            }
-        }
-        Value::from(fields)
+    fn from(state: HybridState) -> Self {
+        let (tag, value) = match state {
+            HybridState::Idle(v) => (0x01_u8, v),
+            HybridState::Started(v) => (0x02, v),
+            HybridState::Connecting(v) => (0x03, v),
+            HybridState::Connected(v) => (0x04, v),
+            HybridState::Completed(v) => (0x05, v),
+            HybridState::UserCancelled(v) => (0x06, v),
+            HybridState::Failed(v) => (0x07, v),
+        };
+        let builder = StructureBuilder::new()
+            .add_field(tag)
+            .add_field(value)
+            .build();
+        Value::from(builder.unwrap())
     }
+}
+
+impl Serialize for crate::model::HybridState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.try_into().map_err(|err| {
+            S::Error::custom(format!(
+                "failed to read HybridState as D-Bus structure: {err}"
+            ))
+        })?;
+        structure.serialize(serializer)
+    }
+}
+
+impl From<&crate::model::HybridState> for Structure<'_> {
+    fn from(value: &crate::model::HybridState) -> Self {
+        let (tag, value) = match value {
+            crate::model::HybridState::Idle => (&0x01_u8, None),
+            crate::model::HybridState::Started(value) => (&0x02_u8, Some(Value::Str(value.into()))),
+            crate::model::HybridState::Connecting => (&0x03_u8, None),
+            crate::model::HybridState::Connected => (&0x04_u8, None),
+            crate::model::HybridState::Completed => (&0x05_u8, None),
+            crate::model::HybridState::UserCancelled => (&0x06_u8, None),
+            crate::model::HybridState::Failed => (&0x07_u8, None),
+        };
+        StructureBuilder::new()
+            .add_field(*tag)
+            .append_field(
+                value
+                    .unwrap_or_else(|| Value::new(Value::U8(0)))
+                    .try_to_owned()
+                    .unwrap()
+                    .into(),
+            )
+            .build()
+            .expect("create a struct")
+    }
+}
+
+impl TryFrom<&Structure<'_>> for crate::model::HybridState {
+    type Error = zvariant::Error;
+
+    fn try_from(structure: &Structure<'_>) -> Result<Self, Self::Error> {
+        let fields = structure.fields();
+        let tag: u8 = fields
+            .get(0)
+            .ok_or_else(|| zvariant::Error::IncorrectType)?
+            .downcast_ref()?;
+        let value = &fields
+            .get(1)
+            .ok_or_else(|| zvariant::Error::IncorrectType)?;
+        return match tag {
+            0x01 => Ok(Self::Idle),
+            0x02 => {
+                let qr_code: &str = value.downcast_ref()?;
+                Ok(Self::Started(qr_code.to_string()))
+            }
+            0x03 => Ok(Self::Connecting),
+            0x04 => Ok(Self::Connected),
+            0x05 => Ok(Self::Completed),
+            0x06 => Ok(Self::UserCancelled),
+            0x07 => Ok(Self::Failed),
+            _ => Err(zvariant::Error::Message(format!(
+                "Invalid HybridState type passed: {tag}"
+            ))),
+        };
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::model::HybridState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let d = Value::deserializer_for_signature(&Signature::Variant)
+            .map_err(|err| D::Error::custom(format!("could not create deserializer: {err}")))?;
+        let variant = d.deserialize(deserializer)?;
+        let structure: Structure<'_> = variant.downcast_ref().unwrap();
+        let tag: u8 = structure.fields()[0].downcast_ref().map_err(|err| {
+            D::Error::custom(format!(
+                "invalid tag `{}` received: {err}",
+                structure.fields()[0]
+            ))
+        })?;
+        let value = &structure.fields()[1];
+        match tag {
+            0x01 => Ok(Self::Idle),
+            0x02 => Ok(Self::Started(value.try_into().map_err(|err| {
+                D::Error::custom(format!("could not deserialize HybridState: {err}"))
+            })?)),
+            0x03 => Ok(Self::Connecting),
+            0x04 => Ok(Self::Connected),
+            0x05 => Ok(Self::Completed),
+            0x06 => Ok(Self::UserCancelled),
+            0x07 => Ok(Self::Failed),
+            _ => Err(D::Error::custom(format!("Unknown HybridState tag: {tag}"))),
+        }
+    }
+}
+
+impl Type for crate::model::HybridState {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
 
 /// Identifier for a request to be used for cancellation.
@@ -720,27 +815,59 @@ fn value_to_owned(value: &Value<'_>) -> OwnedValue {
 
 #[cfg(test)]
 mod test {
-    use zvariant::{Type, Value};
+    use zvariant::{
+        Type,
+        serialized::{Context, Data, Format},
+    };
 
-    use crate::server::{BackgroundEvent, HybridState};
+    use crate::server::BackgroundEvent;
 
     #[test]
     fn test_serialize_hybrid_state() {
-        let state: HybridState = crate::model::HybridState::Completed.into();
+        let state = crate::model::HybridState::Completed;
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
         let data = zvariant::to_bytes(ctx, &state).unwrap();
-        assert_eq!("(uv)", HybridState::SIGNATURE.to_string());
-        assert_eq!(&[0, 0, 0, 4, 1, b'b', 0, 0, 0, 0, 0, 0], data.bytes());
+        assert_eq!("(yv)", crate::model::HybridState::SIGNATURE.to_string());
+        assert_eq!(&[5, 1, b'y', 0, 0], data.bytes());
     }
 
     #[test]
     fn test_serialize_background_hybrid_event() {
-        let state: HybridState = crate::model::HybridState::Completed.into();
-        let event = BackgroundEvent::HybridStateChanged(Value::from(state).try_to_owned().unwrap());
+        let state = crate::model::HybridState::Completed;
+        let event = BackgroundEvent::HybridStateChanged(state);
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        assert_eq!("(yv)", BackgroundEvent::SIGNATURE.to_string());
+        let data = zvariant::to_bytes(ctx, &event).unwrap();
+        let expected = b"\x02\x04(yv)\0\0\x05\x01y\0\0";
+        assert_eq!(expected, data.bytes());
+    }
+
+    #[test]
+    fn test_deserialize_background_hybrid_event() {
+        let data = Data::new(
+            b"\x02\x04(yv)\0\0\x05\x01y\0\0",
+            Context::new(Format::DBus, zvariant::BE, 0),
+        );
+        let event: BackgroundEvent = data.deserialize().unwrap().0;
+        assert!(matches!(
+            event,
+            BackgroundEvent::HybridStateChanged(crate::model::HybridState::Completed)
+        ));
+    }
+
+    #[test]
+    fn test_round_trip_background_hybrid_event() {
+        let event = BackgroundEvent::HybridStateChanged(crate::model::HybridState::Started(
+            String::from("FIDO:/1234"),
+        ));
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
         let data = zvariant::to_bytes(ctx, &event).unwrap();
-        assert_eq!("(yv)", BackgroundEvent::SIGNATURE.to_string());
-        let expected = b"\x02\x04(uv)\0\0\0\0\x04\x01b\0\0\0\0\0";
-        assert_eq!(expected, data.bytes());
+        let bytes = data.bytes();
+        let data2 = Data::new(bytes, Context::new(Format::DBus, zvariant::BE, 0));
+        let event_2: BackgroundEvent = data2.deserialize().unwrap().0;
+        assert!(matches!(
+            event_2,
+            BackgroundEvent::HybridStateChanged(crate::model::HybridState::Started(ref f)) if f == "FIDO:/1234"
+        ));
     }
 }
