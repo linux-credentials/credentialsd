@@ -202,7 +202,7 @@ pub mod test {
                 .await
                 .as_mut()
                 .unwrap()
-                .initiate_event_stream()
+                .subscribe()
                 .await
                 .unwrap();
             self.stream_initialized.store(true, Ordering::Release);

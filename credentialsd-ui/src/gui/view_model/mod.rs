@@ -133,7 +133,7 @@ impl<F: FlowController + Send> ViewModel<F> {
         let view_events = self.rx_event.clone().map(Event::View);
         let bg_events = {
             let mut cred_service = self.flow_controller.lock().await;
-            cred_service.initiate_event_stream().await.unwrap()
+            cred_service.subscribe().await.unwrap()
         };
         let mut all_events = view_events.merge(bg_events.map(Event::Background));
         while let Some(event) = all_events.next().await {
