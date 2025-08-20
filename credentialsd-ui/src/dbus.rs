@@ -9,7 +9,7 @@ use zbus::{fdo, interface, proxy};
     default_service = "xyz.iinuwa.credentialsd.FlowControl"
 )]
 pub trait FlowControlService {
-    async fn initiate_event_stream(&self) -> fdo::Result<()>;
+    async fn subscribe(&self) -> fdo::Result<()>;
 
     async fn get_available_public_key_devices(&self) -> fdo::Result<Vec<Device>>;
 

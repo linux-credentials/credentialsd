@@ -98,7 +98,7 @@ where
     U: UsbHandler + Debug + Send + Sync + 'static,
     UC: UiController + Debug + Send + Sync + 'static,
 {
-    async fn initiate_event_stream(
+    async fn subscribe(
         &self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
@@ -434,7 +434,7 @@ pub mod test {
             }
         }
 
-        async fn initiate_event_stream(
+        async fn subscribe(
             &mut self,
         ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
             if let Ok(DummyFlowResponse::InitStream(Ok(stream))) =
@@ -542,7 +542,7 @@ pub mod test {
                         DummyFlowResponse::GetUsbCredential
                     }
                     DummyFlowRequest::InitStream => {
-                        let rsp = self.initiate_event_stream().await;
+                        let rsp = self.subscribe().await;
                         DummyFlowResponse::InitStream(rsp)
                     }
                 };
@@ -644,7 +644,7 @@ pub mod test {
             Ok(())
         }
 
-        async fn initiate_event_stream(
+        async fn subscribe(
             &mut self,
         ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
             let (tx, mut rx) = mpsc::channel(32);
