@@ -3,7 +3,6 @@
 use serde::{
     Deserialize, Serialize,
     de::{DeserializeSeed, Error},
-    ser::Error as _,
 };
 use zvariant::{
     self, Array, DeserializeDict, DynamicDeserialize, LE, Optional, OwnedValue, SerializeDict,
@@ -12,7 +11,7 @@ use zvariant::{
 
 use crate::model::{BackgroundEvent, Operation};
 
-const TAG_VALUE_SIGNATURE: &'static Signature = &Signature::Structure(Fields::Static {
+const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
 });
 
@@ -266,11 +265,7 @@ impl Serialize for crate::model::HybridState {
     where
         S: serde::Serializer,
     {
-        let structure: Structure = self.try_into().map_err(|err| {
-            S::Error::custom(format!(
-                "failed to read HybridState as D-Bus structure: {err}"
-            ))
-        })?;
+        let structure: Structure = self.into();
         structure.serialize(serializer)
     }
 }
@@ -295,7 +290,7 @@ impl TryFrom<&Structure<'_>> for crate::model::HybridState {
 
     fn try_from(structure: &Structure<'_>) -> Result<Self, Self::Error> {
         let (tag, value) = parse_tag_value_struct(structure)?;
-        return match tag {
+        match tag {
             0x01 => Ok(Self::Idle),
             0x02 => {
                 let qr_code: &str = value.downcast_ref()?;
@@ -309,7 +304,7 @@ impl TryFrom<&Structure<'_>> for crate::model::HybridState {
             _ => Err(zvariant::Error::Message(format!(
                 "Invalid HybridState type passed: {tag}"
             ))),
-        };
+        }
     }
 }
 
@@ -365,7 +360,7 @@ impl From<&crate::model::UsbState> for Structure<'_> {
             }
             crate::model::UsbState::NeedsUserPresence => (0x07, None),
             crate::model::UsbState::SelectCredential { creds } => {
-                let creds: Vec<Credential> = creds.into_iter().map(Credential::from).collect();
+                let creds: Vec<Credential> = creds.iter().map(Credential::from).collect();
                 let value = Value::new(creds);
                 (0x08, Some(value))
             }
@@ -506,7 +501,7 @@ fn parse_tag_value_struct<'a>(s: &'a Structure) -> Result<(u8, Value<'a>), zvari
     }
     let tag: u8 = s
         .fields()
-        .get(0)
+        .first()
         .ok_or_else(|| {
             zvariant::Error::SignatureMismatch(
                 Signature::U8,
