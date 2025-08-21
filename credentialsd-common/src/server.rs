@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde::{
     Deserialize, Serialize,
     de::{DeserializeSeed, Error},
-    ser::{Error as _, SerializeTuple},
+    ser::Error as _,
 };
 use zvariant::{
     self, Array, DeserializeDict, DynamicDeserialize, LE, Optional, OwnedValue, SerializeDict,
@@ -27,25 +27,8 @@ impl Serialize for BackgroundEvent {
     where
         S: serde::Serializer,
     {
-        let mut tuple = serializer.serialize_tuple(3)?;
-        match self {
-            Self::UsbStateChanged(state) => {
-                tuple.serialize_element(&0x01_u8)?;
-
-                let structure: Structure<'_> = state.into();
-                tuple.serialize_element(&Value::Structure(structure))?;
-            }
-            Self::HybridQrStateChanged(state) => {
-                tuple.serialize_element(&0x02_u8)?;
-                let structure: Structure<'_> = state.try_into().map_err(|err| {
-                    S::Error::custom(format!(
-                        "could not convert HybridState to a structure: {err}"
-                    ))
-                })?;
-                tuple.serialize_element(&Value::Structure(structure))?;
-            }
-        };
-        tuple.end()
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
     }
 }
 
@@ -60,37 +43,45 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
             ))
         })?;
         let structure = d.deserialize(deserializer)?;
-        let (tag, value) = parse_tag_value_struct(&structure).map_err(|err| {
-            D::Error::custom(format!("could not parse structure as tag-value: {err}"))
-        })?;
+        (&structure).try_into().map_err(|err| {
+            D::Error::custom(format!(
+                "could not deserialize structure into BackgroundEvent: {err}"
+            ))
+        })
+    }
+}
+
+impl From<&BackgroundEvent> for Structure<'_> {
+    fn from(value: &BackgroundEvent) -> Self {
+        match value {
+            BackgroundEvent::UsbStateChanged(state) => {
+                tag_value_to_struct(0x01, Some(Value::Structure(state.into())))
+            }
+            BackgroundEvent::HybridQrStateChanged(state) => {
+                tag_value_to_struct(0x02, Some(Value::Structure(state.into())))
+            }
+        }
+    }
+}
+
+impl TryFrom<&Structure<'_>> for BackgroundEvent {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Structure<'_>) -> Result<Self, Self::Error> {
+        let (tag, value) = parse_tag_value_struct(value)?;
+
         match tag {
             0x01 => {
-                let inner: Structure = value.downcast_ref().map_err(|err| {
-                    D::Error::custom(format!(
-                        "could not deserialize inner value {value} as struct: {err}"
-                    ))
-                })?;
-                let state = crate::model::UsbState::try_from(&inner).map_err(|err| {
-                    D::Error::custom(format!(
-                        "could not deserialize UsbState from structure: {err}"
-                    ))
-                })?;
-                Ok(BackgroundEvent::UsbStateChanged(state))
+                let structure: Structure = value.downcast_ref()?;
+                Ok(BackgroundEvent::UsbStateChanged((&structure).try_into()?))
             }
             0x02 => {
-                let inner: Structure = value.downcast_ref().map_err(|err| {
-                    D::Error::custom(format!(
-                        "could not deserialize inner value {value} as struct: {err}"
-                    ))
-                })?;
-                let state = crate::model::HybridState::try_from(&inner).map_err(|err| {
-                    D::Error::custom(format!(
-                        "could not deserialize HybridState from structure: {err}"
-                    ))
-                })?;
-                Ok(BackgroundEvent::HybridQrStateChanged(state))
+                let structure: Structure = value.downcast_ref()?;
+                Ok(BackgroundEvent::HybridQrStateChanged(
+                    (&structure).try_into()?,
+                ))
             }
-            _ => Err(D::Error::custom(format!(
+            _ => Err(zvariant::Error::Message(format!(
                 "Unknown BackgroundEvent tag : {tag}"
             ))),
         }
