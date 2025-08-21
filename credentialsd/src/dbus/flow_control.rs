@@ -5,7 +5,8 @@ use std::future::Future;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use credentialsd_common::model::{
-    BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError, WebAuthnError
+    BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError,
+    WebAuthnError,
 };
 use credentialsd_common::server::{Device, RequestId};
 use futures_lite::StreamExt;
