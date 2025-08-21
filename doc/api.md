@@ -51,6 +51,10 @@ sequenceDiagram
 - (UI Controller): Renamed `InitiateEventStream()` to `Subscribe()`
 - (UI Controller): Serialize enums (including BackgroundEvent, HybridState and UsbState) as (yv) structs instead for a{sv} dicts
 
+### Improvements
+
+- Document errors returned to gateway requests
+
 ## [0.1.0] - 2025-08-14
 
 ### Breaking Changes
@@ -269,7 +273,10 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-TBD.
+- `AbortError`: Request cancelled by client.
+- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
+- `TypeError`: An invalid request is made.
+- `NotAllowedError`: catch-all error.
 
 ## `GetCredential(credRequest: GetCredentialRequest) -> GetCredentialResponse`
 
@@ -362,7 +369,10 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-TBD.
+- `AbortError`: Request cancelled by client.
+- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
+- `TypeError`: An invalid request is made.
+- `NotAllowedError`: catch-all error.
 
 ## `GetClientCapabilities() -> GetClientCapabilitiesResponse`
 
