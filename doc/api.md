@@ -49,6 +49,11 @@ sequenceDiagram
 ### Breaking Changes
 
 - (UI Controller): Renamed `InitiateEventStream()` to `Subscribe()`
+- (UI Controller): Serialize enums (including BackgroundEvent, HybridState and UsbState) as (yv) structs instead for a{sv} dicts
+
+### Improvements
+
+- Document errors returned to gateway requests
 
 ## [0.1.0] - 2025-08-14
 
@@ -60,15 +65,23 @@ sequenceDiagram
 
 # Terminology
 
-_authenticator_: a device that securely stores and releases credentials
-_client_: a user agent requesting credentials for a relying party, for example, browsers or apps
-_credential_: a value that identifies a user to a relying party
-_gateway_: entrypoint for clients
-_privileged_ client: a client that is trusted to set any origin for its requests
-_relying party_: an entity wishing to auhtenticate a user
-_unprivileged client_: a client that is constrained to use a predetermined set of origin(s)
+- _authenticator_: a device that securely stores and releases credentials
+- _client_: a user agent requesting credentials for a relying party, for example, browsers or apps
+- _credential_: a value that identifies a user to a relying party
+- _gateway_: entrypoint for clients
+- _privileged_ client: a client that is trusted to set any origin for its requests
+- _relying party_: an entity wishing to auhtenticate a user
+- _unprivileged client_: a client that is constrained to use a predetermined set of origin(s)
 
 # General Notes
+
+## Enum values
+
+Generally, enums are serialized as a tag-value structure with a single-byte tag
+and a variant as the value (`(yv)`, in D-Bus terms). The documentation for each
+specific enum variant describes how to parse the values.
+
+A single null byte (`\0`) is sent for unused enum values.
 
 ## D-Bus/JSON serialization
 
@@ -169,6 +182,8 @@ CreateCredentialRequest[a{sv}] {
 }
 ```
 
+> TODO: We should make this a tagged enum
+
 ```
 CredentialType[s] [
     "publicKey"
@@ -258,7 +273,10 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-TBD.
+- `AbortError`: Request cancelled by client.
+- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
+- `TypeError`: An invalid request is made.
+- `NotAllowedError`: catch-all error.
 
 ## `GetCredential(credRequest: GetCredentialRequest) -> GetCredentialResponse`
 
@@ -351,7 +369,10 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-TBD.
+- `AbortError`: Request cancelled by client.
+- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
+- `TypeError`: An invalid request is made.
+- `NotAllowedError`: catch-all error.
 
 ## `GetClientCapabilities() -> GetClientCapabilitiesResponse`
 
@@ -380,7 +401,8 @@ See the WebAuthn spec for meanings of the [client capability keys][def-client-ca
 
 # Flow Control API
 
-The Flow Control API is used by the UI to pass user interactions through the Flow Controller to the authenticator.
+The Flow Control API is used by the UI to pass user interactions through the
+Flow Controller to the authenticator.
 
 ## Subscribe()
 
@@ -407,28 +429,24 @@ to the UI until it calls this method.
 Notification of authenticator state change.
 
 ```
-BackgroundEvent[a{sv}] [
-    HybridStateChanged: HybridState,
-    UsbStateChanged: UsbState,
+BackgroundEvent[(yv)] [
+    (0x01) UsbStateChanged: UsbState,
+    (0x02) HybridStateChanged: HybridState,
 ]
 ```
 
 ```
-UsbState {
-    type: UsbStateType,
-    value: Value
-}
-UsbStateType[s] [
-    "IDLE",
-    "WAITING",
-    "SELECTING_DEVICE",
-    "CONNECTED",
-    "NEEDS_PIN",
-    "NEEDS_USER_VERIFICATION",
-    "NEEDS_USER_PRESENCE",
-    "SELECT_CREDENTIAL",
-    "COMPLETED",
-    "FAILED",
+UsbState[(yv)] {
+    (0x01) "IDLE",
+    (0x02) "WAITING" ,
+    (0x03) "SELECTING_DEVICE",
+    (0x04) "CONNECTED",
+    (0x05) "NEEDS_PIN",
+    (0x06) "NEEDS_USER_VERIFICATION",
+    (0x07) "NEEDS_USER_PRESENCE",
+    (0x08) "SELECT_CREDENTIAL",
+    (0x09) "COMPLETED",
+    (0x0a) "FAILED",
 ]
 ```
 
@@ -436,7 +454,9 @@ UsbStateType[s] [
 
 Not polling for FIDO USB device.
 
-`type`: `"IDLE"`
+`name`: "IDLE"`
+
+`tag`: `0x01`
 
 `value`: No associated value.
 
@@ -444,7 +464,9 @@ Not polling for FIDO USB device.
 
 Awaiting FIDO USB device to be plugged in.
 
-`type`: `"WAITING"`
+`name`: `"WAITING"`
+
+`tag`: `0x02`
 
 `value`: No associated value.
 
@@ -453,7 +475,9 @@ Awaiting FIDO USB device to be plugged in.
 Multiple USB devices have been detected and are blinking, prompt the user to
 tap one to select it.
 
-`type`: `"SELECTING_DEVICE"`
+`name`: `"SELECTING_DEVICE"`
+
+`tag`: `0x02`
 
 `value`: No associated value.
 
@@ -463,7 +487,9 @@ USB device connected, prompt user to tap. The device may require additional
 user verification, but that might not be known until after the user taps the
 device.
 
-`type`: `"CONNECTED"`
+`name`: `"CONNECTED"`
+
+`tag`: `0x04`
 
 `value`: No associated value.
 
@@ -475,7 +501,9 @@ device.
 The device needs PIN user verification: prompt the user to enter the pin. Send
 the pin to the flow controller using the enter_client_pin() method.
 
-`type`: `"NEEDS_PIN"`
+`name`: `"NEEDS_PIN"`
+
+`tag`: `0x05`
 
 `value`: `[i]`, a signed integer indicating the number of PIN attempts remaining
 before the device is locked out. If the value is less than 0, the number of attempts
@@ -488,7 +516,9 @@ left is unknown.
 The device needs on-device user verification (likely biometrics, or can be
 on-device PIN entry). Prompt the user to interact with the device.
 
-`type`: `"NEEDS_USER_VERIFICATION"`
+`name`: `"NEEDS_USER_VERIFICATION"`
+
+`tag`: `0x06`
 
 `value`: `[i]`, a signed integer indicating the number of user verification
 attempts remaining before the device is locked out. If the value is less than
@@ -498,7 +528,9 @@ attempts remaining before the device is locked out. If the value is less than
 
 The device needs evidence of user presence (e.g. touch) to release the credential.
 
-`type`: `"NEEDS_USER_PRESENCE"`
+`name`: `"NEEDS_USER_PRESENCE"`
+
+`tag`: `0x07`
 
 `value`: No associated value.
 
@@ -511,7 +543,9 @@ The device needs evidence of user presence (e.g. touch) to release the credentia
 
 Multiple credentials have been found and the user has to select which to use
 
-`type`: `"SELECT_CREDENTIAL"`
+`name`: `"SELECT_CREDENTIAL"`
+
+`tag`: `0x08`
 
 `value`: `[aa{sv}]`: A list of `Credential` objects.
 
@@ -531,7 +565,9 @@ actual CTAP credential ID before sending it to the UI.
 
 User tapped USB tapped, flow controller has received credential.
 
-`type`: `"COMPLETED"`
+`name`: `"COMPLETED"`
+
+`tag`: `0x09`
 
 `value`: No associated value.
 
@@ -541,9 +577,13 @@ User tapped USB tapped, flow controller has received credential.
 
 Interaction with the authenticator failed.
 
-`type`: `"FAILED"`
+`name`: `"FAILED"`
+
+`tag`: `0x0a`
 
 `value`: `ServiceError`
+
+> TODO: Change serialization of ServiceError
 
 ```
 ServiceError[?] [
@@ -587,19 +627,14 @@ Something went wrong with the credential service itself, not the authenticator.
 > TODO: Failed has no reason
 
 ```
-HybridState {
-    type: HybridStateType
-    value: [v]
-}
-
-HybridStateType[s] [
-    "IDLE",
-    "STARTED",
-    "CONNECTING",
-    "CONNECTED",
-    "COMPLETED",
-    "USER_CANCELLED",
-    "FAILED",
+HybridState[(yv)] [
+    (0x01) "IDLE",
+    (0x02) "STARTED",
+    (0x03) "CONNECTING",
+    (0x04) "CONNECTED",
+    (0x05) "COMPLETED",
+    (0x06) "USER_CANCELLED",
+    (0x07) "FAILED",
 ]
 ```
 
@@ -613,7 +648,9 @@ which is a `HybridStateType`, and `value` whose value depends on
 
 Default state, not listening for hybrid transport.
 
-`type`: `"IDLE"`
+`name`: `"IDLE"`
+
+`tag`: `0x04`
 
 `value`: No associated value.
 
@@ -621,7 +658,9 @@ Default state, not listening for hybrid transport.
 
 QR code flow is starting, awaiting QR code scan and BLE advert from phone.
 
-`type`: `"STARTED"`
+`name`: `"STARTED"`
+
+`tag`: `0x04`
 
 `value`: `[s]`. String to be encoded as a QR code and displayed to the user to scan.
 
@@ -629,7 +668,9 @@ QR code flow is starting, awaiting QR code scan and BLE advert from phone.
 
 BLE advert received, connecting to caBLE tunnel with shared secret.
 
-`type`: `"CONNECTING"`
+`name`: `"CONNECTING"`
+
+`tag`: `0x03`
 
 `value`: No associated value
 
@@ -638,7 +679,9 @@ BLE advert received, connecting to caBLE tunnel with shared secret.
 Connected to device via caBLE tunnel, waiting for user to release the
 credential from their remote device.
 
-`type`: `"CONNECTED"`
+`name`: `"CONNECTED"`
+
+`tag`: `0x04`
 
 `value`: No associated value
 
@@ -646,7 +689,9 @@ credential from their remote device.
 
 Credential received over tunnel.
 
-`type`: `"COMPLETED"`
+`name`: `"COMPLETED"`
+
+`tag`: `0x05`
 
 `value`: No associated value
 
@@ -654,7 +699,9 @@ Credential received over tunnel.
 
 Authenticator operation was cancelled.
 
-`type`: `"USER_CANCELLED"`
+`name`: `"USER_CANCELLED"`
+
+`tag`: `0x06`
 
 `value`: No associated value
 
@@ -662,7 +709,9 @@ Authenticator operation was cancelled.
 
 Failed to receive a credential from the hybrid authenticator.
 
-`type`: `"FAILED"`
+`name`: `"FAILED"`
+
+`tag`: `0x07`
 
 `value`: No associated value.
 

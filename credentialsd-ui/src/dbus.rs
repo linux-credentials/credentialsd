@@ -1,5 +1,8 @@
 use async_std::channel::Sender;
-use credentialsd_common::server::{BackgroundEvent, Device, RequestId, ViewRequest};
+use credentialsd_common::{
+    model::BackgroundEvent,
+    server::{Device, RequestId, ViewRequest},
+};
 use zbus::{fdo, interface, proxy};
 
 #[proxy(

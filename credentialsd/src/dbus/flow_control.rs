@@ -5,9 +5,10 @@ use std::future::Future;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use credentialsd_common::model::{
-    CredentialRequest, CredentialResponse, Error as CredentialServiceError, WebAuthnError,
+    BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError,
+    WebAuthnError,
 };
-use credentialsd_common::server::{BackgroundEvent, Device, RequestId};
+use credentialsd_common::server::{Device, RequestId};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -316,14 +317,21 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         request: CredentialRequest,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
-        // TODO: We need a PlatformError variant.
         self.initiator.send((request, tx)).await.unwrap();
-        rx.await
-            .map_err(|_| {
-                tracing::error!("Credential response channel closed prematurely");
-                WebAuthnError::NotAllowedError
-            })
-            .and_then(|msg| msg.map_err(|_| WebAuthnError::NotAllowedError))
+        let response = rx.await.map_err(|_| {
+            tracing::error!("Credential response channel closed prematurely");
+            WebAuthnError::NotAllowedError
+        })?;
+        // TODO: CredentialServiceError is returning the wrong errors types to the flow controller
+        // We need to be able to bubble up the InvalidStateError, when the
+        // selected authenticator has the credential known by the RP, and
+        // the user wants to let the RP know.
+        // All the other possible errors from the spec (AbortError,
+        // ConstraintError, SecurityError, TypeError) should be handled
+        // earlier by the gateway.
+        // Every other error should be squashed into NotAllowed as a catch-all
+        // For now, just squashing.
+        response.map_err(|_| WebAuthnError::NotAllowedError)
     }
 }
 

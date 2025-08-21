@@ -64,9 +64,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             }
             let (make_cred_request, client_data_json) =
                 create_credential_request_try_into_ctap2(&request).map_err(|e| {
-                    tracing::error!("Could not parse passkey creation request: {e:?}");
-                    WebAuthnError::TypeError
+                    if let WebAuthnError::TypeError = e {
+                        tracing::error!(
+                            "Could not parse passkey creation request. Rejecting request."
+                        );
+                    }
+                    e
                 })?;
+            if make_cred_request.algorithms.is_empty() {
+                tracing::info!("No supported algorithms given in request. Rejecting request.");
+                return Err(Error::NotSupportedError);
+            }
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
@@ -190,6 +198,10 @@ async fn check_origin(
         );
         return Err(WebAuthnError::SecurityError);
     };
+    if !origin.starts_with("https://") {
+        tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
+        return Err(WebAuthnError::SecurityError);
+    }
     let is_same_origin = is_same_origin.unwrap_or(false);
     let top_origin = if is_same_origin {
         origin.clone()
@@ -202,7 +214,7 @@ async fn check_origin(
 
 #[allow(clippy::enum_variant_names)]
 #[derive(DBusError, Debug)]
-#[zbus(prefix = "xyz.iinuwa.credentials")]
+#[zbus(prefix = "xyz.iinuwa.credentialsd")]
 enum Error {
     #[zbus(error)]
     ZBus(zbus::Error),
@@ -254,5 +266,27 @@ impl From<WebAuthnError> for Error {
             WebAuthnError::NotAllowedError => Self::NotAllowedError,
             WebAuthnError::TypeError => Self::TypeError,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::future::Future;
+
+    use credentialsd_common::model::WebAuthnError;
+
+    use crate::dbus::gateway::check_origin;
+
+    #[tokio::test]
+    async fn test_only_https_origins() {
+        let check = |origin: &'static str| async { check_origin(Some(origin), Some(true)).await };
+        assert!(matches!(
+            check("https://example.com").await,
+            Ok((o, ..)) if o == "https://example.com"
+        ));
+        assert!(matches!(
+            check("http://example.com").await,
+            Err(WebAuthnError::SecurityError)
+        ));
     }
 }

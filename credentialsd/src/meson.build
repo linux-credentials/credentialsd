@@ -32,7 +32,7 @@ custom_target(
 )
 
 test(
-  'cargo-unit-tests',
+  'credentialsd cargo-unit-tests',
   cargo,
   env: [cargo_env],
   args: [

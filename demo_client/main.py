@@ -9,10 +9,18 @@ from typing import Optional
 import unittest
 
 from dbus_next.aio import MessageBus
-from dbus_next import Variant
+from dbus_next import DBusError, Message, MessageType, Variant
 
 import util
 import webauthn
+
+
+def dbus_error_from_message(msg: Message):
+    assert msg.message_type == MessageType.ERROR
+    return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
+
+
+DBusError._from_message = dbus_error_from_message
 
 
 async def run(cmd):
@@ -36,9 +44,20 @@ async def run(cmd):
     username = "user@example.com"
 
     if cmd == "create":
-        auth_data = await create_passkey(
-            interface, origin, top_origin, rp_id, user_handle, username
-        )
+        try:
+            auth_data = await create_passkey(
+                interface, origin, top_origin, rp_id, user_handle, username
+            )
+        except DBusError as e:
+            print(
+                "Received error: " + e.type + (f": {e.text}" if e.text else ""),
+                file=sys.stderr,
+            )
+            exit(1)
+        except Exception as e:
+            print(f"Received error: {e}")
+            exit(1)
+
         user_data = {
             "id": 1,
             "name": username,
@@ -56,9 +75,20 @@ async def run(cmd):
     elif cmd == "get":
         user_data = json.load(open("./user.json", "r"))
         cred_id = util.b64_decode(user_data["cred_id"])
-        auth_data = await get_passkey(
-            interface, origin, top_origin, rp_id, cred_id, user_data
-        )
+        try:
+            auth_data = await get_passkey(
+                interface, origin, top_origin, rp_id, cred_id, user_data
+            )
+        except DBusError as e:
+            print(
+                "Received error: " + e.type + (f": {e.text}" if e.text else ""),
+                file=sys.stderr,
+            )
+            exit(1)
+        except Exception as e:
+            print(f"Received error: {e}")
+            exit(1)
+
         print(auth_data)
     else:
         print(f"unknown cmd: {cmd}")
@@ -143,6 +173,7 @@ async def create_passkey(interface, origin, top_origin, rp_id, user_handle, user
     }
 
     rsp = await interface.call_create_credential(req)
+
     print("Received response")
     pprint(rsp)
     if rsp["type"].value != "public-key":
@@ -203,7 +234,8 @@ def main():
         print("No cmd given. Use 'get' or 'create'")
         exit()
     cmd = args[0]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.run_until_complete(run(cmd))
 
 
