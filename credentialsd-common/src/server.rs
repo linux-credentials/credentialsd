@@ -17,7 +17,7 @@ use crate::model::Operation;
 #[derive(Clone, Debug)]
 
 pub enum BackgroundEvent {
-    UsbStateChanged(UsbState),
+    UsbStateChanged(crate::model::UsbState),
     HybridStateChanged(crate::model::HybridState),
 }
 
@@ -38,7 +38,9 @@ impl Serialize for BackgroundEvent {
         match self {
             Self::UsbStateChanged(state) => {
                 tuple.serialize_element(&0x01_u8)?;
-                tuple.serialize_element(state)?;
+
+                let structure: Structure<'_> = state.into();
+                tuple.serialize_element(&Value::Structure(structure))?;
             }
             Self::HybridStateChanged(state) => {
                 tuple.serialize_element(&0x02_u8)?;
@@ -95,7 +97,6 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
                 }
             }
         }
-
         deserializer.deserialize_tuple(2, TupleVisitor)
     }
 }
@@ -104,17 +105,14 @@ impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
     type Error = zvariant::Error;
 
     fn try_from(value: BackgroundEvent) -> Result<Self, Self::Error> {
-        let ret = match value {
+        match value {
             BackgroundEvent::HybridStateChanged(hybrid_state_val) => Ok(
                 crate::model::BackgroundEvent::HybridQrStateChanged(hybrid_state_val),
             ),
-            BackgroundEvent::UsbStateChanged(usb_state_val) => {
-                UsbState::try_from(Value::<'_>::from(usb_state_val))
-                    .and_then(crate::model::UsbState::try_from)
-                    .map(crate::model::BackgroundEvent::UsbStateChanged)
+            BackgroundEvent::UsbStateChanged(usb_state) => {
+                Ok(crate::model::BackgroundEvent::UsbStateChanged(usb_state))
             }
-        }?;
-        Ok(ret)
+        }
     }
 }
 
@@ -186,23 +184,35 @@ pub struct Credential {
     username: Optional<String>,
 }
 
+impl From<&Credential> for crate::model::Credential {
+    fn from(value: &Credential) -> Self {
+        Self {
+            id: value.id.clone(),
+            name: value.name.clone(),
+            username: value.username.clone().into(),
+        }
+    }
+}
+
 impl From<Credential> for crate::model::Credential {
     fn from(value: Credential) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&crate::model::Credential> for Credential {
+    fn from(value: &crate::model::Credential) -> Self {
         Self {
-            id: value.id,
-            name: value.name,
-            username: value.username.into(),
+            id: value.id.clone(),
+            name: value.name.clone(),
+            username: value.username.clone().into(),
         }
     }
 }
 
 impl From<crate::model::Credential> for Credential {
     fn from(value: crate::model::Credential) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            username: value.username.into(),
-        }
+        Self::from(&value)
     }
 }
 
@@ -240,6 +250,22 @@ impl TryFrom<Device> for crate::model::Device {
             id: value.id,
             transport,
         })
+    }
+}
+
+impl TryFrom<&Value<'_>> for crate::model::Error {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Value<'_>) -> Result<Self, Self::Error> {
+        let err_code: &str = value.downcast_ref()?;
+        let err = match err_code {
+            "AuthenticatorError" => crate::model::Error::AuthenticatorError,
+            "NoCredentials" => crate::model::Error::NoCredentials,
+            "CredentialExcluded" => crate::model::Error::CredentialExcluded,
+            "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
+            s => crate::model::Error::Internal(String::from(s)),
+        };
+        Ok(err)
     }
 }
 
@@ -671,6 +697,154 @@ impl From<crate::model::UsbState> for UsbState {
     }
 }
 
+impl From<&crate::model::UsbState> for Structure<'_> {
+    fn from(value: &crate::model::UsbState) -> Self {
+        let (tag, value): (u8, Option<Value>) = match value {
+            crate::model::UsbState::Idle => (0x01, None),
+            crate::model::UsbState::Waiting => (0x02, None),
+            crate::model::UsbState::SelectingDevice => (0x03, None),
+            crate::model::UsbState::Connected => (0x04, None),
+            // TODO: Add pin request reason to this struct
+            crate::model::UsbState::NeedsPin { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => *num as i32,
+                    None => -1,
+                };
+                (0x05, Some(Value::I32(num)))
+            }
+            crate::model::UsbState::NeedsUserVerification { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => *num as i32,
+                    None => -1,
+                };
+                (0x06, Some(Value::I32(num)))
+            }
+            crate::model::UsbState::NeedsUserPresence => (0x07, None),
+            crate::model::UsbState::SelectCredential { creds } => {
+                let creds: Vec<Credential> = creds.into_iter().map(Credential::from).collect();
+                let value = Value::new(creds);
+                (0x08, Some(value))
+            }
+            crate::model::UsbState::Completed => (0x09, None),
+            crate::model::UsbState::Failed(error) => {
+                let value = Value::<'_>::from(error.to_string());
+                (0x0A, Some(value))
+            }
+        };
+        StructureBuilder::new()
+            .add_field(tag)
+            .append_field(value_to_owned(&Value::new(value.unwrap_or_else(|| Value::U8(0)))).into())
+            .build()
+            .expect("valid signature")
+    }
+}
+
+impl TryFrom<&Structure<'_>> for crate::model::UsbState {
+    type Error = zvariant::Error;
+
+    fn try_from(structure: &Structure<'_>) -> Result<Self, Self::Error> {
+        if structure.signature() != TAG_VALUE_SIGNATURE {
+            return Err(zvariant::Error::SignatureMismatch(
+                structure.signature().clone(),
+                TAG_VALUE_SIGNATURE.to_string(),
+            ));
+        }
+        let tag: u8 = structure
+            .fields()
+            .get(0)
+            .ok_or_else(|| zvariant::Error::IncorrectType)
+            .and_then(|f| f.downcast_ref())?;
+        let value = structure
+            .fields()
+            .get(1)
+            .ok_or_else(|| zvariant::Error::IncorrectType)?;
+        match tag {
+            0x01 => Ok(Self::Idle),
+            0x02 => Ok(Self::Waiting),
+            0x03 => Ok(Self::SelectingDevice),
+            0x04 => Ok(Self::Connected),
+            0x05 => {
+                let attempts_left: i32 = value.downcast_ref()?;
+                let attempts_left = if attempts_left == -1 {
+                    None
+                } else {
+                    Some(attempts_left as u32)
+                };
+                Ok(Self::NeedsPin { attempts_left })
+            }
+            0x06 => {
+                let attempts_left: i32 = value.downcast_ref()?;
+                let attempts_left = if attempts_left == -1 {
+                    None
+                } else {
+                    Some(attempts_left as u32)
+                };
+                Ok(Self::NeedsUserVerification { attempts_left })
+            }
+            0x07 => Ok(Self::NeedsUserPresence),
+            0x08 => {
+                let creds: Array = value.downcast_ref()?;
+                let creds: Result<Vec<crate::model::Credential>, zvariant::Error> = creds
+                    .iter()
+                    .map(|v| v.try_to_owned().unwrap())
+                    .map(|v| {
+                        let cred: Result<crate::model::Credential, zvariant::Error> =
+                            Value::from(v)
+                                .downcast::<Credential>()
+                                .map(crate::model::Credential::from);
+                        cred
+                    })
+                    .collect();
+                Ok(Self::SelectCredential { creds: creds? })
+            }
+            0x09 => Ok(Self::Completed),
+            0x0A => {
+                let err_code: &str = value.downcast_ref()?;
+                let err = match err_code {
+                    "AuthenticatorError" => crate::model::Error::AuthenticatorError,
+                    "NoCredentials" => crate::model::Error::NoCredentials,
+                    "CredentialExcluded" => crate::model::Error::CredentialExcluded,
+                    "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
+                    s => crate::model::Error::Internal(String::from(s)),
+                };
+                Ok(Self::Failed(err))
+            }
+            _ => Err(zvariant::Error::IncorrectType),
+        }
+    }
+}
+
+impl Serialize for crate::model::UsbState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::model::UsbState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let d = Structure::deserializer_for_signature(TAG_VALUE_SIGNATURE).map_err(|err| {
+            D::Error::custom(format!("could not create deserializer for UsbState: {err}"))
+        })?;
+        let structure = d.deserialize(deserializer)?;
+        (&structure).try_into().map_err(|err| {
+            D::Error::custom(format!(
+                "could not deserialize UsbState from structure: {err}"
+            ))
+        })
+    }
+}
+
+impl Type for crate::model::UsbState {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
+}
+
 impl TryFrom<Value<'_>> for UsbState {
     type Error = zvariant::Error;
     fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
@@ -869,5 +1043,159 @@ mod test {
             event_2,
             BackgroundEvent::HybridStateChanged(crate::model::HybridState::Started(ref f)) if f == "FIDO:/1234"
         ));
+    }
+
+    #[test]
+    fn test_serialize_usb_state() {
+        let creds = vec![
+            crate::model::Credential {
+                id: "a1b2c3".to_string(),
+                name: "user 1".to_string(),
+                username: Some("u1@example.com".to_string()),
+            },
+            crate::model::Credential {
+                id: "321".to_string(),
+                name: "User 2".to_string(),
+                username: None,
+            },
+        ];
+        let state = crate::model::UsbState::SelectCredential { creds };
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        let data = zvariant::to_bytes(ctx, &state).unwrap();
+        assert_eq!("(yv)", crate::model::UsbState::SIGNATURE.to_string());
+
+        #[rustfmt::skip]
+        let expected = [
+            8, // UsbState::SelectCredential
+            6, 97, 97, 123, 115, 118, 125, 0, 0, 0, 0, // Signature aa{sv} + padding
+            0, 0, 0, 165, // array(struct) data length
+                0, 0, 0, 83, 0, 0, 0, 0, // element 1(struct) length, + padding(4)
+                    0, 0, 0, 2, 105, 100, 0, // string[2] "id"
+                        1, 115, 0, 0, 0, // Signature s + padding
+                        0, 0, 0, 6, 97, 49, 98, 50, 99, 51, 0, 0, // String, len 6, "a1b2c3" + padding(1)
+                    0, 0, 0, 4, 110, 97, 109, 101, 0, // String, len 4, "name"
+                        1, 115, 0, // Signature s + padding
+                        0, 0, 0, 6, 117, 115, 101, 114, 32, 49, 0, 0, // String, len 6, "user 1" + padding(1)
+                    0, 0, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, // String, len 8, "username"
+                        1, 115, 0, // Signature s
+                        0, 0, 0, 14, 117, 49, 64, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 0, 0, // String, len 14, "u1@example.com" + padding(1)
+
+            0, 0, 0, 69, // element 2, length 69
+                0, 0, 0, 2, 105, 100, 0, // string, len 2, "id"
+                    1, 115, 0, 0, 0, // Signature s + padding(2)
+                    0, 0, 0, 3, 51, 50, 49, 0, 0, 0, 0, 0, // string, len 3, "321" + padding(4)
+                0, 0, 0, 4, 110, 97, 109, 101, 0, // String, len 4, "name"
+                    1, 115, 0, // Signature s
+                    0, 0, 0, 6, 85, 115, 101, 114, 32, 50, 0, 0, // String, len 6, "User 2" + padding(1)
+                0, 0, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, // string, len 8, "username"
+                    1, 115, 0, 0, // Signature s + padding(1)
+                    0, 0, 0, 0, // string, len 0, ""
+        ];
+        assert_eq!(expected, data.bytes());
+    }
+
+    #[test]
+    fn test_deserialize_usb_state() {
+        #[rustfmt::skip]
+        let input = [
+            8, // UsbState::SelectCredential
+            6, 97, 97, 123, 115, 118, 125, 0, 0, 0, 0, // Signature aa{sv} + padding
+            0, 0, 0, 165, // array(struct) data length
+                0, 0, 0, 83, 0, 0, 0, 0, // element 1(struct) length, + padding(4)
+                    0, 0, 0, 2, 105, 100, 0, // string[2] "id"
+                        1, 115, 0, 0, 0, // Signature s + padding
+                        0, 0, 0, 6, 97, 49, 98, 50, 99, 51, 0, 0, // String, len 6, "a1b2c3" + padding(1)
+                    0, 0, 0, 4, 110, 97, 109, 101, 0, // String, len 4, "name"
+                        1, 115, 0, // Signature s + padding
+                        0, 0, 0, 6, 117, 115, 101, 114, 32, 49, 0, 0, // String, len 6, "user 1" + padding(1)
+                    0, 0, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, // String, len 8, "username"
+                        1, 115, 0, // Signature s
+                        0, 0, 0, 14, 117, 49, 64, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 0, 0, // String, len 14, "u1@example.com" + padding(1)
+
+            0, 0, 0, 69, // element 2, length 69
+                0, 0, 0, 2, 105, 100, 0, // string, len 2, "id"
+                    1, 115, 0, 0, 0, // Signature s + padding(2)
+                    0, 0, 0, 3, 51, 50, 49, 0, 0, 0, 0, 0, // string, len 3, "321" + padding(4)
+                0, 0, 0, 4, 110, 97, 109, 101, 0, // String, len 4, "name"
+                    1, 115, 0, // Signature s
+                    0, 0, 0, 6, 85, 115, 101, 114, 32, 50, 0, 0, // String, len 6, "User 2" + padding(1)
+                0, 0, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, // string, len 8, "username"
+                    1, 115, 0, 0, // Signature s + padding(1)
+                    0, 0, 0, 0, // string, len 0, ""
+        ];
+        let ctx = Context::new(Format::DBus, zvariant::BE, 0);
+        let data = Data::new(&input, ctx);
+        let state: crate::model::UsbState = data.deserialize().unwrap().0;
+        match state {
+            crate::model::UsbState::SelectCredential { creds } => {
+                assert_eq!(2, creds.len());
+                assert_eq!("a1b2c3", creds[0].id,);
+                assert_eq!("user 1", creds[0].name,);
+                assert_eq!("u1@example.com", creds[0].username.as_ref().unwrap());
+                assert_eq!("321", creds[1].id,);
+                assert_eq!("User 2", creds[1].name,);
+                assert_eq!(None, creds[1].username,);
+            }
+            _ => panic!(""),
+        }
+    }
+
+    #[test]
+    fn test_serialize_background_usb_event() {
+        let state = crate::model::UsbState::NeedsPin {
+            attempts_left: Some(254),
+        };
+        let event = BackgroundEvent::UsbStateChanged(state);
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        assert_eq!("(yv)", BackgroundEvent::SIGNATURE.to_string());
+        let data = zvariant::to_bytes(ctx, &event).unwrap();
+        let expected = b"\x01\x04(yv)\0\0\x05\x01i\0\0\0\0\xfe";
+        assert_eq!(expected, data.bytes());
+    }
+
+    #[test]
+    fn test_round_trip_background_usb_event() {
+        let event =
+            BackgroundEvent::UsbStateChanged(crate::model::UsbState::NeedsUserVerification {
+                attempts_left: None,
+            });
+        let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
+        let data = zvariant::to_bytes(ctx, &event).unwrap();
+        let bytes = data.bytes();
+        let data2 = Data::new(bytes, Context::new(Format::DBus, zvariant::BE, 0));
+        let event_2: BackgroundEvent = data2.deserialize().unwrap().0;
+        assert!(matches!(
+            event_2,
+            BackgroundEvent::UsbStateChanged(crate::model::UsbState::NeedsUserVerification{ ref attempts_left }) if attempts_left.is_none()
+        ));
+    }
+
+    #[test]
+    fn test_zvariant() {
+        let input = b"\x01y\0\xdd";
+        let ctx = Context::new(Format::DBus, zvariant::BE, 0);
+        let data = Data::new(input, ctx);
+        let value: zvariant::Value = data.deserialize().unwrap().0;
+        assert!(matches!(value, zvariant::Value::U8(b) if b == b'\xdd'))
+    }
+
+    #[test]
+    fn test_zvariant_array() {
+        #[rustfmt::skip]
+        let input = [
+            2, b'a', b's', 0, // Signature aa{sv}
+            0, 0, 0, 7, // array(string) data length
+            0, 0, 0, 2, b'y', b'o', 0 // string, len 2, 'yo'
+        ];
+        let ctx = Context::new(Format::DBus, zvariant::BE, 0);
+        let data = Data::new(&input, ctx);
+        let value: zvariant::Value = data.deserialize().unwrap().0;
+        match value {
+            zvariant::Value::Array(arr) => {
+                let s = arr.get::<zvariant::Str>(0).unwrap().unwrap();
+                assert_eq!("yo", s.as_str());
+            }
+            _ => panic!(),
+        };
     }
 }
