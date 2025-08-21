@@ -1,7 +1,7 @@
 use async_std::stream::Stream;
 use credentialsd_common::{client::FlowController, server::RequestId};
 use futures_lite::StreamExt;
-use zbus::{Connection, zvariant};
+use zbus::Connection;
 
 use crate::dbus::FlowControlServiceProxy;
 
@@ -69,11 +69,7 @@ impl FlowController for DbusCredentialClient {
             .map_err(|err| tracing::error!("Failed to initalize event stream: {err}"))?
             .filter_map(|msg| {
                 msg.args()
-                    .and_then(|args| {
-                        args.update
-                            .try_into()
-                            .map_err(|err: zvariant::Error| err.into())
-                    })
+                    .map(|args| args.update)
                     .inspect_err(|err| tracing::warn!("Failed to parse StateChanged signal: {err}"))
                     .ok()
             })

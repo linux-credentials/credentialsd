@@ -12,14 +12,7 @@ use zvariant::{
     Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::Operation;
-
-#[derive(Clone, Debug)]
-
-pub enum BackgroundEvent {
-    UsbStateChanged(crate::model::UsbState),
-    HybridStateChanged(crate::model::HybridState),
-}
+use crate::model::{BackgroundEvent, Operation};
 
 const TAG_VALUE_SIGNATURE: &'static Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -42,7 +35,7 @@ impl Serialize for BackgroundEvent {
                 let structure: Structure<'_> = state.into();
                 tuple.serialize_element(&Value::Structure(structure))?;
             }
-            Self::HybridStateChanged(state) => {
+            Self::HybridQrStateChanged(state) => {
                 tuple.serialize_element(&0x02_u8)?;
                 let structure: Structure<'_> = state.try_into().map_err(|err| {
                     S::Error::custom(format!(
@@ -95,45 +88,11 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
                         "could not deserialize HybridState from structure: {err}"
                     ))
                 })?;
-                Ok(BackgroundEvent::HybridStateChanged(state))
+                Ok(BackgroundEvent::HybridQrStateChanged(state))
             }
             _ => Err(D::Error::custom(format!(
                 "Unknown BackgroundEvent tag : {tag}"
             ))),
-        }
-    }
-}
-
-impl TryFrom<BackgroundEvent> for crate::model::BackgroundEvent {
-    type Error = zvariant::Error;
-
-    fn try_from(value: BackgroundEvent) -> Result<Self, Self::Error> {
-        match value {
-            BackgroundEvent::HybridStateChanged(hybrid_state_val) => Ok(
-                crate::model::BackgroundEvent::HybridQrStateChanged(hybrid_state_val),
-            ),
-            BackgroundEvent::UsbStateChanged(usb_state) => {
-                Ok(crate::model::BackgroundEvent::UsbStateChanged(usb_state))
-            }
-        }
-    }
-}
-
-impl From<crate::model::BackgroundEvent> for BackgroundEvent {
-    fn from(value: crate::model::BackgroundEvent) -> Self {
-        match value {
-            crate::model::BackgroundEvent::HybridQrStateChanged(state) => {
-                BackgroundEvent::HybridStateChanged(state.into())
-            }
-            crate::model::BackgroundEvent::UsbStateChanged(state) => {
-                BackgroundEvent::UsbStateChanged(state.into())
-                /*
-                let state: UsbState = state.into();
-                let value = Value::new(state)
-                    .try_to_owned()
-                    .expect("non-file descriptor value to succeed");
-                */
-            }
         }
     }
 }
@@ -1016,7 +975,7 @@ mod test {
     #[test]
     fn test_serialize_background_hybrid_event() {
         let state = crate::model::HybridState::Started("FIDO:/1234".to_string());
-        let event = BackgroundEvent::HybridStateChanged(state);
+        let event = BackgroundEvent::HybridQrStateChanged(state);
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
         assert_eq!("(yv)", BackgroundEvent::SIGNATURE.to_string());
         let data = zvariant::to_bytes(ctx, &event).unwrap();
@@ -1033,13 +992,13 @@ mod test {
         let event: BackgroundEvent = data.deserialize().unwrap().0;
         assert!(matches!(
             event,
-            BackgroundEvent::HybridStateChanged(crate::model::HybridState::Completed)
+            BackgroundEvent::HybridQrStateChanged(crate::model::HybridState::Completed)
         ));
     }
 
     #[test]
     fn test_round_trip_background_hybrid_event() {
-        let event = BackgroundEvent::HybridStateChanged(crate::model::HybridState::Started(
+        let event = BackgroundEvent::HybridQrStateChanged(crate::model::HybridState::Started(
             String::from("FIDO:/1234"),
         ));
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
@@ -1049,7 +1008,7 @@ mod test {
         let event_2: BackgroundEvent = data2.deserialize().unwrap().0;
         assert!(matches!(
             event_2,
-            BackgroundEvent::HybridStateChanged(crate::model::HybridState::Started(ref f)) if f == "FIDO:/1234"
+            BackgroundEvent::HybridQrStateChanged(crate::model::HybridState::Started(ref f)) if f == "FIDO:/1234"
         ));
     }
 
