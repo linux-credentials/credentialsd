@@ -5,7 +5,6 @@
 use std::{collections::HashMap, time::Duration};
 
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use zbus::fdo;
 
 use credentialsd_common::{
     model::{
