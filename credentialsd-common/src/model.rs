@@ -123,6 +123,7 @@ pub enum Transport {
     HybridQr,
     Internal,
     Nfc,
+    ThirdParty,
     Usb,
 }
 
@@ -145,6 +146,7 @@ impl TryInto<Transport> for &str {
             "HybridQr" => Ok(Transport::HybridQr),
             "Internal" => Ok(Transport::Internal),
             "NFC" => Ok(Transport::Nfc),
+            "ThirdParty" => Ok(Transport::ThirdParty),
             "USB" => Ok(Transport::Usb),
             _ => Err(format!("Unrecognized transport: {}", self.to_owned())),
         }
@@ -165,6 +167,7 @@ impl Transport {
             Transport::HybridQr => "HybridQr",
             Transport::Internal => "Internal",
             Transport::Nfc => "NFC",
+            Transport::ThirdParty => "ThirdParty",
             Transport::Usb => "USB",
         }
     }

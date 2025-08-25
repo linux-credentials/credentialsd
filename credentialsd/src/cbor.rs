@@ -85,6 +85,11 @@ where
         Ok(())
     }
 
+    pub fn write_bool(&mut self, bool: bool) -> Result<(), Error> {
+        let additional_data = if bool { 21 } else { 20 };
+        self.write_cbor_value(MajorType::Float, additional_data, None)
+    }
+
     fn write_cbor_value(
         &mut self,
         major_type: MajorType,

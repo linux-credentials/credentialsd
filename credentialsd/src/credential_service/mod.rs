@@ -1,10 +1,13 @@
 pub mod hybrid;
+pub mod third_party;
 pub mod usb;
 
 use std::{
+    collections::HashMap,
     error::Error,
     fmt::Debug,
     future::Future,
+    path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
@@ -25,7 +28,11 @@ use credentialsd_common::{
     server::{RequestId, ViewRequest},
 };
 
-use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
+use crate::credential_service::{
+    hybrid::HybridEvent,
+    third_party::{HandleThirdParty, ThirdPartyState, ThirdPartyStateStream},
+    usb::UsbEvent,
+};
 
 use self::{
     hybrid::{HybridHandler, HybridState, HybridStateInternal},
@@ -60,22 +67,34 @@ impl RequestContext {
 }
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, T: HandleThirdParty, U: UsbHandler, UC: UiController>
+{
     devices: Vec<Device>,
 
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
     hybrid_handler: H,
+    third_party_handler: T,
     usb_handler: U,
 
     ui_control_client: Arc<UC>,
+    third_party_registrations: HashMap<String, PathBuf>,
 }
 
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
-    CredentialService<H, U, UC>
+impl<
+        H: HybridHandler + Debug,
+        T: HandleThirdParty + Debug,
+        U: UsbHandler + Debug,
+        UC: UiController + Debug,
+    > CredentialService<H, T, U, UC>
 {
-    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: Arc<UC>) -> Self {
+    pub fn new(
+        hybrid_handler: H,
+        third_party_handler: T,
+        usb_handler: U,
+        ui_control_client: Arc<UC>,
+    ) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -85,16 +104,25 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
                 id: String::from("1"),
                 transport: Transport::HybridQr,
             },
+            Device {
+                id: String::from("2"),
+                transport: Transport::ThirdParty,
+            },
         ];
+        let third_party_registrations =
+            HashMap::from([("2".to_string(), PathBuf::from("/tmp/bitwarden-passkey.sock"))]);
         Self {
             devices,
 
             ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler,
+            third_party_handler,
             usb_handler,
 
             ui_control_client,
+
+            third_party_registrations,
         }
     }
 
@@ -186,6 +214,24 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
         }
     }
 
+    pub fn get_third_party_credential(
+        &self,
+        device_id: &str,
+    ) -> Pin<Box<dyn Stream<Item = ThirdPartyState> + Send + 'static>> {
+        // TODO: error handling when device ID is not found.
+        let path = self.third_party_registrations.get(device_id).unwrap().clone();
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.third_party_handler.start(path, request);
+            let ctx = self.ctx.clone();
+            Box::pin(ThirdPartyStateStream::new(stream, ctx))
+        } else {
+            tracing::error!(
+                "Attempted to start third party credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
+    }
     pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
@@ -326,6 +372,7 @@ mod test {
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
+        third_party::test::DummyThirdPartyHandler,
         AuthenticatorResponse, CredentialService,
     };
 
@@ -348,11 +395,13 @@ mod test {
                     HybridStateInternal::Completed(Box::new(authenticator_response)),
                 ]);
                 let usb_handler = InProcessUsbHandler {};
+                let third_party_handler = DummyThirdPartyHandler {};
                 let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
                 let ui_server = Arc::new(ui_server);
                 let user = ui_server.clone();
                 let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
                     hybrid_handler,
+                    third_party_handler,
                     usb_handler,
                     Arc::new(ui_client),
                 )));
@@ -395,8 +444,8 @@ mod test {
             },
             user: Ctap2PublicKeyCredentialUserEntity {
                 id: "d2ViYXV0aG5pby0xMjM4OTF5".as_bytes().to_vec().into(),
-                name: Some("123891y".to_string()),
-                display_name: Some("123891y".to_string()),
+                name: "123891y".to_string(),
+                display_name: "123891y".to_string(),
             },
             resident_key: Some(ResidentKeyRequirement::Preferred),
             user_verification: UserVerificationRequirement::Preferred,

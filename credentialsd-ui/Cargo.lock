@@ -1938,8 +1938,6 @@ dependencies = [
 [[package]]
 name = "libwebauthn"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a56ed4eb5e9a63098f7eeaf0fe0fc7b63c84977e8b8253ebe3707b124b6d8036"
 dependencies = [
  "aes",
  "async-trait",

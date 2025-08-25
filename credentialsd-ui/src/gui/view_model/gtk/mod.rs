@@ -228,6 +228,7 @@ impl ViewModel {
                 Transport::Internal => "computer-symbolic",
                 Transport::HybridQr => "phone-symbolic",
                 Transport::HybridLinked => "phone-symbolic",
+                Transport::ThirdParty => "symbolic-link-symbolic", // TODO: Is this the icon we want to use?
                 Transport::Nfc => "nfc-symbolic",
                 Transport::Usb => "media-removable-symbolic",
                 // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),

@@ -9,7 +9,8 @@ use std::{error::Error, sync::Arc};
 
 use crate::{
     credential_service::{
-        hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService,
+        hybrid::InternalHybridHandler, third_party::ThirdPartyHandler, usb::InProcessUsbHandler,
+        CredentialService,
     },
     dbus::{CredentialRequestControllerClient, UiControlServiceClient},
 };
@@ -35,6 +36,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let ui_controller = UiControlServiceClient::new(dbus_client_conn);
     let credential_service = CredentialService::new(
         InternalHybridHandler::new(),
+        ThirdPartyHandler::new(),
         InProcessUsbHandler {},
         Arc::new(ui_controller),
     );
