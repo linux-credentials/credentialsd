@@ -66,7 +66,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
             tracing::info!("JSON missing `rp` field");
             WebAuthnError::TypeError
         })?;
-    let user =
+    let mut user =
         json.get("user")
             .ok_or_else(|| {
                 tracing::info!("JSON missing `user` field.");
@@ -79,6 +79,13 @@ pub(super) fn create_credential_request_try_into_ctap2(
                         WebAuthnError::TypeError
                     })
             })?;
+    user.id = URL_SAFE_NO_PAD
+        .decode(user.id)
+        .map_err(|_| {
+            tracing::info!("user ID is not a valid base64url string");
+            WebAuthnError::TypeError
+        })?
+        .into();
     let other_options =
         serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
             .map_err(|e| {
