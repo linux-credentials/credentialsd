@@ -170,7 +170,7 @@ impl Transport {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle(String),
     SetDevices(Vec<Device>),
@@ -182,6 +182,9 @@ pub enum ViewUpdate {
     UsbNeedsPin { attempts_left: Option<u32> },
     UsbNeedsUserVerification { attempts_left: Option<u32> },
     UsbNeedsUserPresence,
+
+    NfcNeedsPin { attempts_left: Option<u32> },
+    NfcNeedsUserVerification { attempts_left: Option<u32> },
 
     HybridNeedsQrCode(String),
     HybridConnecting,
@@ -262,10 +265,46 @@ pub enum UsbState {
     Failed(Error),
 }
 
+/// Used to share public state between credential service and UI.
+#[derive(Clone, Debug, Default)]
+pub enum NfcState {
+    /// Not polling for FIDO USB device.
+    #[default]
+    Idle,
+
+    /// Awaiting FIDO USB device to be plugged in.
+    Waiting,
+
+    /// USB device connected, prompt user to tap
+    Connected,
+
+    /// The device needs the PIN to be entered.
+    NeedsPin { attempts_left: Option<u32> },
+
+    /// The device needs on-device user verification.
+    NeedsUserVerification { attempts_left: Option<u32> },
+
+    // TODO: implement cancellation
+    // This isn't actually sent from the server.
+    //UserCancelled,
+    /// Multiple credentials have been found and the user has to select which to use
+    SelectCredential {
+        /// List of user-identities to decide which to use.
+        creds: Vec<Credential>,
+    },
+
+    /// USB tapped, received credential
+    Completed,
+
+    /// Interaction with the authenticator failed.
+    Failed(Error),
+}
+
 #[derive(Clone, Debug)]
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
     HybridQrStateChanged(HybridState),
+    NfcStateChanged(NfcState),
 }
 
 #[derive(Debug, Clone)]

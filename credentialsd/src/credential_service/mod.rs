@@ -1,4 +1,5 @@
 pub mod hybrid;
+pub mod nfc;
 pub mod usb;
 
 use std::{
@@ -15,6 +16,7 @@ use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
+use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot::Sender;
 
 use credentialsd_common::{
@@ -60,7 +62,7 @@ impl RequestContext {
 }
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: UiController> {
     devices: Vec<Device>,
 
     /// Current request and channel to respond to caller.
@@ -68,14 +70,24 @@ pub struct CredentialService<H: HybridHandler, U: UsbHandler, UC: UiController> 
 
     hybrid_handler: H,
     usb_handler: U,
+    nfc_handler: N,
 
     ui_control_client: Arc<UC>,
 }
 
-impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
-    CredentialService<H, U, UC>
+impl<
+        H: HybridHandler + Debug,
+        U: UsbHandler + Debug,
+        N: NfcHandler + Debug,
+        UC: UiController + Debug,
+    > CredentialService<H, U, N, UC>
 {
-    pub fn new(hybrid_handler: H, usb_handler: U, ui_control_client: Arc<UC>) -> Self {
+    pub fn new(
+        hybrid_handler: H,
+        usb_handler: U,
+        nfc_handler: N,
+        ui_control_client: Arc<UC>,
+    ) -> Self {
         let devices = vec![
             Device {
                 id: String::from("0"),
@@ -85,6 +97,10 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
                 id: String::from("1"),
                 transport: Transport::HybridQr,
             },
+            Device {
+                id: String::from("2"),
+                transport: Transport::Nfc,
+            },
         ];
         Self {
             devices,
@@ -93,6 +109,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
 
             hybrid_handler,
             usb_handler,
+            nfc_handler,
 
             ui_control_client,
         }
@@ -194,7 +211,21 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
             tracing::error!(
-                "Attempted to start hybrid credential flow, but no request context was found."
+                "Attempted to start usb credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
+    }
+
+    pub fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.nfc_handler.start(request);
+            let ctx = self.ctx.clone();
+            Box::pin(NfcStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start nfc credential flow, but no request context was found."
             );
             todo!("Handle error when context is not set up.")
         }
@@ -278,6 +309,35 @@ where
     }
 }
 
+struct NfcStateStream<H> {
+    inner: H,
+    ctx: Arc<Mutex<Option<RequestContext>>>,
+}
+
+impl<H> Stream for NfcStateStream<H>
+where
+    H: Stream<Item = NfcEvent> + Unpin + Sized,
+{
+    type Item = NfcState;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let ctx = &self.ctx.clone();
+        match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(NfcEvent { state })) => {
+                if let NfcStateInternal::Completed(response) = &state {
+                    complete_request(ctx, response.clone());
+                }
+                Poll::Ready(Some(state.into()))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+}
+
 fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialResponse) {
     if let Some(ctx) = ctx.lock().unwrap().take() {
         ctx.send_response(Ok(response));
@@ -326,6 +386,7 @@ mod test {
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
+        nfc::InProcessNfcHandler,
         AuthenticatorResponse, CredentialService,
     };
 
@@ -348,12 +409,14 @@ mod test {
                     HybridStateInternal::Completed(Box::new(authenticator_response)),
                 ]);
                 let usb_handler = InProcessUsbHandler {};
+                let nfc_handler = InProcessNfcHandler {};
                 let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
                 let ui_server = Arc::new(ui_server);
                 let user = ui_server.clone();
                 let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
                     hybrid_handler,
                     usb_handler,
+                    nfc_handler,
                     Arc::new(ui_client),
                 )));
                 let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());

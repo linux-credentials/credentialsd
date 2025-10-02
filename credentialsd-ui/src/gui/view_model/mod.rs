@@ -7,6 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
+use credentialsd_common::model::NfcState;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -102,6 +103,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                 Transport::HybridQr => {
                     todo!("Implement cancellation for Hybrid QR");
                 }
+                Transport::Nfc => {
+                    todo!("Implement cancellation for NFC");
+                }
                 _ => {
                     todo!();
                 }
@@ -113,6 +117,10 @@ impl<F: FlowController + Send> ViewModel<F> {
             Transport::Usb => {
                 let mut cred_service = self.flow_controller.lock().await;
                 (*cred_service).get_usb_credential().await.unwrap();
+            }
+            Transport::Nfc => {
+                let mut cred_service = self.flow_controller.lock().await;
+                (*cred_service).get_nfc_credential().await.unwrap();
             }
             Transport::HybridQr => {
                 let mut cred_service = self.flow_controller.lock().await;
@@ -146,7 +154,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                     self.select_device(&id).await;
                     println!("Selected device {id}");
                 }
-                Event::View(ViewEvent::UsbPinEntered(pin)) => {
+                Event::View(ViewEvent::PinEntered(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
                     if cred_service.enter_client_pin(pin).await.is_err() {
                         error!("Failed to send pin to device");
@@ -241,6 +249,57 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                     }
                 }
+                Event::Background(BackgroundEvent::NfcStateChanged(state)) => {
+                    match state {
+                        NfcState::Connected => {
+                            info!("Found NFC device")
+                        }
+
+                        NfcState::NeedsPin { attempts_left } => {
+                            self.tx_update
+                                .send(ViewUpdate::NfcNeedsPin { attempts_left })
+                                .await
+                                .unwrap();
+                        }
+                        NfcState::NeedsUserVerification { attempts_left } => {
+                            self.tx_update
+                                .send(ViewUpdate::NfcNeedsUserVerification { attempts_left })
+                                .await
+                                .unwrap();
+                        }
+                        NfcState::Completed => {
+                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                        }
+                        NfcState::Idle | NfcState::Waiting => {}
+                        NfcState::SelectCredential { creds } => {
+                            self.tx_update
+                                .send(ViewUpdate::SetCredentials(creds))
+                                .await
+                                .unwrap();
+                        }
+                        // TODO: Provide more specific error messages using the wrapped Error.
+                        NfcState::Failed(err) => {
+                            let error_msg = String::from(match err {
+                                Error::NoCredentials => {
+                                    "No matching credentials found on this authenticator."
+                                }
+                                Error::PinAttemptsExhausted => {
+                                    "No more PIN attempts allowed. Try removing your device and plugging it back in."
+                                }
+                                Error::AuthenticatorError | Error::Internal(_) => {
+                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
+                                }
+                                Error::CredentialExcluded => {
+                                    "This credential is already registered on this authenticator."
+                                }
+                            });
+                            self.tx_update
+                                .send(ViewUpdate::Failed(error_msg))
+                                .await
+                                .unwrap()
+                        }
+                    }
+                }
                 Event::Background(BackgroundEvent::HybridQrStateChanged(state)) => {
                     self.hybrid_qr_state = state.clone();
                     tracing::debug!("Received HybridQrState::{:?}", &state);
@@ -297,7 +356,7 @@ pub enum ViewEvent {
     Initiated,
     DeviceSelected(String),
     CredentialSelected(String),
-    UsbPinEntered(String),
+    PinEntered(String),
     UserCancelled,
 }
 

@@ -19,6 +19,7 @@ pub trait FlowControlService {
     async fn get_hybrid_credential(&self) -> fdo::Result<()>;
 
     async fn get_usb_credential(&self) -> fdo::Result<()>;
+    async fn get_nfc_credential(&self) -> fdo::Result<()>;
 
     async fn select_device(&self, device_id: String) -> fdo::Result<()>;
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()>;

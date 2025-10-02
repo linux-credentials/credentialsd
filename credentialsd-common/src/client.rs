@@ -15,6 +15,7 @@ pub trait FlowController {
 
     fn get_hybrid_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
     fn get_usb_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
+    fn get_nfc_credential(&mut self) -> impl Future<Output = Result<(), ()>> + Send;
     fn subscribe(
         &mut self,
     ) -> impl Future<

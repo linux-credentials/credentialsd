@@ -7,6 +7,8 @@ mod webauthn;
 
 use std::{error::Error, sync::Arc};
 
+use credential_service::nfc::InProcessNfcHandler;
+
 use crate::{
     credential_service::{
         hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService,
@@ -36,6 +38,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let credential_service = CredentialService::new(
         InternalHybridHandler::new(),
         InProcessUsbHandler {},
+        InProcessNfcHandler {},
         Arc::new(ui_controller),
     );
     let (_flow_control_conn, initiator) =

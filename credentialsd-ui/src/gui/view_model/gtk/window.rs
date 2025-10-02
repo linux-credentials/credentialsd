@@ -38,6 +38,9 @@ mod imp {
         pub usb_pin_entry: TemplateChild<gtk::PasswordEntry>,
 
         #[template_child]
+        pub nfc_pin_entry: TemplateChild<gtk::PasswordEntry>,
+
+        #[template_child]
         pub qr_code_pic: TemplateChild<Picture>,
     }
 
@@ -56,6 +59,20 @@ mod imp {
                 }
             ));
         }
+
+        #[template_callback]
+        fn handle_nfc_pin_entered(&self, entry: &gtk::PasswordEntry) {
+            let view_model = &self.view_model.borrow();
+            let view_model = view_model.as_ref().unwrap();
+            let pin = entry.text().to_string();
+            glib::spawn_future_local(clone!(
+                #[weak]
+                view_model,
+                async move {
+                    view_model.send_nfc_device_pin(pin).await;
+                }
+            ));
+        }
     }
 
     impl Default for CredentialsUiWindow {
@@ -66,6 +83,7 @@ mod imp {
                 view_model: RefCell::default(),
                 stack: TemplateChild::default(),
                 usb_pin_entry: TemplateChild::default(),
+                nfc_pin_entry: TemplateChild::default(),
                 qr_code_pic: TemplateChild::default(),
             }
         }
@@ -164,6 +182,7 @@ impl CredentialsUiWindow {
                 match d.transport().try_into() {
                     Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
                     Ok(Transport::HybridQr) => stack.set_visible_child_name("hybrid_qr"),
+                    Ok(Transport::Nfc) => stack.set_visible_child_name("nfc"),
                     _ => {}
                 };
             }

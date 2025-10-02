@@ -49,6 +49,9 @@ mod imp {
         pub usb_pin_entry_visible: RefCell<bool>,
 
         #[property(get, set)]
+        pub nfc_pin_entry_visible: RefCell<bool>,
+
+        #[property(get, set)]
         pub prompt: RefCell<String>,
 
         #[property(get, set, builder(ModelState::Pending))]
@@ -157,6 +160,30 @@ impl ViewModel {
                                     };
                                     view_model.set_prompt(prompt);
                                 }
+                                ViewUpdate::NfcNeedsPin { attempts_left } => {
+                                    let prompt = match attempts_left {
+                                        Some(1) => {
+                                            "Enter your PIN. 1 attempt remaining.".to_string()
+                                        }
+                                        Some(attempts_left) => format!(
+                                            "Enter your PIN. {attempts_left} attempts remaining."
+                                        ),
+                                        None => "Enter your PIN.".to_string(),
+                                    };
+                                    view_model.set_prompt(prompt);
+                                    view_model.set_nfc_pin_entry_visible(true);
+                                }
+                                ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
+                                    let prompt = match attempts_left {
+                                        Some(1) => "Touch your device again. 1 attempt remaining."
+                                            .to_string(),
+                                        Some(attempts_left) => format!(
+                                            "Touch your device again. {attempts_left} attempts remaining."
+                                        ),
+                                        None => "Touch your device.".to_string(),
+                                    };
+                                    view_model.set_prompt(prompt);
+                                }
                                 ViewUpdate::UsbNeedsUserPresence => {
                                     view_model.set_prompt("Touch your device");
                                 }
@@ -228,7 +255,7 @@ impl ViewModel {
                 Transport::Internal => "computer-symbolic",
                 Transport::HybridQr => "phone-symbolic",
                 Transport::HybridLinked => "phone-symbolic",
-                Transport::Nfc => "nfc-symbolic",
+                Transport::Nfc => "network-wireless-symbolic",
                 Transport::Usb => "media-removable-symbolic",
                 // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
                 // _ => "question-symbolic",
@@ -309,6 +336,9 @@ impl ViewModel {
             Transport::HybridQr => {
                 self.set_prompt("");
             }
+            Transport::Nfc => {
+                self.set_prompt("Place your security key on your NFC reader");
+            }
             Transport::Internal => {}
             _ => {
                 todo!();
@@ -323,7 +353,11 @@ impl ViewModel {
     }
 
     pub async fn send_usb_device_pin(&self, pin: String) {
-        self.send_event(ViewEvent::UsbPinEntered(pin)).await;
+        self.send_event(ViewEvent::PinEntered(pin)).await;
+    }
+
+    pub async fn send_nfc_device_pin(&self, pin: String) {
+        self.send_event(ViewEvent::PinEntered(pin)).await;
     }
 
     fn draw_qr_code(&self, qr_data: &str) -> Texture {

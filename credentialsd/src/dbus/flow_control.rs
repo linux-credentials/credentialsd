@@ -25,6 +25,7 @@ use zbus::{
     ObjectServer,
 };
 
+use crate::credential_service::nfc::{NfcHandler, NfcState};
 use crate::credential_service::{
     hybrid::{HybridHandler, HybridState},
     usb::UsbHandler,
@@ -36,9 +37,10 @@ pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
 pub async fn start_flow_control_service<
     H: HybridHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
+    N: NfcHandler + Debug + Send + Sync + 'static,
     UC: UiController + Debug + Send + Sync + 'static,
 >(
-    credential_service: CredentialService<H, U, UC>,
+    credential_service: CredentialService<H, U, N, UC>,
 ) -> zbus::Result<(
     Connection,
     Sender<(
@@ -55,9 +57,10 @@ pub async fn start_flow_control_service<
             FlowControlService {
                 signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
                 svc,
-                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
-                usb_cred_tx: Arc::new(AsyncMutex::new(None)),
+                pin_tx: Arc::new(AsyncMutex::new(None)),
+                cred_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
+                nfc_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
                 hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
             },
         )?
@@ -73,12 +76,13 @@ pub async fn start_flow_control_service<
     Ok((conn, initiator_tx))
 }
 
-struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
+struct FlowControlService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: UiController> {
     signal_state: Arc<AsyncMutex<SignalState>>,
-    svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
-    usb_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
-    usb_cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    svc: Arc<AsyncMutex<CredentialService<H, U, N, UC>>>,
+    pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
@@ -93,10 +97,11 @@ struct FlowControlService<H: HybridHandler, U: UsbHandler, UC: UiController> {
         default_service = "xyz.iinuwa.credentialsd.FlowControl",
     )
 )]
-impl<H, U, UC> FlowControlService<H, U, UC>
+impl<H, U, N, UC> FlowControlService<H, U, N, UC>
 where
     H: HybridHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
+    N: NfcHandler + Debug + Send + Sync + 'static,
     UC: UiController + Debug + Send + Sync + 'static,
 {
     async fn subscribe(
@@ -139,7 +144,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, N, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -187,12 +192,12 @@ where
         #[zbus(object_server)] object_server: &ObjectServer,
     ) -> fdo::Result<()> {
         let mut stream = self.svc.lock().await.get_usb_credential();
-        let usb_pin_tx = self.usb_pin_tx.clone();
-        let usb_cred_tx = self.usb_cred_tx.clone();
+        let usb_pin_tx = self.pin_tx.clone();
+        let usb_cred_tx = self.cred_tx.clone();
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, N, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -241,15 +246,74 @@ where
         Ok(())
     }
 
+    async fn get_nfc_credential(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let mut stream = self.svc.lock().await.get_nfc_credential();
+        let nfc_pin_tx = self.pin_tx.clone();
+        let nfc_cred_tx = self.cred_tx.clone();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, N, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                match credentialsd_common::model::BackgroundEvent::NfcStateChanged((&state).into())
+                    .try_into()
+                {
+                    Err(err) => {
+                        tracing::error!("Failed to serialize state update: {err}");
+                        break;
+                    }
+                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("Failed to send state update to UI: {err}");
+                            break;
+                        }
+                    },
+                };
+                match state {
+                    NfcState::NeedsPin { pin_tx, .. } => {
+                        let mut nfc_pin_tx = nfc_pin_tx.lock().await;
+                        let _ = nfc_pin_tx.insert(pin_tx);
+                    }
+                    NfcState::SelectCredential { cred_tx, .. } => {
+                        let mut nfc_cred_tx = nfc_cred_tx.lock().await;
+                        let _ = nfc_cred_tx.insert(cred_tx);
+                    }
+                    NfcState::Completed | NfcState::Failed(_) => {
+                        break;
+                    }
+                    _ => {}
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self.nfc_event_forwarder_task.lock().await.replace(task) {
+            prev_task.abort();
+        }
+        Ok(())
+    }
+
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
-        if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+        if let Some(pin_tx) = self.pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
         }
         Ok(())
     }
 
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
-        if let Some(cred_tx) = self.usb_cred_tx.lock().await.take() {
+        if let Some(cred_tx) = self.cred_tx.lock().await.take() {
             cred_tx.send(credential_id).await.unwrap();
         }
         Ok(())
@@ -354,6 +418,7 @@ pub mod test {
 
     use crate::credential_service::{
         hybrid::{HybridHandler, HybridState},
+        nfc::{NfcHandler, NfcState},
         usb::UsbHandler,
         CredentialService, UiController, UsbState,
     };
@@ -365,6 +430,7 @@ pub mod test {
         GetDevices,
         GetHybridCredential,
         GetUsbCredential,
+        GetNfcCredential,
         InitStream,
     }
 
@@ -376,6 +442,7 @@ pub mod test {
         GetDevices(Vec<Device>),
         GetHybridCredential,
         GetUsbCredential,
+        GetNfcCredential,
         InitStream(Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>),
     }
 
@@ -386,6 +453,7 @@ pub mod test {
                 Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
                 Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
                 Self::GetUsbCredential => f.debug_tuple("GetUsbCredential").finish(),
+                Self::GetNfcCredential => f.debug_tuple("GetNfcCredential").finish(),
                 Self::InitStream(_) => f
                     .debug_tuple("InitStream")
                     .field(&String::from("<BackgroundEventStream>"))
@@ -442,6 +510,15 @@ pub mod test {
             }
         }
 
+        async fn get_nfc_credential(&mut self) -> Result<(), ()> {
+            let response = self.send(DummyFlowRequest::GetNfcCredential).await.unwrap();
+            if let DummyFlowResponse::GetNfcCredential = response {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
         async fn subscribe(
             &mut self,
         ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
@@ -474,25 +551,28 @@ pub mod test {
     }
 
     #[derive(Debug)]
-    pub struct DummyFlowServer<H, U, UC>
+    pub struct DummyFlowServer<H, U, N, UC>
     where
         H: HybridHandler + Debug + Send + Sync,
         U: UsbHandler + Debug + Send + Sync,
+        N: NfcHandler + Debug + Send + Sync,
         UC: UiController + Debug + Send + Sync,
     {
         rx: mpsc::Receiver<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
-        svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>,
+        svc: Arc<AsyncMutex<CredentialService<H, U, N, UC>>>,
         bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
-        usb_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
+        pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
         usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
+        nfc_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
         hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
     }
 
     impl<
             H: HybridHandler + Debug + Send + Sync,
             U: UsbHandler + Debug + Send + Sync,
+            N: NfcHandler + Debug + Send + Sync,
             UC: UiController + Debug + Send + Sync,
-        > DummyFlowServer<H, U, UC>
+        > DummyFlowServer<H, U, N, UC>
     {
         /*
         async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
@@ -514,14 +594,17 @@ pub mod test {
             }
         }
         */
-        pub fn new(svc: Arc<AsyncMutex<CredentialService<H, U, UC>>>) -> (Self, DummyFlowClient) {
+        pub fn new(
+            svc: Arc<AsyncMutex<CredentialService<H, U, N, UC>>>,
+        ) -> (Self, DummyFlowClient) {
             let (request_tx, request_rx) = mpsc::channel(32);
             let server = Self {
                 rx: request_rx,
                 svc,
                 bg_event_tx: None,
-                usb_pin_tx: Arc::new(AsyncMutex::new(None)),
+                pin_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(Mutex::new(None)),
+                nfc_event_forwarder_task: Arc::new(Mutex::new(None)),
                 hybrid_event_forwarder_task: Arc::new(Mutex::new(None)),
             };
             let client = DummyFlowClient { tx: request_tx };
@@ -548,6 +631,10 @@ pub mod test {
                     DummyFlowRequest::GetUsbCredential => {
                         self.get_usb_credential().await.unwrap();
                         DummyFlowResponse::GetUsbCredential
+                    }
+                    DummyFlowRequest::GetNfcCredential => {
+                        self.get_nfc_credential().await.unwrap();
+                        DummyFlowResponse::GetNfcCredential
                     }
                     DummyFlowRequest::InitStream => {
                         let rsp = self.subscribe().await;
@@ -616,7 +703,7 @@ pub mod test {
         async fn get_usb_credential(&mut self) -> Result<(), ()> {
             let mut stream = self.svc.lock().await.get_usb_credential();
             if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                let usb_pin_tx = self.usb_pin_tx.clone();
+                let usb_pin_tx = self.pin_tx.clone();
                 let task = tokio::spawn(async move {
                     while let Some(state) = stream.next().await {
                         if let Some(tx) = tx_weak.upgrade() {
@@ -652,6 +739,45 @@ pub mod test {
             Ok(())
         }
 
+        async fn get_nfc_credential(&mut self) -> Result<(), ()> {
+            let mut stream = self.svc.lock().await.get_nfc_credential();
+            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
+                let nfc_pin_tx = self.pin_tx.clone();
+                let task = tokio::spawn(async move {
+                    while let Some(state) = stream.next().await {
+                        if let Some(tx) = tx_weak.upgrade() {
+                            if tx
+                                .send(BackgroundEvent::NfcStateChanged(state.clone().into()))
+                                .await
+                                .is_err()
+                            {
+                                tracing::debug!("Closing NFC background event forwarder");
+                                break;
+                            }
+                            match state {
+                                NfcState::NeedsPin { pin_tx, .. } => {
+                                    let mut nfc_pin_tx = nfc_pin_tx.lock().await;
+                                    let _ = nfc_pin_tx.insert(pin_tx);
+                                }
+                                NfcState::Completed | NfcState::Failed(_) => {
+                                    break;
+                                }
+                                _ => {}
+                            };
+                        }
+                    }
+                })
+                .abort_handle();
+                if let Some(prev_task) = self.nfc_event_forwarder_task.lock().unwrap().replace(task)
+                {
+                    prev_task.abort();
+                }
+            } else {
+                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up NFC state stream; some messages may be missed.");
+            }
+            Ok(())
+        }
+
         async fn subscribe(
             &mut self,
         ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
@@ -668,7 +794,7 @@ pub mod test {
         }
 
         async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-            if let Some(pin_tx) = self.usb_pin_tx.lock().await.take() {
+            if let Some(pin_tx) = self.pin_tx.lock().await.take() {
                 pin_tx.send(pin).await.unwrap();
             }
             Ok(())
@@ -686,11 +812,16 @@ pub mod test {
     impl<
             H: HybridHandler + Debug + Send + Sync,
             U: UsbHandler + Debug + Send + Sync,
+            N: NfcHandler + Debug + Send + Sync,
             UC: UiController + Debug + Send + Sync,
-        > Drop for DummyFlowServer<H, U, UC>
+        > Drop for DummyFlowServer<H, U, N, UC>
     {
         fn drop(&mut self) {
             if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
+                task.abort();
+            }
+
+            if let Some(task) = self.nfc_event_forwarder_task.lock().unwrap().take() {
                 task.abort();
             }
 
