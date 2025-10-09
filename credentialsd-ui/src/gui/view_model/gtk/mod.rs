@@ -46,10 +46,7 @@ mod imp {
         pub selected_device: RefCell<Option<DeviceObject>>,
 
         #[property(get, set)]
-        pub usb_pin_entry_visible: RefCell<bool>,
-
-        #[property(get, set)]
-        pub nfc_pin_entry_visible: RefCell<bool>,
+        pub usb_nfc_pin_entry_visible: RefCell<bool>,
 
         #[property(get, set)]
         pub prompt: RefCell<String>,
@@ -123,7 +120,7 @@ impl ViewModel {
                     match rx.recv().await {
                         Ok(update) => {
                             // TODO: hack so I don't have to unset this in every event manually.
-                            view_model.set_usb_pin_entry_visible(false);
+                            view_model.set_usb_nfc_pin_entry_visible(false);
                             match update {
                                 ViewUpdate::SetTitle(title) => view_model.set_title(title),
                                 ViewUpdate::SetDevices(devices) => {
@@ -136,7 +133,8 @@ impl ViewModel {
                                 ViewUpdate::WaitingForDevice(device) => {
                                     view_model.waiting_for_device(&device)
                                 }
-                                ViewUpdate::UsbNeedsPin { attempts_left } => {
+                                ViewUpdate::UsbNeedsPin { attempts_left }
+                                | ViewUpdate::NfcNeedsPin { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(1) => {
                                             "Enter your PIN. 1 attempt remaining.".to_string()
@@ -147,33 +145,10 @@ impl ViewModel {
                                         None => "Enter your PIN.".to_string(),
                                     };
                                     view_model.set_prompt(prompt);
-                                    view_model.set_usb_pin_entry_visible(true);
+                                    view_model.set_usb_nfc_pin_entry_visible(true);
                                 }
-                                ViewUpdate::UsbNeedsUserVerification { attempts_left } => {
-                                    let prompt = match attempts_left {
-                                        Some(1) => "Touch your device again. 1 attempt remaining."
-                                            .to_string(),
-                                        Some(attempts_left) => format!(
-                                            "Touch your device again. {attempts_left} attempts remaining."
-                                        ),
-                                        None => "Touch your device.".to_string(),
-                                    };
-                                    view_model.set_prompt(prompt);
-                                }
-                                ViewUpdate::NfcNeedsPin { attempts_left } => {
-                                    let prompt = match attempts_left {
-                                        Some(1) => {
-                                            "Enter your PIN. 1 attempt remaining.".to_string()
-                                        }
-                                        Some(attempts_left) => format!(
-                                            "Enter your PIN. {attempts_left} attempts remaining."
-                                        ),
-                                        None => "Enter your PIN.".to_string(),
-                                    };
-                                    view_model.set_prompt(prompt);
-                                    view_model.set_nfc_pin_entry_visible(true);
-                                }
-                                ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
+                                ViewUpdate::UsbNeedsUserVerification { attempts_left }
+                                | ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(1) => "Touch your device again. 1 attempt remaining."
                                             .to_string(),
@@ -352,11 +327,7 @@ impl ViewModel {
         self.set_prompt("Multiple devices found. Please select with which to proceed.");
     }
 
-    pub async fn send_usb_device_pin(&self, pin: String) {
-        self.send_event(ViewEvent::PinEntered(pin)).await;
-    }
-
-    pub async fn send_nfc_device_pin(&self, pin: String) {
+    pub async fn send_usb_nfc_device_pin(&self, pin: String) {
         self.send_event(ViewEvent::PinEntered(pin)).await;
     }
 
