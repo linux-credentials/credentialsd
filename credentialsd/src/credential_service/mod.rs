@@ -63,8 +63,6 @@ impl RequestContext {
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: UiController> {
-    devices: Vec<Device>,
-
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
@@ -88,23 +86,7 @@ impl<
         nfc_handler: N,
         ui_control_client: Arc<UC>,
     ) -> Self {
-        let devices = vec![
-            Device {
-                id: String::from("0"),
-                transport: Transport::Usb,
-            },
-            Device {
-                id: String::from("1"),
-                transport: Transport::HybridQr,
-            },
-            Device {
-                id: String::from("2"),
-                transport: Transport::Nfc,
-            },
-        ];
         Self {
-            devices,
-
             ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler,
@@ -184,7 +166,25 @@ impl<
     }
 
     pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-        Ok(self.devices.to_owned())
+        // We create the list new for each call, in case someone plugs in
+        // an NFC-reader in the middle of an auth-flow
+        let mut devices = vec![
+            Device {
+                id: String::from("0"),
+                transport: Transport::Usb,
+            },
+            Device {
+                id: String::from("1"),
+                transport: Transport::HybridQr,
+            },
+        ];
+        if libwebauthn::transport::nfc::is_nfc_available() {
+            devices.push(Device {
+                id: String::from("2"),
+                transport: Transport::Nfc,
+            });
+        }
+        Ok(devices)
     }
 
     pub fn get_hybrid_credential(
