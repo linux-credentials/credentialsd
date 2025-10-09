@@ -14,7 +14,7 @@ async-trait = "0.1.88"
 base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"
-libwebauthn = { path = "../../libwebauthn/libwebauthn", features = ["libnfc"] }
+libwebauthn = { git = "https://github.com/msirringhaus/libwebauthn.git", branch="nfc_followup", features = ["libnfc","pcsc"] }
 # libwebauthn = "~0.2.2"
 openssl = "0.10.72"
 rand = "0.9.2"
