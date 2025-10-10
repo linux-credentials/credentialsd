@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use gettextrs::gettext;
 use glib::Object;
 use gtk::glib;
 use gtk::prelude::*;
@@ -51,28 +52,28 @@ impl DeviceObject {
     }
 }
 
-fn transport_name(transport: &Transport) -> &'static str {
+fn transport_name(transport: &Transport) -> String {
     match transport {
-        Transport::Ble => "A Bluetooth device",
-        Transport::Internal => "This device",
-        Transport::HybridQr => "A mobile device",
-        Transport::HybridLinked => "TODO: Linked Device",
-        Transport::Nfc => "An NFC device",
-        Transport::Usb => "A security key",
+        Transport::Ble => gettext("A Bluetooth device"),
+        Transport::Internal => gettext("This device"),
+        Transport::HybridQr => gettext("A mobile device"),
+        Transport::HybridLinked => gettext("Linked Device"),
+        Transport::Nfc => gettext("An NFC device"),
+        Transport::Usb => gettext("A security key"),
         // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
     }
 }
 impl From<crate::gui::view_model::Device> for DeviceObject {
     fn from(value: crate::gui::view_model::Device) -> Self {
         let name = transport_name(&value.transport);
-        Self::new(&value.id, &value.transport, name)
+        Self::new(&value.id, &value.transport, &name)
     }
 }
 
 impl From<&crate::gui::view_model::Device> for DeviceObject {
     fn from(value: &crate::gui::view_model::Device) -> Self {
         let name = transport_name(&value.transport);
-        Self::new(&value.id, &value.transport, name)
+        Self::new(&value.id, &value.transport, &name)
     }
 }
 

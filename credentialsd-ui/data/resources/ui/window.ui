@@ -40,13 +40,13 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">choose_device</property>
-                <property name="title">Choose device</property>
+                <property name="title" translatable="yes">Choose device</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Devices</property>
+                        <property name="label" translatable="yes">Devices</property>
                       </object>
                     </child>
                     <child>
@@ -69,7 +69,7 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">usb</property>
-                <property name="title">Plug in security key</property>
+                <property name="title" translatable="yes">Plug in security key</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -110,7 +110,7 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">hybrid_qr</property>
-                <property name="title">Scan the QR code to connect your device</property>
+                <property name="title" translatable="yes">Scan the QR code to connect your device</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -155,13 +155,13 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">choose_credential</property>
-                <property name="title">Choose credential</property>
+                <property name="title" translatable="yes">Choose credential</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Choose credential</property>
+                        <property name="label" translatable="yes">Choose credential</property>
                       </object>
                     </child>
                     <child>
@@ -184,13 +184,13 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">completed</property>
-                <property name="title">Complete</property>
+                <property name="title" translatable="yes">Complete</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Done!</property>
+                        <property name="label" translatable="yes">Done!</property>
                       </object>
                     </child>
                   </object>
@@ -201,7 +201,7 @@
             <child>
               <object class="GtkStackPage">
                 <property name="name">failed</property>
-                <property name="title">Something went wrong.</property>
+                <property name="title" translatable="yes">Something went wrong.</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -214,7 +214,7 @@
                             </lookup>
                           </lookup>
                         </binding>
-                        <property name="label">Something went wrong while retrieving a credential. Please try again later or use a different authenticator.</property>
+                        <property name="label" translatable="yes">Something went wrong while retrieving a credential. Please try again later or use a different authenticator.</property>
                       </object>
                     </child>
                   </object>

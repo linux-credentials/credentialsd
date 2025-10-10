@@ -6,7 +6,7 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use super::{ViewModel, window::CredentialsUiWindow};
-use crate::config::{APP_ID, PKGDATADIR, PROFILE, VERSION};
+use crate::config::{APP_ID, LOCALEDIR, PKGDATADIR, PROFILE, VERSION};
 use crate::gui::view_model::{ViewEvent, ViewUpdate};
 
 mod imp {
@@ -152,6 +152,7 @@ impl CredentialsUi {
         info!("Credentials UI ({})", APP_ID);
         info!("Version: {} ({})", VERSION, PROFILE);
         info!("Datadir: {}", PKGDATADIR);
+        info!("Localedir: {}", LOCALEDIR);
 
         ApplicationExtManual::run(self)
     }
