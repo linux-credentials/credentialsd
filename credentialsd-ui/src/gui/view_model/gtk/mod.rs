@@ -134,16 +134,16 @@ impl ViewModel {
                                     view_model.waiting_for_device(&device)
                                 }
                                 ViewUpdate::UsbNeedsPin { attempts_left } => {
-                                    let mut prompt = gettext("Enter your PIN.");
-                                    if let Some(left) = attempts_left {
+                                    let prompt = if let Some(left) = attempts_left {
                                         let localized = ngettext(
-                                            "One attempt remaining.",
-                                            "%d attempts remaining.",
+                                            "Enter your PIN. One attempt remaining.",
+                                            "Enter your PIN. %d attempts remaining.",
                                             left,
                                         );
-                                        prompt.push(' ');
-                                        prompt += &localized.replace("%d", &format!("{}", left));
-                                    }
+                                        localized.replace("%d", &format!("{}", left))
+                                    } else {
+                                        gettext("Enter your PIN.")
+                                    };
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_pin_entry_visible(true);
                                 }

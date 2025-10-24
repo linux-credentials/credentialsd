@@ -205,9 +205,9 @@ Then `cd` into your build-directory (e.g. `build/`) and run
 
 ```
     # To update the POT template file, in case new strings have been added in the sources
-    meson compile credentialds-ui-pot
+    meson compile credentialsd-ui-pot
     # and to update the individual language files
-    meson compile credentialds-ui-update-po
+    meson compile credentialsd-ui-update-po
 ```
 to update the template, so it contains all messages to be translated.
 

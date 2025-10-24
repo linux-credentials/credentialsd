@@ -1,6 +1,8 @@
 msgid ""
 msgstr ""
-"POT-Creation-Date: 2025-10-10 14:45+0200\n"
+"Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
+"issues\"\n"
+"POT-Creation-Date: 2025-10-24 08:05+0200\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: en_US\n"
@@ -13,7 +15,7 @@ msgstr ""
 #. <project_license>LGPL-3.0-only</project_license>
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
-#: src/gui/view_model/gtk/mod.rs:370
+#: src/gui/view_model/gtk/mod.rs:372
 msgid "Credential Manager"
 msgstr "Credential Manager"
 
@@ -49,11 +51,6 @@ msgstr ""
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:16
 msgid "Registering a credential"
 msgstr "Registering a credential"
-
-#. developer_name tag deprecated with Appstream 1.0
-#: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:34
-msgid "Isaiah Inuwa"
-msgstr "Isaiah Inuwa"
 
 #: data/resources/ui/shortcuts.ui:11
 msgctxt "shortcut window"
@@ -118,15 +115,16 @@ msgstr ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
 
-#: src/gui/view_model/gtk/mod.rs:137
+#: src/gui/view_model/gtk/mod.rs:139
+#, fuzzy
+msgid "Enter your PIN. One attempt remaining."
+msgid_plural "Enter your PIN. %d attempts remaining."
+msgstr[0] "Enter your PIN. One attempt remaining."
+msgstr[1] "Enter your PIN. %d attempts remaining."
+
+#: src/gui/view_model/gtk/mod.rs:145
 msgid "Enter your PIN."
 msgstr "Enter your PIN."
-
-#: src/gui/view_model/gtk/mod.rs:140
-msgid "One attempt remaining."
-msgid_plural "%d attempts remaining."
-msgstr[0] "One attempt remaining."
-msgstr[1] "%d attempts remaining."
 
 #: src/gui/view_model/gtk/mod.rs:154
 msgid "Touch your device again. One attempt remaining."
@@ -220,4 +218,5 @@ msgstr "This credential is already registered on this authenticator."
 
 #: src/gui/view_model/mod.rs:284
 msgid "Something went wrong. Try again later or use a different authenticator."
-msgstr "Something went wrong. Try again later or use a different authenticator."
+msgstr ""
+"Something went wrong. Try again later or use a different authenticator."
