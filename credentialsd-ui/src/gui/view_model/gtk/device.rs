@@ -57,7 +57,7 @@ fn transport_name(transport: &Transport) -> &'static str {
         Transport::Internal => "This device",
         Transport::HybridQr => "A mobile device",
         Transport::HybridLinked => "TODO: Linked Device",
-        Transport::Nfc => "A security key (NFC)",
+        Transport::Nfc => "A security key or card (NFC)",
         Transport::Usb => "A security key (USB)",
         // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
     }
