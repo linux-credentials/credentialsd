@@ -43,6 +43,7 @@ pub async fn start_flow_control_service<
     Connection,
     Sender<(
         CredentialRequest,
+        Option<String>, // Application name sending the request
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
@@ -66,8 +67,11 @@ pub async fn start_flow_control_service<
     let (initiator_tx, mut initiator_rx) = mpsc::channel(2);
     tokio::spawn(async move {
         let svc = svc2;
-        while let Some((msg, tx)) = initiator_rx.recv().await {
-            svc.lock().await.init_request(&msg, tx).await;
+        while let Some((msg, requesting_app, tx)) = initiator_rx.recv().await {
+            svc.lock()
+                .await
+                .init_request(&msg, requesting_app, tx)
+                .await;
         }
     });
     Ok((conn, initiator_tx))
@@ -300,6 +304,7 @@ enum SignalState {
 pub trait CredentialRequestController {
     fn request_credential(
         &self,
+        requesting_app: Option<String>,
         request: CredentialRequest,
     ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
 }
@@ -307,6 +312,7 @@ pub trait CredentialRequestController {
 pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
+        Option<String>, // Application name sending the request
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }
@@ -314,10 +320,14 @@ pub struct CredentialRequestControllerClient {
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
+        requesting_app: Option<String>,
         request: CredentialRequest,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
-        self.initiator.send((request, tx)).await.unwrap();
+        self.initiator
+            .send((request, requesting_app, tx))
+            .await
+            .unwrap();
         let response = rx.await.map_err(|_| {
             tracing::error!("Credential response channel closed prematurely");
             WebAuthnError::NotAllowedError

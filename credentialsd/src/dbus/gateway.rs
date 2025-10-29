@@ -11,7 +11,7 @@ use credentialsd_common::{
     },
 };
 use tokio::sync::Mutex as AsyncMutex;
-use zbus::{fdo, interface, Connection, DBusError};
+use zbus::{fdo, interface, message::Header, Connection, DBusError};
 
 use crate::dbus::{
     create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
@@ -44,11 +44,78 @@ struct CredentialGateway<C: CredentialRequestController> {
     controller: Arc<AsyncMutex<C>>,
 }
 
+async fn query_connection_peer_binary(
+    header: Header<'_>,
+    connection: &Connection,
+) -> Option<String> {
+    // 1. Get the sender's unique bus name
+    let Some(sender_unique_name) = header.sender() else {
+        return None;
+    };
+
+    tracing::info!("Received request from sender: {}", sender_unique_name);
+
+    // 2. Use the connection to query the D-Bus daemon for more info
+    let proxy = match zbus::Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
+            return None;
+        }
+    };
+
+    // 3. Get the Process ID (PID) of the peer
+    let pid_result = match proxy
+        .call_method("GetConnectionUnixProcessID", &(sender_unique_name))
+        .await
+    {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Failed to get peer PID via DBus: {e:?}");
+            return None;
+        }
+    };
+    let pid: u32 = match pid_result.body().deserialize() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Retrieved peer PID is not an integer: {e:?}");
+            return None;
+        }
+    };
+
+    // 4. Get binary path via PID from /proc file-system
+    // TODO: To be REALLY sure, we may want to look at /proc/PID/exe instead. It is a symlink to
+    //       the actual binary, giving a full path instead of only the command name.
+    //       This should in theory be "more secure", but also may disconcert novice users with no
+    //       technical background.
+    let command_name = match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        Ok(c) => c.trim().to_string(),
+        Err(e) => {
+            tracing::error!(
+                "Failed to read /proc/{pid}/comm, so we don't know the command name of peer: {e:?}"
+            );
+            return None;
+        }
+    };
+
+    tracing::info!("Request is from: {command_name}");
+    Some(command_name)
+}
+
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
 #[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
 impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C> {
     async fn create_credential(
         &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] connection: &Connection,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -75,6 +142,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
                 return Err(Error::NotSupportedError);
             }
+            // Find out where this request is coming from (which application is requesting this)
+            let requesting_app = query_connection_peer_binary(header, connection).await;
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
@@ -82,7 +151,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(requesting_app, cred_request)
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -111,6 +180,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
 
     async fn get_credential(
         &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] connection: &Connection,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -137,12 +208,14 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                     WebAuthnError::TypeError
                 })?;
             let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+            // Find out where this request is coming from (which application is requesting this)
+            let requesting_app = query_connection_peer_binary(header, connection).await;
 
             let response = self
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(requesting_app, cred_request)
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {

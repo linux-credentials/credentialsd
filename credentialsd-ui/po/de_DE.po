@@ -3,7 +3,7 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2025-10-24 08:05+0200\n"
+"POT-Creation-Date: 2025-10-29 13:04+0100\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: de_DE\n"
@@ -106,7 +106,7 @@ msgstr "Fertig!"
 msgid "Something went wrong."
 msgstr "Etwas ist schief gegangen."
 
-#: data/resources/ui/window.ui:217 src/gui/view_model/mod.rs:233
+#: data/resources/ui/window.ui:217 src/gui/view_model/mod.rs:247
 msgid ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
@@ -188,23 +188,29 @@ msgstr "Ein NFC-Gerät"
 msgid "A security key"
 msgstr "Ein Security-Token"
 
-#: src/gui/view_model/mod.rs:65
-msgid "Create new credential"
-msgstr "Neue Zugangsdaten erstellen"
+#: src/gui/view_model/mod.rs:70
+msgid "unknown application"
+msgstr "unbekannter Applikation"
 
-#: src/gui/view_model/mod.rs:66
-msgid "Use a credential"
-msgstr "Zugangsdaten abrufen"
+#: src/gui/view_model/mod.rs:75
+#, fuzzy
+msgid "Create a new credential for %s1 via %s2"
+msgstr "Neue Zugangsdaten für %s1 via %s2 erstellen"
 
-#: src/gui/view_model/mod.rs:173
+#: src/gui/view_model/mod.rs:76
+#, fuzzy
+msgid "Use a credential on %s1 via %s2"
+msgstr "Zugangsdaten für %s1 via %s2 abrufen"
+
+#: src/gui/view_model/mod.rs:187
 msgid "Failed to select credential from device."
 msgstr "Zugangsdaten vom Gerät konnten nicht ausgewählt werden."
 
-#: src/gui/view_model/mod.rs:227
+#: src/gui/view_model/mod.rs:241
 msgid "No matching credentials found on this authenticator."
 msgstr "Keine passenden Zugangsdaten auf diesem Gerät gefunden."
 
-#: src/gui/view_model/mod.rs:230
+#: src/gui/view_model/mod.rs:244
 msgid ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
@@ -212,11 +218,11 @@ msgstr ""
 "Keine weiteren PIN-Eingaben erlaubt. Versuchen Sie ihr Gerät aus- und wieder "
 "einzustecken."
 
-#: src/gui/view_model/mod.rs:236
+#: src/gui/view_model/mod.rs:250
 msgid "This credential is already registered on this authenticator."
 msgstr "Diese Zugangsdaten sind bereits auf diesem Gerät registriert."
 
-#: src/gui/view_model/mod.rs:284
+#: src/gui/view_model/mod.rs:298
 msgid "Something went wrong. Try again later or use a different authenticator."
 msgstr ""
 "Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später noch einmal, "

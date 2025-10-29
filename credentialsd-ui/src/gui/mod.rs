@@ -27,19 +27,19 @@ fn run_gui<F: FlowController + Send + Sync + 'static>(
     flow_controller: Arc<AsyncMutex<F>>,
     request: ViewRequest,
 ) {
-    let operation = request.operation;
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
     let event_loop = async_std::task::spawn(async move {
+        let request_id = request.id;
         let mut vm =
-            view_model::ViewModel::new(operation, flow_controller.clone(), rx_event, tx_update);
+            view_model::ViewModel::new(request, flow_controller.clone(), rx_event, tx_update);
         vm.start_event_loop().await;
         tracing::debug!("Finishing user request.");
         // If cancellation fails, that's fine.
         let _ = flow_controller
             .lock()
             .await
-            .cancel_request(request.id)
+            .cancel_request(request_id)
             .await;
     });
 

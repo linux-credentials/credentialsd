@@ -7,6 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
+use credentialsd_common::server::ViewRequest;
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
@@ -29,6 +30,8 @@ where
     rx_event: Receiver<ViewEvent>,
     title: String,
     operation: Operation,
+    rp_id: String,
+    requesting_app: String,
 
     // This includes devices like platform authenticator, USB, hybrid
     devices: Vec<Device>,
@@ -42,7 +45,7 @@ where
 
 impl<F: FlowController + Send> ViewModel<F> {
     pub(crate) fn new(
-        operation: Operation,
+        request: ViewRequest,
         flow_controller: Arc<AsyncMutex<F>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
@@ -51,7 +54,9 @@ impl<F: FlowController + Send> ViewModel<F> {
             flow_controller,
             rx_event,
             tx_update,
-            operation,
+            operation: request.operation,
+            rp_id: request.rp_id,
+            requesting_app: request.requesting_app,
             title: String::default(),
             devices: Vec::new(),
             selected_device: None,
@@ -61,11 +66,20 @@ impl<F: FlowController + Send> ViewModel<F> {
     }
 
     async fn update_title(&mut self) {
-        self.title = match self.operation {
-            Operation::Create => gettext("Create new credential"),
-            Operation::Get => gettext("Use a credential"),
+        let requesting_app = if self.requesting_app.is_empty() {
+            gettext("unknown application")
+        } else {
+            self.requesting_app.clone()
+        };
+        let mut title = match self.operation {
+            Operation::Create => gettext("Create a new credential for %s1 via %s2"),
+            Operation::Get => gettext("Use a credential on %s1 via %s2"),
         }
         .to_string();
+
+        title = title.replace("%s1", &self.rp_id);
+        title = title.replace("%s2", &requesting_app);
+        self.title = title;
         self.tx_update
             .send(ViewUpdate::SetTitle(self.title.to_string()))
             .await

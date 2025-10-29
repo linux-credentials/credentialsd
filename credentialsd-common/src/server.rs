@@ -484,6 +484,8 @@ where
 pub struct ViewRequest {
     pub operation: Operation,
     pub id: RequestId,
+    pub rp_id: String,
+    pub requesting_app: String,
 }
 
 fn value_to_owned(value: &Value<'_>) -> OwnedValue {
