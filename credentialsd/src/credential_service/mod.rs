@@ -20,7 +20,7 @@ use tokio::sync::oneshot::Sender;
 use credentialsd_common::{
     model::{
         CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
-        Transport,
+        RequestingApplication, Transport,
     },
     server::{RequestId, ViewRequest},
 };
@@ -101,7 +101,7 @@ impl<H: HybridHandler + Debug, U: UsbHandler + Debug, UC: UiController + Debug>
     pub async fn init_request(
         &self,
         request: &CredentialRequest,
-        requesting_app: Option<String>,
+        requesting_app: Option<RequestingApplication>,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
         let request_id = {
@@ -371,11 +371,7 @@ mod test {
                 cred_service
                     .lock()
                     .await
-                    .init_request(
-                        &request,
-                        Some(String::from("test_hybrid_sets_credential")),
-                        request_tx,
-                    )
+                    .init_request(&request, None, request_tx)
                     .await;
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)

@@ -9,7 +9,7 @@ use zvariant::{
     Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Operation};
+use crate::model::{BackgroundEvent, Operation, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -485,7 +485,7 @@ pub struct ViewRequest {
     pub operation: Operation,
     pub id: RequestId,
     pub rp_id: String,
-    pub requesting_app: String,
+    pub requesting_app: RequestingApplication,
 }
 
 fn value_to_owned(value: &Value<'_>) -> OwnedValue {

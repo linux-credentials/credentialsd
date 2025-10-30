@@ -6,5 +6,6 @@ i18n.gettext(gettext_package,
          '--from-code=UTF-8',
          '--copyright-holder="The Credentials for Linux Project"',
          '--msgid-bugs-address="https://github.com/linux-credentials/credentialsd/issues"',
+         '--add-comments=TRANSLATORS:'
            ],
 )

@@ -6,7 +6,7 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use credentialsd_common::model::{
     BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError,
-    WebAuthnError,
+    RequestingApplication, WebAuthnError,
 };
 use credentialsd_common::server::{Device, RequestId};
 use futures_lite::StreamExt;
@@ -43,7 +43,7 @@ pub async fn start_flow_control_service<
     Connection,
     Sender<(
         CredentialRequest,
-        Option<String>, // Application name sending the request
+        Option<RequestingApplication>, // Application name sending the request
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
@@ -304,7 +304,7 @@ enum SignalState {
 pub trait CredentialRequestController {
     fn request_credential(
         &self,
-        requesting_app: Option<String>,
+        requesting_app: Option<RequestingApplication>,
         request: CredentialRequest,
     ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
 }
@@ -312,7 +312,7 @@ pub trait CredentialRequestController {
 pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
-        Option<String>, // Application name sending the request
+        Option<RequestingApplication>, // Application name sending the request
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }
@@ -320,7 +320,7 @@ pub struct CredentialRequestControllerClient {
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
-        requesting_app: Option<String>,
+        requesting_app: Option<RequestingApplication>,
         request: CredentialRequest,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();

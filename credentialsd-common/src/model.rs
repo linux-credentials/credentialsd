@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use zvariant::{SerializeDict, Type};
@@ -170,9 +170,22 @@ impl Transport {
     }
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
+pub struct RequestingApplication {
+    pub name: String,
+    pub path: PathBuf,
+    pub pid: u32,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
+pub struct RequestingParty {
+    pub rp_id: String,
+    pub origin: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum ViewUpdate {
-    SetTitle(String),
+    SetTitle((String, String)),
     SetDevices(Vec<Device>),
     SetCredentials(Vec<Credential>),
 

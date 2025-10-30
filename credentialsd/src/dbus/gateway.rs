@@ -4,7 +4,10 @@
 use std::sync::Arc;
 
 use credentialsd_common::{
-    model::{CredentialRequest, CredentialResponse, GetClientCapabilitiesResponse, WebAuthnError},
+    model::{
+        CredentialRequest, CredentialResponse, GetClientCapabilitiesResponse,
+        RequestingApplication, WebAuthnError,
+    },
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
         GetCredentialResponse,
@@ -47,13 +50,11 @@ struct CredentialGateway<C: CredentialRequestController> {
 async fn query_connection_peer_binary(
     header: Header<'_>,
     connection: &Connection,
-) -> Option<String> {
+) -> Option<RequestingApplication> {
     // 1. Get the sender's unique bus name
-    let Some(sender_unique_name) = header.sender() else {
-        return None;
-    };
+    let sender_unique_name = header.sender()?;
 
-    tracing::info!("Received request from sender: {}", sender_unique_name);
+    tracing::debug!("Received request from sender: {}", sender_unique_name);
 
     // 2. Use the connection to query the D-Bus daemon for more info
     let proxy = match zbus::Proxy::new(
@@ -104,9 +105,24 @@ async fn query_connection_peer_binary(
             return None;
         }
     };
+    tracing::debug!("Request is from: {command_name}");
 
-    tracing::info!("Request is from: {command_name}");
-    Some(command_name)
+    let exe_path = match std::fs::read_link(format!("/proc/{pid}/exe")) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                "Failed to follow link of /proc/{pid}/exe, so we don't know the executable path of peer: {e:?}"
+            );
+            return None;
+        }
+    };
+    tracing::debug!("Request is from: {exe_path:?}");
+
+    Some(RequestingApplication {
+        name: command_name,
+        path: exe_path,
+        pid,
+    })
 }
 
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
