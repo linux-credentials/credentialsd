@@ -2001,7 +2001,7 @@ dependencies = [
 [[package]]
 name = "libwebauthn"
 version = "0.2.2"
-source = "git+https://github.com/msirringhaus/libwebauthn.git?branch=nfc_followup#055246728ecab79ee8d8422004d0a493f3c709fb"
+source = "git+https://github.com/linux-credentials/libwebauthn.git#604b53b6ec86f4c0239518d43cb33f9302d4fcb3"
 dependencies = [
  "aes",
  "apdu",

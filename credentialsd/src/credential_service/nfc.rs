@@ -35,15 +35,9 @@ impl InProcessNfcHandler {
         failures: &mut usize,
         prev_nfc_state: &NfcStateInternal,
     ) -> Result<NfcStateInternal, Error> {
-        match libwebauthn::transport::nfc::list_devices().await {
-            Ok(mut hid_devices) => {
-                if hid_devices.is_empty() {
-                    let state = NfcStateInternal::Waiting;
-                    Ok(state)
-                } else {
-                    Ok(NfcStateInternal::Connected(hid_devices.swap_remove(0)))
-                }
-            }
+        match libwebauthn::transport::nfc::get_nfc_device().await {
+            Ok(None) => Ok(NfcStateInternal::Waiting),
+            Ok(Some(hid_device)) => Ok(NfcStateInternal::Connected(hid_device)),
             Err(err) => {
                 *failures += 1;
                 if *failures == 5 {
