@@ -76,7 +76,8 @@
                     </child>
                     <child>
                       <object class="GtkScrolledWindow">
-                        <property name="min-content-height">256</property>
+                        <property name="vexpand">true</property>
+                        <property name="max-content-height">256</property>
                         <binding name="child">
                           <lookup name="devices">
                             <lookup name="view-model">
@@ -191,7 +192,8 @@
                     </child>
                     <child>
                       <object class="GtkScrolledWindow">
-                        <property name="min-content-height">256</property>
+                        <property name="vexpand">true</property>
+                        <property name="max-content-height">256</property>
                         <binding name="child">
                           <lookup name="credentials">
                             <lookup name="view-model">
