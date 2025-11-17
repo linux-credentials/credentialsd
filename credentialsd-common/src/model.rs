@@ -268,11 +268,11 @@ pub enum UsbState {
 /// Used to share public state between credential service and UI.
 #[derive(Clone, Debug, Default)]
 pub enum NfcState {
-    /// Not polling for FIDO USB device.
+    /// Not polling for FIDO NFC device.
     #[default]
     Idle,
 
-    /// Awaiting FIDO USB device to be plugged in.
+    /// Awaiting FIDO NFC device to connect.
     Waiting,
 
     /// USB device connected, prompt user to tap
@@ -293,7 +293,7 @@ pub enum NfcState {
         creds: Vec<Credential>,
     },
 
-    /// USB tapped, received credential
+    /// NFC tapped, received credential
     Completed,
 
     /// Interaction with the authenticator failed.
