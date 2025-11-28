@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use gettextrs::{LocaleCategory, gettext};
+use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
 use gtk::gdk::Texture;
 use gtk::gdk_pixbuf::Pixbuf;
@@ -135,14 +135,15 @@ impl ViewModel {
                                 }
                                 ViewUpdate::UsbNeedsPin { attempts_left }
                                 | ViewUpdate::NfcNeedsPin { attempts_left } => {
-                                    let prompt = match attempts_left {
-                                        Some(1) => {
-                                            "Enter your PIN. 1 attempt remaining.".to_string()
-                                        }
-                                        Some(attempts_left) => format!(
-                                            "Enter your PIN. {attempts_left} attempts remaining."
-                                        ),
-                                        None => "Enter your PIN.".to_string(),
+                                    let prompt = if let Some(left) = attempts_left {
+                                        let localized = ngettext(
+                                            "Enter your PIN. One attempt remaining.",
+                                            "Enter your PIN. %d attempts remaining.",
+                                            left,
+                                        );
+                                        localized.replace("%d", &format!("{}", left))
+                                    } else {
+                                        gettext("Enter your PIN.")
                                     };
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_nfc_pin_entry_visible(true);
@@ -150,20 +151,23 @@ impl ViewModel {
                                 ViewUpdate::UsbNeedsUserVerification { attempts_left }
                                 | ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
-                                        Some(1) => "Touch your device again. 1 attempt remaining."
-                                            .to_string(),
-                                        Some(attempts_left) => format!(
-                                            "Touch your device again. {attempts_left} attempts remaining."
-                                        ),
-                                        None => "Touch your device.".to_string(),
+                                        Some(left) => {
+                                            let localized = ngettext(
+                                                "Touch your device again. One attempt remaining.",
+                                                "Touch your device again. %d attempts remaining.",
+                                                left,
+                                            );
+                                            localized.replace("%d", &format!("{}", left))
+                                        }
+                                        None => gettext("Touch your device."),
                                     };
                                     view_model.set_prompt(prompt);
                                 }
                                 ViewUpdate::UsbNeedsUserPresence => {
-                                    view_model.set_prompt("Touch your device");
+                                    view_model.set_prompt(gettext("Touch your device"));
                                 }
                                 ViewUpdate::HybridNeedsQrCode(qr_code) => {
-                                    view_model.set_prompt("Scan the QR code with your device to begin authentication.");
+                                    view_model.set_prompt(gettext("Scan the QR code with your device to begin authentication."));
                                     let texture = view_model.draw_qr_code(&qr_code);
                                     view_model.set_qr_code_paintable(&texture);
                                     view_model.set_qr_code_visible(true);
@@ -172,17 +176,17 @@ impl ViewModel {
                                 ViewUpdate::HybridConnecting => {
                                     view_model.set_qr_code_visible(false);
                                     _ = view_model.qr_code_paintable().take();
-                                    view_model.set_prompt(
+                                    view_model.set_prompt(gettext(
                                         "Connecting to your device. Make sure both devices are near each other and have Bluetooth enabled.",
-                                    );
+                                    ));
                                     view_model.set_qr_spinner_visible(true);
                                 }
                                 ViewUpdate::HybridConnected => {
                                     view_model.set_qr_code_visible(false);
                                     _ = view_model.qr_code_paintable().take();
-                                    view_model.set_prompt(
+                                    view_model.set_prompt(gettext(
                                         "Device connected. Follow the instructions on your device",
-                                    );
+                                    ));
                                     view_model.set_qr_spinner_visible(false);
                                 }
                                 ViewUpdate::Completed => {
@@ -192,6 +196,7 @@ impl ViewModel {
                                 ViewUpdate::Failed(error_msg) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_failed(true);
+                                    // These are already gettext messages
                                     view_model.set_prompt(error_msg);
                                 }
                                 ViewUpdate::Cancelled => {
@@ -306,7 +311,7 @@ impl ViewModel {
     fn waiting_for_device(&self, device: &Device) {
         match device.transport {
             Transport::Usb => {
-                self.set_prompt("Insert your security key.");
+                self.set_prompt(gettext("Insert your security key."));
             }
             Transport::HybridQr => {
                 self.set_prompt("");
@@ -324,7 +329,9 @@ impl ViewModel {
     }
 
     fn selecting_device(&self) {
-        self.set_prompt("Multiple devices found. Please select with which to proceed.");
+        self.set_prompt(gettext(
+            "Multiple devices found. Please select with which to proceed.",
+        ));
     }
 
     pub async fn send_usb_nfc_device_pin(&self, pin: String) {
@@ -363,6 +370,8 @@ pub fn start_gtk_app(
     gettextrs::setlocale(LocaleCategory::LcAll, "");
     gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
     gettextrs::textdomain(GETTEXT_PACKAGE).expect("Unable to switch to the text domain");
+    gettextrs::bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8")
+        .expect("Unable to set codeset to UTF-8");
 
     if glib::application_name().is_none() {
         glib::set_application_name(&gettext("Credential Manager"));

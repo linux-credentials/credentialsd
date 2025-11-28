@@ -31,8 +31,6 @@ localedir = prefix / get_option('localedir')
 datadir = prefix / get_option('datadir')
 pkgdatadir = datadir / gui_executable_name
 iconsdir = datadir / 'icons'
-podir = meson.project_source_root() / meson.current_source_dir() / 'po'
-gettext_package = gui_executable_name
 
 if get_option('profile') == 'development'
   profile = 'Devel'
@@ -70,6 +68,10 @@ cargo_options += ['--target-dir', meson.project_build_root() / gui_build_dir / '
 if get_option('cargo_offline') == true
   cargo_options += ['--offline']
 endif
+
+# Localization setup
+podir = meson.project_source_root() / meson.current_source_dir() / 'po'
+gettext_package = gui_executable_name
 
 subdir('data')
 subdir('po')

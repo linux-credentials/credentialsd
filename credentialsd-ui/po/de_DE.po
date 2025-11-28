@@ -1,0 +1,223 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
+"issues\"\n"
+"POT-Creation-Date: 2025-10-24 08:05+0200\n"
+"PO-Revision-Date: 2025-10-10 14:45+0200\n"
+"Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
+"Language: de_DE\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#. Insert your license of choice here
+#. <project_license>LGPL-3.0-only</project_license>
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
+#: src/gui/view_model/gtk/mod.rs:372
+msgid "Credential Manager"
+msgstr "Zugangsdatenmanager"
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:3
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:9
+msgid "Write a GTK + Rust application"
+msgstr ""
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:9
+msgid "Gnome;GTK;"
+msgstr "Gnome;GTK;"
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in:6
+msgid "Window width"
+msgstr "Fensterbreite"
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in:10
+msgid "Window height"
+msgstr "Fensterhöhe"
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in:14
+msgid "Window maximized state"
+msgstr "Fenster maximiert"
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:11
+msgid ""
+"A boilerplate template for GTK + Rust. It uses Meson as a build system and "
+"has flatpak support by default."
+msgstr "Eine Vorlage für eine GTK + Rust Anwendung."
+
+#: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:16
+msgid "Registering a credential"
+msgstr "Zugangsdaten registrieren"
+
+#: data/resources/ui/shortcuts.ui:11
+msgctxt "shortcut window"
+msgid "General"
+msgstr "Allgemein"
+
+#: data/resources/ui/shortcuts.ui:14
+msgctxt "shortcut window"
+msgid "Show Shortcuts"
+msgstr "Zeige Kürzel"
+
+#: data/resources/ui/shortcuts.ui:20
+msgctxt "shortcut window"
+msgid "Quit"
+msgstr "Beenden"
+
+#: data/resources/ui/window.ui:6
+msgid "_Preferences"
+msgstr "Einstellungen"
+
+#: data/resources/ui/window.ui:10
+msgid "_Keyboard Shortcuts"
+msgstr "Tastaturkürzel"
+
+#: data/resources/ui/window.ui:43
+msgid "Choose device"
+msgstr "Gerät auswählen"
+
+#: data/resources/ui/window.ui:49
+msgid "Devices"
+msgstr "Geräte"
+
+#: data/resources/ui/window.ui:72
+msgid "Connect a security key"
+msgstr "Stecken Sie Ihren Security-Token ein"
+
+#: data/resources/ui/window.ui:113
+msgid "Scan the QR code to connect your device"
+msgstr "Scannen Sie den QR-Code, um Ihr Gerät zu verbinden"
+
+#: data/resources/ui/window.ui:158 data/resources/ui/window.ui:164
+msgid "Choose credential"
+msgstr "Wählen Sie Zugangsdaten aus"
+
+#: data/resources/ui/window.ui:187
+msgid "Complete"
+msgstr "Abgeschlossen"
+
+#: data/resources/ui/window.ui:193
+msgid "Done!"
+msgstr "Fertig!"
+
+#: data/resources/ui/window.ui:204
+msgid "Something went wrong."
+msgstr "Etwas ist schief gegangen."
+
+#: data/resources/ui/window.ui:217 src/gui/view_model/mod.rs:233
+msgid ""
+"Something went wrong while retrieving a credential. Please try again later "
+"or use a different authenticator."
+msgstr ""
+"Beim Abrufen Ihrer Zugangsdaten ist ein Fehler aufgetreten. Versuchen Sie es "
+"später wieder, oder verwenden Sie einen anderen Security-Token."
+
+#: src/gui/view_model/gtk/mod.rs:139
+#, fuzzy
+msgid "Enter your PIN. One attempt remaining."
+msgid_plural "Enter your PIN. %d attempts remaining."
+msgstr[0] "Geben Sie Ihren PIN ein. Sie haben nur noch einen Versuch."
+msgstr[1] "Geben Sie Ihren PIN ein. Sie haben noch %d Versuche."
+
+#: src/gui/view_model/gtk/mod.rs:145
+msgid "Enter your PIN."
+msgstr "Geben Sie Ihren PIN ein."
+
+#: src/gui/view_model/gtk/mod.rs:154
+msgid "Touch your device again. One attempt remaining."
+msgid_plural "Touch your device again. %d attempts remaining."
+msgstr[0] "Berühren Sie Ihr Gerät. Sie haben nur noch einen Versuch."
+msgstr[1] "Berühren Sie nochmal Ihr Gerät. Sie haben nur noch %d Versuche."
+
+#: src/gui/view_model/gtk/mod.rs:160
+msgid "Touch your device."
+msgstr "Berühren Sie Ihr Gerät."
+
+#: src/gui/view_model/gtk/mod.rs:165
+msgid "Touch your device"
+msgstr "Berühren Sie Ihr Gerät."
+
+#: src/gui/view_model/gtk/mod.rs:168
+msgid "Scan the QR code with your device to begin authentication."
+msgstr ""
+"Scannen Sie den QR code mit ihrem Gerät um die Authentifizierung zu beginnen."
+
+#: src/gui/view_model/gtk/mod.rs:178
+msgid ""
+"Connecting to your device. Make sure both devices are near each other and "
+"have Bluetooth enabled."
+msgstr ""
+"Verbindung zu Ihrem Gerät wird aufgebaut. Stellen Sie sicher, dass beide "
+"Geräte nah beieinander sind und Bluetooth aktiviert haben."
+
+#: src/gui/view_model/gtk/mod.rs:186
+msgid "Device connected. Follow the instructions on your device"
+msgstr "Verbindung hergestellt. Folgen Sie den Anweisungen auf Ihrem Gerät."
+
+#: src/gui/view_model/gtk/mod.rs:312
+msgid "Insert your security key."
+msgstr "Stecken Sie Ihren Security-Token ein."
+
+#: src/gui/view_model/gtk/mod.rs:328
+msgid "Multiple devices found. Please select with which to proceed."
+msgstr "Mehrere Geräte gefunden. Bitte wählen Sie einen aus, um fortzufahren."
+
+#: src/gui/view_model/gtk/device.rs:57
+msgid "A Bluetooth device"
+msgstr "Ein Bluetooth-Gerät"
+
+#: src/gui/view_model/gtk/device.rs:58
+msgid "This device"
+msgstr "Dieses Gerät"
+
+#: src/gui/view_model/gtk/device.rs:59
+msgid "A mobile device"
+msgstr "Ein mobiles Gerät"
+
+#: src/gui/view_model/gtk/device.rs:60
+msgid "Linked Device"
+msgstr "Verbundenes Gerät"
+
+#: src/gui/view_model/gtk/device.rs:61
+msgid "A security key or card (NFC)"
+msgstr "Ein NFC-Gerät"
+
+#: src/gui/view_model/gtk/device.rs:62
+msgid "A security key (USB)"
+msgstr "Ein Security-Token"
+
+#: src/gui/view_model/mod.rs:65
+msgid "Create new credential"
+msgstr "Neue Zugangsdaten erstellen"
+
+#: src/gui/view_model/mod.rs:66
+msgid "Use a credential"
+msgstr "Zugangsdaten abrufen"
+
+#: src/gui/view_model/mod.rs:173
+msgid "Failed to select credential from device."
+msgstr "Zugangsdaten vom Gerät konnten nicht ausgewählt werden."
+
+#: src/gui/view_model/mod.rs:227
+msgid "No matching credentials found on this authenticator."
+msgstr "Keine passenden Zugangsdaten auf diesem Gerät gefunden."
+
+#: src/gui/view_model/mod.rs:230
+msgid ""
+"No more PIN attempts allowed. Try removing your device and plugging it back "
+"in."
+msgstr ""
+"Keine weiteren PIN-Eingaben erlaubt. Versuchen Sie ihr Gerät aus- und wieder "
+"einzustecken."
+
+#: src/gui/view_model/mod.rs:236
+msgid "This credential is already registered on this authenticator."
+msgstr "Diese Zugangsdaten sind bereits auf diesem Gerät registriert."
+
+#: src/gui/view_model/mod.rs:284
+msgid "Something went wrong. Try again later or use a different authenticator."
+msgstr ""
+"Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später noch einmal, "
+"oder benutzen Sie ein anderes Gerät."

@@ -8,10 +8,17 @@ if (get_option('profile') == 'development')
 else
   global_conf.set_quoted('PKGDATADIR', pkgdatadir)
 endif
+if (get_option('profile') == 'development')
+  global_conf.set_quoted(
+    'LOCALEDIR',
+    meson.project_build_root() / gui_build_dir / 'po',
+  )
+else
+  global_conf.set_quoted('LOCALEDIR', localedir)
+endif
 global_conf.set_quoted('PROFILE', profile)
 global_conf.set_quoted('VERSION', version + version_suffix)
 global_conf.set_quoted('GETTEXT_PACKAGE', gettext_package)
-global_conf.set_quoted('LOCALEDIR', localedir)
 configure_file(input: 'config.rs.in', output: 'config.rs', configuration: global_conf)
 
 # Copy the config.rs output to the source directory.

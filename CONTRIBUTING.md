@@ -192,3 +192,25 @@ formatting and linting tools [mentioned above](#code-formatting-and-linting).
 You should also follow the install instructions in [`BUILDING.md`](/BUILDING.md)
 and execute authentication flows in a browser to ensure that everything
 still works as it should.
+
+# Translations
+
+credentialsd-ui is using [gettext-rs](https://github.com/gettext-rs/gettext-rs) to translate user-facing strings.
+
+Please wrap all user-facing messages in `gettext("my string")`-calls and add the files you add them to, to `credentialsd-ui/po/POTFILES`.
+
+If you introduce a new language, also add them to `credentialsd-ui/po/LINGUAS`.
+
+Then `cd` into your build-directory (e.g. `build/`) and run
+
+```
+    # To update the POT template file, in case new strings have been added in the sources
+    meson compile credentialsd-ui-pot
+    # and to update the individual language files
+    meson compile credentialsd-ui-update-po
+```
+to update the template, so it contains all messages to be translated.
+
+Meson should take care of building the translations.
+
+When using the development-profile to build, meson will use the locally built translations.

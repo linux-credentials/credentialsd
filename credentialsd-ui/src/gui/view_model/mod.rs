@@ -7,14 +7,14 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
-use credentialsd_common::model::NfcState;
+use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use credentialsd_common::{
     client::FlowController,
     model::{
-        BackgroundEvent, Credential, Device, Error, HybridState, Operation, Transport, UsbState,
+        BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport, UsbState,
         ViewUpdate,
     },
 };
@@ -62,8 +62,8 @@ impl<F: FlowController + Send> ViewModel<F> {
 
     async fn update_title(&mut self) {
         self.title = match self.operation {
-            Operation::Create => "Create new credential",
-            Operation::Get => "Use a credential",
+            Operation::Create => gettext("Create new credential"),
+            Operation::Get => gettext("Use a credential"),
         }
         .to_string();
         self.tx_update
@@ -174,10 +174,11 @@ impl<F: FlowController + Send> ViewModel<F> {
                         .await
                         .is_err()
                     {
-                        let error_msg = "Failed to select credential from device.";
-                        tracing::error!(error_msg);
+                        tracing::error!("Failed to select credential from device.");
                         self.tx_update
-                            .send(ViewUpdate::Failed(error_msg.to_string()))
+                            .send(ViewUpdate::Failed(gettext(
+                                "Failed to select credential from device.",
+                            )))
                             .await
                             .unwrap();
                     }
@@ -228,20 +229,20 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         // TODO: Provide more specific error messages using the wrapped Error.
                         UsbState::Failed(err) => {
-                            let error_msg = String::from(match err {
+                            let error_msg = match err {
                                 Error::NoCredentials => {
-                                    "No matching credentials found on this authenticator."
+                                    gettext("No matching credentials found on this authenticator.")
                                 }
-                                Error::PinAttemptsExhausted => {
-                                    "No more PIN attempts allowed. Try removing your device and plugging it back in."
-                                }
-                                Error::AuthenticatorError | Error::Internal(_) => {
-                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
-                                }
-                                Error::CredentialExcluded => {
-                                    "This credential is already registered on this authenticator."
-                                }
-                            });
+                                Error::PinAttemptsExhausted => gettext(
+                                    "No more PIN attempts allowed. Try removing your device and plugging it back in.",
+                                ),
+                                Error::AuthenticatorError | Error::Internal(_) => gettext(
+                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                                ),
+                                Error::CredentialExcluded => gettext(
+                                    "This credential is already registered on this authenticator.",
+                                ),
+                            };
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))
                                 .await
@@ -338,7 +339,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         HybridState::Failed => {
                             self.hybrid_qr_code_data = None;
-                            self.tx_update.send(ViewUpdate::Failed(String::from("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
+                            self.tx_update.send(ViewUpdate::Failed(gettext("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
                         }
                     };
                 } /*

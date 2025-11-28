@@ -1,6 +1,8 @@
-data/xyz.iinuwa.CredentialManager.desktop.in.in
-data/xyz.iinuwa.CredentialManager.gschema.xml.in
-data/xyz.iinuwa.CredentialManager.metainfo.xml.in.in
+data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in
+data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in
+data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in
 data/resources/ui/shortcuts.ui
 data/resources/ui/window.ui
-src/application.rs
+src/gui/view_model/gtk/mod.rs
+src/gui/view_model/gtk/device.rs
+src/gui/view_model/mod.rs
