@@ -16,8 +16,8 @@ use tracing::{error, info};
 use credentialsd_common::{
     client::FlowController,
     model::{
-        BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport, UsbState,
-        ViewUpdate,
+        BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport,
+        UsbState, ViewUpdate,
     },
 };
 
