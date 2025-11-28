@@ -22,7 +22,7 @@ use tokio::sync::oneshot::Sender;
 use credentialsd_common::{
     model::{
         CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
-        Transport,
+        RequestingApplication, Transport,
     },
     server::{RequestId, ViewRequest},
 };
@@ -100,6 +100,7 @@ impl<
     pub async fn init_request(
         &self,
         request: &CredentialRequest,
+        requesting_app: Option<RequestingApplication>,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
         let request_id = {
@@ -125,9 +126,15 @@ impl<
             CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
             CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
         };
+        let rp_id = match &request {
+            CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
+            CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
+        };
         let view_request = ViewRequest {
             operation,
             id: request_id,
+            rp_id,
+            requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
         };
 
         let launch_ui_response = self
@@ -427,7 +434,7 @@ mod test {
                 cred_service
                     .lock()
                     .await
-                    .init_request(&request, request_tx)
+                    .init_request(&request, None, request_tx)
                     .await;
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)

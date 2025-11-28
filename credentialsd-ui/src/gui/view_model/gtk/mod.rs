@@ -37,6 +37,9 @@ mod imp {
         pub title: RefCell<String>,
 
         #[property(get, set)]
+        pub subtitle: RefCell<String>,
+
+        #[property(get, set)]
         pub devices: RefCell<gtk::ListBox>,
 
         #[property(get, set)]
@@ -122,7 +125,10 @@ impl ViewModel {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_nfc_pin_entry_visible(false);
                             match update {
-                                ViewUpdate::SetTitle(title) => view_model.set_title(title),
+                                ViewUpdate::SetTitle((title, subtitle)) => {
+                                    view_model.set_title(title);
+                                    view_model.set_subtitle(subtitle);
+                                }
                                 ViewUpdate::SetDevices(devices) => {
                                     view_model.update_devices(&devices)
                                 }

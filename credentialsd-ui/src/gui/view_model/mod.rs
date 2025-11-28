@@ -7,6 +7,8 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
+use credentialsd_common::model::RequestingApplication;
+use credentialsd_common::server::ViewRequest;
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
@@ -28,7 +30,10 @@ where
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     title: String,
+    subtitle: String,
     operation: Operation,
+    rp_id: String,
+    requesting_app: RequestingApplication,
 
     // This includes devices like platform authenticator, USB, hybrid
     devices: Vec<Device>,
@@ -42,7 +47,7 @@ where
 
 impl<F: FlowController + Send> ViewModel<F> {
     pub(crate) fn new(
-        operation: Operation,
+        request: ViewRequest,
         flow_controller: Arc<AsyncMutex<F>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
@@ -51,8 +56,11 @@ impl<F: FlowController + Send> ViewModel<F> {
             flow_controller,
             rx_event,
             tx_update,
-            operation,
+            operation: request.operation,
+            rp_id: request.rp_id,
+            requesting_app: request.requesting_app,
             title: String::default(),
+            subtitle: String::default(),
             devices: Vec::new(),
             selected_device: None,
             hybrid_qr_state: HybridState::default(),
@@ -61,13 +69,52 @@ impl<F: FlowController + Send> ViewModel<F> {
     }
 
     async fn update_title(&mut self) {
-        self.title = match self.operation {
-            Operation::Create => gettext("Create new credential"),
-            Operation::Get => gettext("Use a credential"),
+        let mut requesting_app = self.requesting_app.clone();
+
+        if requesting_app.name.is_empty() {
+            requesting_app.name = gettext("unknown application");
+        };
+        let mut title = match self.operation {
+            Operation::Create => {
+                // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+                gettext("Create a passkey for %s1")
+            }
+            Operation::Get => {
+                // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+                gettext("Use a passkey for %s1")
+            }
         }
         .to_string();
+        title = title.replace("%s1", &self.rp_id);
+
+        let mut subtitle = match self.operation {
+            Operation::Create => {
+                // TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
+                // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
+                // TRANSLATORS: %i1 is the process ID of the requesting application
+                // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
+                gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
+            }
+            Operation::Get => {
+                // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+                // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
+                // TRANSLATORS: %i1 is the process ID of the requesting application
+                // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
+                gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
+            }
+        }
+        .to_string();
+        subtitle = subtitle.replace("%s1", &self.rp_id);
+        subtitle = subtitle.replace("%i1", &format!("{}", requesting_app.pid));
+        subtitle = subtitle.replace("%s2", &requesting_app.name);
+        subtitle = subtitle.replace("%s3", &requesting_app.path.to_string_lossy());
+        self.title = title;
+        self.subtitle = subtitle;
         self.tx_update
-            .send(ViewUpdate::SetTitle(self.title.to_string()))
+            .send(ViewUpdate::SetTitle((
+                self.title.to_string(),
+                self.subtitle.to_string(),
+            )))
             .await
             .unwrap();
     }

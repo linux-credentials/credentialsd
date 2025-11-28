@@ -20,6 +20,7 @@
     <child>
       <object class="GtkBox">
         <property name="orientation">vertical</property>
+        <property name="spacing">10</property>
         <child>
           <object class="GtkLabel">
             <binding name="label">
@@ -34,6 +35,30 @@
             </style>
           </object>
         </child>
+        <child>
+          <object class="GtkSeparator"></object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="wrap">true</property>
+            <property name="use-markup">true</property>
+            <binding name="label">
+              <lookup name="subtitle">
+                <lookup name="view-model">
+                  CredentialsUiWindow
+                </lookup>
+              </lookup>
+            </binding>
+            <style>
+              <class name="subtitle-header"/>
+            </style>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkSeparator"></object>
+        </child>
+
         <child>
           <object class="GtkStack" id="stack">
 
@@ -51,7 +76,8 @@
                     </child>
                     <child>
                       <object class="GtkScrolledWindow">
-                        <property name="min-content-height">256</property>
+                        <property name="vexpand">true</property>
+                        <property name="max-content-height">256</property>
                         <binding name="child">
                           <lookup name="devices">
                             <lookup name="view-model">
@@ -166,7 +192,8 @@
                     </child>
                     <child>
                       <object class="GtkScrolledWindow">
-                        <property name="min-content-height">256</property>
+                        <property name="vexpand">true</property>
+                        <property name="max-content-height">256</property>
                         <binding name="child">
                           <lookup name="credentials">
                             <lookup name="view-model">

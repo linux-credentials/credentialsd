@@ -4,20 +4,29 @@
 use std::sync::Arc;
 
 use credentialsd_common::{
-    model::{CredentialRequest, CredentialResponse, GetClientCapabilitiesResponse, WebAuthnError},
+    model::{
+        CredentialRequest, CredentialResponse, GetClientCapabilitiesResponse,
+        RequestingApplication, WebAuthnError,
+    },
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
         GetCredentialResponse,
     },
 };
 use tokio::sync::Mutex as AsyncMutex;
-use zbus::{fdo, interface, Connection, DBusError};
+use zbus::{
+    fdo, interface,
+    message::Header,
+    names::{BusName, UniqueName},
+    Connection, DBusError,
+};
 
 use crate::dbus::{
     create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
     get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
     CredentialRequestController,
 };
+use std::os::fd::AsRawFd;
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
@@ -44,11 +53,173 @@ struct CredentialGateway<C: CredentialRequestController> {
     controller: Arc<AsyncMutex<C>>,
 }
 
+async fn query_peer_pid_via_fdinfo(
+    connection: &Connection,
+    sender_unique_name: &UniqueName<'_>,
+) -> Option<u32> {
+    let dbus_proxy = match zbus::fdo::DBusProxy::new(connection).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
+            return None;
+        }
+    };
+
+    let peer_credentials = match dbus_proxy
+        .get_connection_credentials(BusName::from(sender_unique_name.to_owned()))
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to get peer credentials: {e:?}");
+            return None;
+        }
+    };
+
+    let pidfd = match peer_credentials.process_fd() {
+        Some(p) => p.as_raw_fd(),
+        None => {
+            tracing::error!("Failed to get process fd from peer credentials");
+            return None;
+        }
+    };
+
+    let fdinfo_str = match std::fs::read_to_string(format!("/proc/self/fdinfo/{pidfd}")) {
+        Ok(fdinfo) => fdinfo,
+        Err(e) => {
+            tracing::error!("Failed to read fdinfo from procfs: {e}");
+            return None;
+        }
+    };
+
+    // Find the line that starts with "Pid:"
+    let pid_line = match fdinfo_str.lines().find(|line| line.starts_with("Pid:")) {
+        Some(line) => line,
+        None => {
+            tracing::error!("Failed to read PID from fdinfo");
+            return None;
+        }
+    };
+
+    let pid_str = pid_line[4..].trim();
+
+    // std::process::id() also returns u32
+    let pid: u32 = match pid_str.parse() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to parse PID from fdinfo entry: {e}");
+            return None;
+        }
+    };
+
+    Some(pid)
+}
+
+async fn query_peer_pid_via_dbus(
+    connection: &Connection,
+    sender_unique_name: &UniqueName<'_>,
+) -> Option<u32> {
+    // Use the connection to query the D-Bus daemon for more info
+    let proxy = match zbus::Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
+            return None;
+        }
+    };
+
+    // Get the Process ID (PID) of the peer
+    let pid_result = match proxy
+        .call_method("GetConnectionUnixProcessID", &(sender_unique_name))
+        .await
+    {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Failed to get peer PID via DBus: {e:?}");
+            return None;
+        }
+    };
+    let pid: u32 = match pid_result.body().deserialize() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Retrieved peer PID is not an integer: {e:?}");
+            return None;
+        }
+    };
+    Some(pid)
+}
+
+async fn query_connection_peer_binary(
+    header: Header<'_>,
+    connection: &Connection,
+) -> Option<RequestingApplication> {
+    // Get the sender's unique bus name
+    let sender_unique_name = header.sender()?;
+
+    tracing::debug!("Received request from sender: {}", sender_unique_name);
+
+    // Get the senders PID.
+    //
+    // First, try to get the PID via the more secure fdinfo
+    let mut pid = query_peer_pid_via_fdinfo(connection, sender_unique_name).await;
+    // If that fails, we fall back to asking dbus directly for the peers PID
+    if pid.is_none() {
+        pid = query_peer_pid_via_dbus(connection, sender_unique_name).await;
+    }
+
+    let Some(pid) = pid else {
+        tracing::error!("Failed to determine peers PID. Skipping application details query.");
+        return None;
+    };
+
+    // Get binary path via PID from /proc file-system
+    // TODO: To be REALLY sure, we may want to look at /proc/PID/exe instead. It is a symlink to
+    //       the actual binary, giving a full path instead of only the command name.
+    //       This should in theory be "more secure", but also may disconcert novice users with no
+    //       technical background.
+    let command_name = match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        Ok(c) => c.trim().to_string(),
+        Err(e) => {
+            tracing::error!(
+                "Failed to read /proc/{pid}/comm, so we don't know the command name of peer: {e:?}"
+            );
+            return None;
+        }
+    };
+    tracing::debug!("Request is from: {command_name}");
+
+    let exe_path = match std::fs::read_link(format!("/proc/{pid}/exe")) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                "Failed to follow link of /proc/{pid}/exe, so we don't know the executable path of peer: {e:?}"
+            );
+            return None;
+        }
+    };
+    tracing::debug!("Request is from: {exe_path:?}");
+
+    Some(RequestingApplication {
+        name: command_name,
+        path: exe_path,
+        pid,
+    })
+}
+
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
 #[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
 impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C> {
     async fn create_credential(
         &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] connection: &Connection,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -75,6 +246,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
                 return Err(Error::NotSupportedError);
             }
+            // Find out where this request is coming from (which application is requesting this)
+            let requesting_app = query_connection_peer_binary(header, connection).await;
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
@@ -82,7 +255,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(requesting_app, cred_request)
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -111,6 +284,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
 
     async fn get_credential(
         &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(connection)] connection: &Connection,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -137,12 +312,14 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                     WebAuthnError::TypeError
                 })?;
             let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+            // Find out where this request is coming from (which application is requesting this)
+            let requesting_app = query_connection_peer_binary(header, connection).await;
 
             let response = self
                 .controller
                 .lock()
                 .await
-                .request_credential(cred_request)
+                .request_credential(requesting_app, cred_request)
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
