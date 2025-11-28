@@ -68,8 +68,8 @@
 
             <child>
               <object class="GtkStackPage">
-                <property name="name">usb</property>
-                <property name="title">Plug in security key</property>
+                <property name="name">usb_or_nfc</property>
+                <property name="title">Connect a security key</property>
                 <property name="child">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
@@ -90,10 +90,10 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkPasswordEntry" id="usb_pin_entry">
-                        <signal name="activate" handler="handle_usb_pin_entered" swapped="true"/>
+                      <object class="GtkPasswordEntry" id="usb_nfc_pin_entry">
+                        <signal name="activate" handler="handle_usb_nfc_pin_entered" swapped="true"/>
                         <binding name="visible">
-                          <lookup name="usb_pin_entry_visible">
+                          <lookup name="usb_nfc_pin_entry_visible">
                             <lookup name="view-model">
                               CredentialsUiWindow
                             </lookup>

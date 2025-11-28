@@ -167,6 +167,28 @@ pub mod test {
                 .unwrap()
         }
 
+        pub async fn request_nfc_credential(&self) {
+            tracing::debug!(
+                target: "DummyUiServer",
+                "Received request_nfc_credential() request"
+            );
+            loop {
+                if !self.stream_initialized.load(Ordering::Relaxed) {
+                    self.stream_initialized_notifier.notified().await;
+                } else {
+                    break;
+                }
+            }
+            self.svc
+                .lock()
+                .await
+                .as_mut()
+                .unwrap()
+                .get_nfc_credential()
+                .await
+                .unwrap()
+        }
+
         pub async fn enter_client_pin(&self, pin: String) {
             tracing::debug!(
                 target: "DummyUiServer",

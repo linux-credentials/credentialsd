@@ -53,6 +53,15 @@ impl FlowController for DbusCredentialClient {
             .map_err(|_| ())
     }
 
+    async fn get_nfc_credential(&mut self) -> std::result::Result<(), ()> {
+        self.proxy()
+            .await?
+            .get_nfc_credential()
+            .await
+            .inspect_err(|err| tracing::error!("Failed to start NFC credential flow: {err}"))
+            .map_err(|_| ())
+    }
+
     async fn subscribe(
         &mut self,
     ) -> std::result::Result<

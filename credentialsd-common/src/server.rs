@@ -28,6 +28,9 @@ impl From<&BackgroundEvent> for Structure<'_> {
             BackgroundEvent::HybridQrStateChanged(state) => {
                 tag_value_to_struct(0x02, Some(Value::Structure(state.into())))
             }
+            BackgroundEvent::NfcStateChanged(state) => {
+                tag_value_to_struct(0x03, Some(Value::Structure(state.into())))
+            }
         }
     }
 }
@@ -48,6 +51,10 @@ impl TryFrom<&Structure<'_>> for BackgroundEvent {
                 Ok(BackgroundEvent::HybridQrStateChanged(
                     (&structure).try_into()?,
                 ))
+            }
+            0x03 => {
+                let structure: Structure = value.downcast_ref()?;
+                Ok(BackgroundEvent::NfcStateChanged((&structure).try_into()?))
             }
             _ => Err(zvariant::Error::Message(format!(
                 "Unknown BackgroundEvent tag : {tag}"
@@ -336,6 +343,10 @@ impl Type for crate::model::UsbState {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
 
+impl Type for crate::model::NfcState {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
+}
+
 impl From<&crate::model::UsbState> for Structure<'_> {
     fn from(value: &crate::model::UsbState) -> Self {
         let (tag, value): (u8, Option<Value>) = match value {
@@ -454,6 +465,128 @@ impl Serialize for crate::model::UsbState {
 }
 
 impl<'de> Deserialize<'de> for crate::model::UsbState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserialize_tag_value(deserializer)
+    }
+}
+
+impl From<&crate::model::NfcState> for Structure<'_> {
+    fn from(value: &crate::model::NfcState) -> Self {
+        let (tag, value): (u8, Option<Value>) = match value {
+            crate::model::NfcState::Idle => (0x01, None),
+            crate::model::NfcState::Waiting => (0x02, None),
+            crate::model::NfcState::Connected => (0x04, None),
+            // TODO: Add pin request reason to this struct
+            crate::model::NfcState::NeedsPin { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => *num as i32,
+                    None => -1,
+                };
+                (0x05, Some(Value::I32(num)))
+            }
+            crate::model::NfcState::NeedsUserVerification { attempts_left } => {
+                let num = match attempts_left {
+                    Some(num) => *num as i32,
+                    None => -1,
+                };
+                (0x06, Some(Value::I32(num)))
+            }
+            crate::model::NfcState::SelectCredential { creds } => {
+                let creds: Vec<Credential> = creds.iter().map(Credential::from).collect();
+                let value = Value::new(creds);
+                (0x08, Some(value))
+            }
+            crate::model::NfcState::Completed => (0x09, None),
+            crate::model::NfcState::Failed(error) => {
+                let value = Value::<'_>::from(error.to_string());
+                (0x0A, Some(value))
+            }
+        };
+        tag_value_to_struct(tag, value)
+    }
+}
+
+impl TryFrom<&Structure<'_>> for crate::model::NfcState {
+    type Error = zvariant::Error;
+
+    fn try_from(structure: &Structure<'_>) -> Result<Self, Self::Error> {
+        let (tag, value) = parse_tag_value_struct(structure)?;
+        match tag {
+            0x01 => Ok(Self::Idle),
+            0x02 => Ok(Self::Waiting),
+            0x04 => Ok(Self::Connected),
+            0x05 => {
+                let attempts_left: i32 = value.downcast_ref()?;
+                let attempts_left = if attempts_left == -1 {
+                    None
+                } else {
+                    Some(attempts_left as u32)
+                };
+                Ok(Self::NeedsPin { attempts_left })
+            }
+            0x06 => {
+                let attempts_left: i32 = value.downcast_ref()?;
+                let attempts_left = if attempts_left == -1 {
+                    None
+                } else {
+                    Some(attempts_left as u32)
+                };
+                Ok(Self::NeedsUserVerification { attempts_left })
+            }
+            0x08 => {
+                let creds: Array = value.downcast_ref()?;
+                let creds: Result<Vec<crate::model::Credential>, zvariant::Error> = creds
+                    .iter()
+                    .map(|v| v.try_to_owned().unwrap())
+                    .map(|v| {
+                        let cred: Result<crate::model::Credential, zvariant::Error> =
+                            Value::from(v)
+                                .downcast::<Credential>()
+                                .map(crate::model::Credential::from);
+                        cred
+                    })
+                    .collect();
+                Ok(Self::SelectCredential { creds: creds? })
+            }
+            0x09 => Ok(Self::Completed),
+            0x0A => {
+                let err_code: &str = value.downcast_ref()?;
+                let err = match err_code {
+                    "AuthenticatorError" => crate::model::Error::AuthenticatorError,
+                    "NoCredentials" => crate::model::Error::NoCredentials,
+                    "CredentialExcluded" => crate::model::Error::CredentialExcluded,
+                    "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
+                    s => crate::model::Error::Internal(String::from(s)),
+                };
+                Ok(Self::Failed(err))
+            }
+            _ => Err(zvariant::Error::IncorrectType),
+        }
+    }
+}
+
+impl TryFrom<Structure<'_>> for crate::model::NfcState {
+    type Error = zvariant::Error;
+
+    fn try_from(structure: Structure<'_>) -> Result<Self, Self::Error> {
+        Self::try_from(&structure)
+    }
+}
+
+impl Serialize for crate::model::NfcState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::model::NfcState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

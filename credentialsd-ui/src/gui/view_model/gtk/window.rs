@@ -35,7 +35,7 @@ mod imp {
         pub stack: TemplateChild<gtk::Stack>,
 
         #[template_child]
-        pub usb_pin_entry: TemplateChild<gtk::PasswordEntry>,
+        pub usb_nfc_pin_entry: TemplateChild<gtk::PasswordEntry>,
 
         #[template_child]
         pub qr_code_pic: TemplateChild<Picture>,
@@ -44,7 +44,7 @@ mod imp {
     #[gtk::template_callbacks]
     impl CredentialsUiWindow {
         #[template_callback]
-        fn handle_usb_pin_entered(&self, entry: &gtk::PasswordEntry) {
+        fn handle_usb_nfc_pin_entered(&self, entry: &gtk::PasswordEntry) {
             let view_model = &self.view_model.borrow();
             let view_model = view_model.as_ref().unwrap();
             let pin = entry.text().to_string();
@@ -52,7 +52,7 @@ mod imp {
                 #[weak]
                 view_model,
                 async move {
-                    view_model.send_usb_device_pin(pin).await;
+                    view_model.send_usb_nfc_device_pin(pin).await;
                 }
             ));
         }
@@ -65,7 +65,7 @@ mod imp {
                 settings: gio::Settings::new(APP_ID),
                 view_model: RefCell::default(),
                 stack: TemplateChild::default(),
-                usb_pin_entry: TemplateChild::default(),
+                usb_nfc_pin_entry: TemplateChild::default(),
                 qr_code_pic: TemplateChild::default(),
             }
         }
@@ -162,8 +162,9 @@ impl CredentialsUiWindow {
                     .and_downcast_ref::<DeviceObject>()
                     .expect("selected device to exist at notify");
                 match d.transport().try_into() {
-                    Ok(Transport::Usb) => stack.set_visible_child_name("usb"),
+                    Ok(Transport::Usb) => stack.set_visible_child_name("usb_or_nfc"),
                     Ok(Transport::HybridQr) => stack.set_visible_child_name("hybrid_qr"),
+                    Ok(Transport::Nfc) => stack.set_visible_child_name("usb_or_nfc"),
                     _ => {}
                 };
             }
