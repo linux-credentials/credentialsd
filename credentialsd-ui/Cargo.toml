@@ -6,11 +6,12 @@ authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.
 license = "LGPL-3.0-only"
 
 [dependencies]
+ashpd = { version = "0.12.0", features = ["backend", "gtk4_wayland", "gtk4_x11", "wayland"] }
 async-std = { version = "1.13.1", features = ["unstable"] }
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
-gtk = { version = "0.9.6", package = "gtk4", features = ["v4_6"] }
+gtk = { version = "0.10.3", package = "gtk4", features = ["v4_6"] }
 qrcode = "0.14.1"
 serde = { version = "1.0.219", features = ["derive"] }
 tracing = "0.1.41"

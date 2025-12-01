@@ -1,6 +1,6 @@
 use std::{fmt::Display, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use zvariant::{SerializeDict, Type};
 
 pub use libwebauthn::ops::webauthn::{

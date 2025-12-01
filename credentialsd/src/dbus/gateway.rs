@@ -10,15 +10,12 @@ use credentialsd_common::{
     },
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
-        GetCredentialResponse,
+        GetCredentialResponse, WindowHandle,
     },
 };
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    fdo, interface,
-    message::Header,
-    names::{BusName, UniqueName},
-    Connection, DBusError,
+    Connection, DBusError, fdo, interface, message::Header, names::{BusName, UniqueName}, zvariant::Optional
 };
 
 use crate::dbus::{
@@ -221,6 +218,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
         request: CreateCredentialRequest,
+        window_handle: Optional<WindowHandle>,
     ) -> Result<CreateCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
             check_origin(request.origin.as_deref(), request.is_same_origin)
@@ -255,7 +253,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(requesting_app, cred_request)
+                .request_credential(requesting_app, cred_request, window_handle.into())
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -287,6 +285,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
         request: GetCredentialRequest,
+        window_handle: Optional<WindowHandle>,
     ) -> Result<GetCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
             check_origin(request.origin.as_deref(), request.is_same_origin)
@@ -319,7 +318,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(requesting_app, cred_request)
+                .request_credential(requesting_app, cred_request, window_handle.into())
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {

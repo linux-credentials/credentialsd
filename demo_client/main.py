@@ -114,7 +114,7 @@ async def create_password(interface):
             },
         ),
     }
-    rsp = await interface.call_create_credential(password_req)
+    rsp = await interface.call_create_credential([password_req, ""])
     return rsp
 
 
@@ -215,7 +215,7 @@ async def get_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = await interface.call_get_credential(req)
+    rsp = await interface.call_get_credential([req, ""])
     print("Received response")
     pprint(rsp)
     if rsp["type"].value != "public-key":

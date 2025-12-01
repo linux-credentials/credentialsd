@@ -1,12 +1,13 @@
 //! Types for serializing across D-Bus instances
 
+use std::fmt::Display;
+
 use serde::{
     Deserialize, Serialize,
-    de::{DeserializeSeed, Error},
+    de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, LE, Optional, OwnedValue, SerializeDict,
-    Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
+    self, Array, DeserializeDict, DynamicDeserialize, LE, NoneValue, Optional, OwnedValue, SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields
 };
 
 use crate::model::{BackgroundEvent, Operation, RequestingApplication};
@@ -619,6 +620,87 @@ pub struct ViewRequest {
     pub id: RequestId,
     pub rp_id: String,
     pub requesting_app: RequestingApplication,
+
+    /// Client window handle.
+    pub window_handle: WindowHandle,
+}
+
+#[derive(Type, PartialEq, Debug)]
+#[zvariant(signature = "s")]
+pub enum WindowHandle {
+    Wayland(String),
+    X11(String),
+}
+
+impl NoneValue for WindowHandle {
+    type NoneType = String;
+
+    fn null_value() -> Self::NoneType {
+        String::new()
+    }
+}
+
+impl Serialize for WindowHandle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl <'de> Deserialize<'de> for WindowHandle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        deserializer.deserialize_str(WindowHandleVisitor { })
+    }
+}
+
+struct WindowHandleVisitor;
+
+impl <'de> Visitor<'de> for WindowHandleVisitor {
+    type Value = WindowHandle;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "a window handle formatted as `<window system>:<handle value>`")
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error, {
+                v.try_into().map_err(E::custom)
+
+    }
+}
+
+impl TryFrom<String> for WindowHandle {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        WindowHandle::try_from(value.as_ref())
+    }
+}
+
+impl TryFrom<&str> for WindowHandle {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.split_once(':') {
+            Some(("x11", handle)) => { Ok(Self::X11(handle.to_string())) },
+            Some(("wayland", xid)) => { Ok(Self::Wayland(xid.to_string())) },
+            Some((window_system, _)) => Err(format!("Unknown windowing system: {window_system}")),
+            None => Err("Invalid window handle string format".to_string()),
+        }
+    }
+}
+
+impl Display for WindowHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Wayland(handle) => write!(f, "wayland:{handle}"),
+            Self::X11(xid) => write!(f, "x11:{xid}"),
+        }
+    }
 }
 
 fn value_to_owned(value: &Value<'_>) -> OwnedValue {
