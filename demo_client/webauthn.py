@@ -35,11 +35,11 @@ def verify_create_response(response, create_request, expected_origin):
 
     challenge_str = client_data['challenge']
     if challenge_str != create_request['challenge']:
-        raise Exception(f"Challenge does not match original request. Rejecting.")
+        raise Exception("Challenge does not match original request. Rejecting.")
 
     origin = client_data['origin']
     if origin != expected_origin:
-        raise Exception(f"Origin does not match original request. Rejecting.")
+        raise Exception(f"Origin {origin} does not match original request ({expected_origin}). Rejecting.")
 
     client_data_hash = hashlib.sha256(client_data_bytes).digest()
     # Verify that the rpIdHash in authData is the SHA-256 hash of the RP ID expected by the Relying Party.
