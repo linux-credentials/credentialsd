@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import json
 import os
+from pathlib import Path
 import secrets
+import sqlite3
 import sys
 from pprint import pprint
 
@@ -14,26 +16,16 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gio, GObject, Gtk, Adw  # noqa: E402
 
-import main as api
-import webauthn
-import util
+import webauthn  # noqa: E402
+import util  # noqa: E402
 
-res = Gio.Resource.load(f"{os.path.dirname(os.path.realpath(__file__))}/resources.gresource")
-Gio.resources_register(res)
+INTERFACE = None
+DB = None
 
-bus = MessageBus().connect_sync()
-
-with open(f"{os.path.dirname(os.path.realpath(__file__))}/xyz.iinuwa.credentialsd.Credentials.xml", "r") as f:
-    introspection = f.read()
-
-proxy_object = bus.get_proxy_object(
-    "xyz.iinuwa.credentialsd.Credentials",
-    "/xyz/iinuwa/credentialsd/Credentials",
-    introspection,
+RESOURCE_FILE = Gio.Resource.load(
+    f"{os.path.dirname(os.path.realpath(__file__))}/resources.gresource"
 )
-
-INTERFACE = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
-
+Gio.resources_register(RESOURCE_FILE)
 
 
 @Gtk.Template(resource_path="/xyz/iinuwa/credentialsd/DemoCredentialsUi/window.ui")
@@ -63,13 +55,20 @@ class MainWindow(Gtk.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def on_register(self, *args):
-        print(f"register clicked: {args}")
+        options = self._get_registration_options()
+        print(f"register clicked: {options}")
+        auth_data = create_passkey(INTERFACE, self.origin, self.origin, options)
+        cur = DB.cursor()
+        cur.execute("""
+            insert into user_passkeys
+            (user_handle, cred_id, aaguid, sign_count, backup_eligible, backup_state, uv_initialized, cose_pub_key)
+        """)
+        auth_data
 
     @Gtk.Template.Callback()
     def on_authenticate(self, *args):
-        options = self._get_authentication_options()
+        options = self._get_registration_options()
         print(f"authenticate clicked: {options}")
-        create_passkey(INTERFACE, self.origin, self.origin, options)
 
     @GObject.Property(type=Gtk.StringList)
     def uv_prefs(self):
@@ -85,10 +84,10 @@ class MainWindow(Gtk.ApplicationWindow):
             model.append(o)
         return model
 
-    def _get_authentication_options(self):
+    def _get_registration_options(self):
         user_verification = self.uv_prefs_dropdown.get_selected_item().get_string()
         username = self.username.get_text()
-        user_handle = username.encode('utf-8')
+        user_handle = username.encode("utf-8")
         options = {
             "challenge": util.b64_encode(secrets.token_bytes(16)),
             "rp": {
@@ -110,6 +109,16 @@ class MainWindow(Gtk.ApplicationWindow):
 
         return options
 
+    def _get_authentication_options(self, cred_ids):
+        options = {
+            "challenge": util.b64_encode(secrets.token_bytes(16)),
+            "rpId": self.rp_id,
+            "allowCredentials": [
+                {"type": "public-key", "id": util.b64_encode(cred_id)}
+                for cred_id in cred_ids
+            ],
+        }
+        return options
 
 
 class MyApp(Adw.Application):
@@ -122,7 +131,9 @@ class MyApp(Adw.Application):
         self.win.present()
 
 
-def create_passkey(interface: ProxyInterface, origin, top_origin, options):
+def create_passkey(
+    interface: ProxyInterface, origin: str, top_origin: str, options: dict
+) -> webauthn.AuthenticatorData:
     is_same_origin = origin == top_origin
     print(
         f"Sending {'same' if is_same_origin else 'cross'}-origin request for {origin} using options:"
@@ -152,5 +163,76 @@ def create_passkey(interface: ProxyInterface, origin, top_origin, options):
     )
     return webauthn.verify_create_response(response_json, options, origin)
 
-app = MyApp(application_id="xyz.iinuwa.credentialsd.DemoCredentialsUi")
-app.run(sys.argv)
+
+def connect_to_bus():
+    global INTERFACE
+    bus = MessageBus().connect_sync()
+
+    with open(
+        f"{os.path.dirname(os.path.realpath(__file__))}/xyz.iinuwa.credentialsd.Credentials.xml",
+        "r",
+    ) as f:
+        introspection = f.read()
+
+    proxy_object = bus.get_proxy_object(
+        "xyz.iinuwa.credentialsd.Credentials",
+        "/xyz/iinuwa/credentialsd/Credentials",
+        introspection,
+    )
+    INTERFACE = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
+
+
+def setup_db():
+    global DB
+    # This is just for testing/temporary use, so put it in cache
+    path = (
+        Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+        / "xyz.iinuwa.credentialsd.DemoCredentialsUi"
+        / "users.db"
+    )
+    print(path)
+    path.parent.mkdir(exist_ok=True)
+    DB = sqlite3.connect(path)
+    DB.execute("pragma foreign_keys = on")
+    user_table_sql = """
+        create table if not exists users (
+              user_id integer primary key autoincrement
+            , username text
+            , user_handle blob unique
+            , created_date integer not null
+        )
+        strict
+    """
+    passkey_table_sql = """
+        create table if not exists user_passkeys (
+              user_handle blob
+            , cred_id blob
+            , aaguid text not null
+            , sign_count integer null
+            , backup_eligible integer not null
+            , backup_state integer not null
+            , uv_initialized integer not null
+            , cose_pub_key blob not null
+            , created_time integer not null
+            , updated_time integer
+            , primary key (user_handle, cred_id)
+        )
+        strict
+    """
+    cur = DB.cursor()
+    cur.execute(user_table_sql)
+    cur.execute(passkey_table_sql)
+    cur.close()
+
+
+def main():
+    connect_to_bus()
+    setup_db()
+
+    app = MyApp(application_id="xyz.iinuwa.credentialsd.DemoCredentialsUi")
+    app.run(sys.argv)
+    DB.close()
+
+
+if __name__ == "__main__":
+    main()
