@@ -18,21 +18,38 @@ demo_blueprints = custom_target(
   ],
 )
 
-custom_target(
+demo_resources = custom_target(
   'demo-resource',
   input: files('resources.gresource.xml'),
   depend_files: files('style.css'),
-  depends: demo_blueprints,
   depfile: 'gresource.deps',
   output: 'resources.gresource',
-  command: [glib_compile_resources, '--target=@OUTPUT@', '--dependency-file=@DEPFILE@', '--sourcedir=@CURRENT_SOURCE_DIR@', '--sourcedir', demo_blueprints[0], '@INPUT@'],
+  command: [
+    glib_compile_resources,
+    '--target=@OUTPUT@',
+    '--dependency-file=@DEPFILE@',
+    '--sourcedir=@CURRENT_SOURCE_DIR@',
+    '--sourcedir', demo_blueprints[0],
+    '@INPUT@',
+  ],
 )
 
-fs = import('fs')
-gui_script = fs.copyfile('gui.py')
-fs.copyfile('cbor.py')
-fs.copyfile('main.py')
-fs.copyfile('util.py')
-fs.copyfile('webauthn.py')
+gui_sources = files(
+  '../doc/xyz.iinuwa.credentialsd.Credentials.xml',
+  'cbor.py',
+  'gui.py',
+  'main.py',
+  'util.py',
+  'webauthn.py',
+)
+# fs.copyfile(gui_sources)
 
-fs.copyfile('../doc/xyz.iinuwa.credentialsd.Credentials.xml')
+# fs.copyfile()
+custom_target(
+  'demo-gui',
+  input: [gui_sources],
+  build_by_default: false,
+  output: '.',
+  depends: [demo_resources],
+  command: ['cp', '@INPUT@', '@OUTPUT@'],
+)
