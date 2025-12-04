@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+from contextlib import closing
 import json
+import math
 import os
 from pathlib import Path
+from pprint import pprint
 import secrets
 import sqlite3
 import sys
-from pprint import pprint
+import time
+from typing import Optional
+import uuid
 
 from dbus_next.glib import MessageBus, ProxyInterface
 from dbus_next import DBusError, Message, MessageType, Variant
@@ -19,8 +24,16 @@ from gi.repository import Gio, GObject, Gtk, Adw  # noqa: E402
 import webauthn  # noqa: E402
 import util  # noqa: E402
 
+def dbus_error_from_message(msg: Message):
+    assert msg.message_type == MessageType.ERROR
+    return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
+
+
+DBusError._from_message = dbus_error_from_message
+
 INTERFACE = None
 DB = None
+KEY = None
 
 RESOURCE_FILE = Gio.Resource.load(
     f"{os.path.dirname(os.path.realpath(__file__))}/resources.gresource"
@@ -55,20 +68,113 @@ class MainWindow(Gtk.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def on_register(self, *args):
-        options = self._get_registration_options()
-        print(f"register clicked: {options}")
-        auth_data = create_passkey(INTERFACE, self.origin, self.origin, options)
+        print("register clicked")
+        now = math.floor(time.time())
         cur = DB.cursor()
-        cur.execute("""
+        username = self.username.get_text()
+        cur.execute("select user_id, user_handle from users where username = ?", (username,))
+        if row := cur.fetchone():
+            user_id = row[0]
+            user_handle = row[1]
+            print(f"user found for {username}: <id: {user_id}, handle: {user_handle}>")
+        else:
+            user_handle = secrets.token_bytes(16)
+            user_id = None
+            print(f"user created for {username}: <id: {user_id}, handle: {user_handle}>")
+        options = self._get_registration_options(user_handle, username)
+        print(f"registration options: {options}")
+        auth_data = create_passkey(INTERFACE, self.origin, self.origin, options)
+        if not user_id:
+            cur.execute("insert into users (username, user_handle, created_time) values (?, ?, ?)", (username, user_handle, now))
+            user_id = cur.lastrowid
+        params = {
+            "user_handle": user_handle,
+            "cred_id": auth_data.cred_id,
+            "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
+            "sign_count": None if auth_data.sign_count == 0 else auth_data.sign_count,
+            "backup_eligible": 1 if "BE" in auth_data.flags else 0,
+            "backup_state": 1 if "BS" in auth_data.flags else 0,
+            "uv_initialized": 1 if "UV" in auth_data.flags else 0,
+            "cose_pub_key": auth_data.pub_key_bytes,
+            "created_time": now,
+        }
+
+        add_passkey_sql = """
             insert into user_passkeys
-            (user_handle, cred_id, aaguid, sign_count, backup_eligible, backup_state, uv_initialized, cose_pub_key)
-        """)
-        auth_data
+            (user_handle, cred_id, aaguid, sign_count, backup_eligible, backup_state, uv_initialized, cose_pub_key, created_time)
+            values
+            (:user_handle, :cred_id, :aaguid, :sign_count, :backup_eligible, :backup_state, :uv_initialized, :cose_pub_key, :created_time)
+        """
+        cur.execute(add_passkey_sql, params)
+        print("Added passkey")
+        DB.commit()
+        cur.close()
 
     @Gtk.Template.Callback()
     def on_authenticate(self, *args):
-        options = self._get_registration_options()
+        username = self.username.get_text()
+        if username:
+            print(f"Using username-flow: {username}")
+            sql = """
+            select p.user_handle, cred_id, backup_eligible, backup_state, cose_pub_key, sign_count
+            from user_passkeys p
+            inner join users u on u.user_handle = p.user_handle
+            where u.username = ?
+            """
+            with closing(DB.cursor()) as cur:
+                cur.execute(sql, (username,))
+                user_creds = []
+                for row in cur.fetchall():
+                    [user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count] = row
+                    user_cred = {
+                        'user_handle': user_handle,
+                        'cred_id': cred_id,
+                        'backup_eligible': backup_eligible,
+                        'backup_state': backup_state,
+                        'pub_key': pub_key,
+                        'sign_count': sign_count,
+                    }
+                    user_creds.append(user_cred)
+                print(user_creds)
+            cred_ids = [c['cred_id'] for c in user_creds]
+        else:
+            print("using username-less flow")
+            cred_ids = []
+
+        options = self._get_authentication_options(cred_ids)
         print(f"authenticate clicked: {options}")
+        def retrieve_user_cred(user_handle: Optional[bytes], cred_id: bytes) -> Optional[dict]:
+            print(user_handle, cred_id)
+            with closing(DB.cursor()) as cur:
+                if username:
+                    print("using cached user creds")
+                    return next((u for u in user_creds if u['cred_id'] == cred_id and (user_handle is None or user_handle == u['user_handle'])), None)
+                else:
+                    if not user_handle:
+                        print("No user handle given, cannot look up user")
+                        return None
+                    sql = """
+                        select user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count
+                        from user_passkeys
+                        where user_handle = ? and cred_id = ?
+                    """
+                    cur.execute(sql, (user_handle, cred_id))
+                    if row := cur.fetchone():
+                        [user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count] = row
+                        user_cred = {
+                            'user_handle': user_handle,
+                            'cred_id': cred_id,
+                            'backup_eligible': backup_eligible,
+                            'backup_state': backup_state,
+                            'pub_key': pub_key,
+                            'sign_count': sign_count,
+                        }
+                        return user_cred
+                    else:
+                        return None
+
+        auth_data = get_passkey(INTERFACE, self.origin, self.origin, self.rp_id, cred_ids, retrieve_user_cred)
+        print("Received passkey", auth_data)
 
     @GObject.Property(type=Gtk.StringList)
     def uv_prefs(self):
@@ -84,10 +190,9 @@ class MainWindow(Gtk.ApplicationWindow):
             model.append(o)
         return model
 
-    def _get_registration_options(self):
-        user_verification = self.uv_prefs_dropdown.get_selected_item().get_string()
+    def _get_registration_options(self, user_handle: bytes, username: str):
         username = self.username.get_text()
-        user_handle = username.encode("utf-8")
+        user_verification = self.uv_prefs_dropdown.get_selected_item().get_string()
         options = {
             "challenge": util.b64_encode(secrets.token_bytes(16)),
             "rp": {
@@ -151,8 +256,8 @@ def create_passkey(
 
     rsp = interface.call_create_credential_sync(req)
 
-    print("Received response")
-    pprint(rsp)
+    # print("Received response")
+    # pprint(rsp)
     if rsp["type"].value != "public-key":
         raise Exception(
             f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
@@ -163,6 +268,46 @@ def create_passkey(
     )
     return webauthn.verify_create_response(response_json, options, origin)
 
+def get_passkey(
+    interface, origin, top_origin, rp_id, cred_ids, cred_lookup_fn
+):
+    is_same_origin = origin == top_origin
+    options = {
+        "challenge": util.b64_encode(secrets.token_bytes(16)),
+        "rpId": rp_id,
+        "allowCredentials": [
+            {"type": "public-key", "id": util.b64_encode(c)} for c in cred_ids
+        ],
+    }
+
+    print(
+        f"Sending {'same' if is_same_origin else 'cross'}-origin request for {origin} using options:"
+    )
+    pprint(options)
+    print()
+
+    req_json = json.dumps(options)
+    req = {
+        "type": Variant("s", "publicKey"),
+        "origin": Variant("s", origin),
+        "is_same_origin": Variant("b", is_same_origin),
+        "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
+    }
+
+    rsp = interface.call_get_credential_sync(req)
+    # print("Received response")
+    # pprint(rsp)
+    if rsp["type"].value != "public-key":
+        raise Exception(
+            f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
+        )
+
+    response_json = json.loads(
+        rsp["public_key"].value["authentication_response_json"].value
+    )
+    response_json['rawId'] = util.b64_decode(response_json['rawId'])
+
+    return webauthn.verify_get_response(response_json, options, origin, cred_lookup_fn)
 
 def connect_to_bus():
     global INTERFACE
@@ -185,21 +330,22 @@ def connect_to_bus():
 def setup_db():
     global DB
     # This is just for testing/temporary use, so put it in cache
-    path = (
+    db_path = (
         Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
         / "xyz.iinuwa.credentialsd.DemoCredentialsUi"
         / "users.db"
     )
-    print(path)
-    path.parent.mkdir(exist_ok=True)
-    DB = sqlite3.connect(path)
+    print(db_path)
+    db_path.parent.mkdir(exist_ok=True)
+
+    DB = sqlite3.connect(db_path)
     DB.execute("pragma foreign_keys = on")
     user_table_sql = """
         create table if not exists users (
               user_id integer primary key autoincrement
-            , username text
-            , user_handle blob unique
-            , created_date integer not null
+            , username text not null
+            , user_handle blob unique not null
+            , created_time integer not null
         )
         strict
     """

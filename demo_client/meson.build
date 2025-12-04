@@ -42,9 +42,7 @@ gui_sources = files(
   'util.py',
   'webauthn.py',
 )
-# fs.copyfile(gui_sources)
 
-# fs.copyfile()
 custom_target(
   'demo-gui',
   input: [gui_sources],
