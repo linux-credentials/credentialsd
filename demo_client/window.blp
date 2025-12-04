@@ -37,16 +37,16 @@ template $MyAppWindow: ApplicationWindow {
         Adw.ActionRow {
           title: "User Verification";
 
-          DropDown uv_prefs_dropdown {
-            model: bind template.uv_prefs;
+          DropDown uv_pref_dropdown {
+            model: bind template.uv_pref;
           }
         }
 
         Adw.ActionRow {
           title: "Discoverable Credential";
 
-          DropDown {
-            model: bind template.resident_credential_options;
+          DropDown discoverable_cred_pref_dropdown {
+            model: bind template.discoverable_cred_pref;
           }
         }
       }

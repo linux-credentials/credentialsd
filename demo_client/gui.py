@@ -24,6 +24,7 @@ from gi.repository import Gio, GObject, Gtk, Adw  # noqa: E402
 import webauthn  # noqa: E402
 import util  # noqa: E402
 
+
 def dbus_error_from_message(msg: Message):
     assert msg.message_type == MessageType.ERROR
     return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
@@ -48,8 +49,8 @@ class MainWindow(Gtk.ApplicationWindow):
     username = Gtk.Template.Child()
     make_credential_btn = Gtk.Template.Child()
     get_assertion_btn = Gtk.Template.Child()
-    resident_credential_options_list = ["preferred", "required", "discouraged"]
-    uv_prefs_dropdown = Gtk.Template.Child()
+    uv_pref_dropdown = Gtk.Template.Child()
+    discoverable_cred_pref_dropdown = Gtk.Template.Child()
     rp_id = "example.com"
     origin = "https://example.com"
     interface = None
@@ -58,7 +59,6 @@ class MainWindow(Gtk.ApplicationWindow):
         # Create a Builder
         builder = Gtk.Builder()
         builder.add_from_file("build/window.ui")
-        self.uv_prefs_list = Gtk.StringList()
         # Obtain and show the main window
         self.win = builder.get_object("main_window")
         self.win.set_application(
@@ -72,7 +72,9 @@ class MainWindow(Gtk.ApplicationWindow):
         now = math.floor(time.time())
         cur = DB.cursor()
         username = self.username.get_text()
-        cur.execute("select user_id, user_handle from users where username = ?", (username,))
+        cur.execute(
+            "select user_id, user_handle from users where username = ?", (username,)
+        )
         if row := cur.fetchone():
             user_id = row[0]
             user_handle = row[1]
@@ -80,12 +82,17 @@ class MainWindow(Gtk.ApplicationWindow):
         else:
             user_handle = secrets.token_bytes(16)
             user_id = None
-            print(f"user created for {username}: <id: {user_id}, handle: {user_handle}>")
+            print(
+                f"user created for {username}: <id: {user_id}, handle: {user_handle}>"
+            )
         options = self._get_registration_options(user_handle, username)
         print(f"registration options: {options}")
         auth_data = create_passkey(INTERFACE, self.origin, self.origin, options)
         if not user_id:
-            cur.execute("insert into users (username, user_handle, created_time) values (?, ?, ?)", (username, user_handle, now))
+            cur.execute(
+                "insert into users (username, user_handle, created_time) values (?, ?, ?)",
+                (username, user_handle, now),
+            )
             user_id = cur.lastrowid
         params = {
             "user_handle": user_handle,
@@ -125,66 +132,97 @@ class MainWindow(Gtk.ApplicationWindow):
                 cur.execute(sql, (username,))
                 user_creds = []
                 for row in cur.fetchall():
-                    [user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count] = row
+                    [
+                        user_handle,
+                        cred_id,
+                        backup_eligible,
+                        backup_state,
+                        pub_key,
+                        sign_count,
+                    ] = row
                     user_cred = {
-                        'user_handle': user_handle,
-                        'cred_id': cred_id,
-                        'backup_eligible': backup_eligible,
-                        'backup_state': backup_state,
-                        'pub_key': pub_key,
-                        'sign_count': sign_count,
+                        "user_handle": user_handle,
+                        "cred_id": cred_id,
+                        "backup_eligible": backup_eligible,
+                        "backup_state": backup_state,
+                        "pub_key": pub_key,
+                        "sign_count": sign_count,
                     }
                     user_creds.append(user_cred)
-                print(user_creds)
-            cred_ids = [c['cred_id'] for c in user_creds]
+            cred_ids = [c["cred_id"] for c in user_creds]
         else:
             print("using username-less flow")
             cred_ids = []
 
         options = self._get_authentication_options(cred_ids)
         print(f"authenticate clicked: {options}")
-        def retrieve_user_cred(user_handle: Optional[bytes], cred_id: bytes) -> Optional[dict]:
-            print(user_handle, cred_id)
+
+        def retrieve_user_cred(
+            user_handle: Optional[bytes], cred_id: bytes
+        ) -> Optional[dict]:
             with closing(DB.cursor()) as cur:
                 if username:
                     print("using cached user creds")
-                    return next((u for u in user_creds if u['cred_id'] == cred_id and (user_handle is None or user_handle == u['user_handle'])), None)
+                    return next(
+                        (
+                            u
+                            for u in user_creds
+                            if u["cred_id"] == cred_id
+                            and (user_handle is None or user_handle == u["user_handle"])
+                        ),
+                        None,
+                    )
                 else:
                     if not user_handle:
                         print("No user handle given, cannot look up user")
                         return None
                     sql = """
-                        select user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count
+                        select user_handle, cred_id, backup_eligible, backup_state, cose_pub_key, sign_count
                         from user_passkeys
                         where user_handle = ? and cred_id = ?
                     """
                     cur.execute(sql, (user_handle, cred_id))
                     if row := cur.fetchone():
-                        [user_handle, cred_id, backup_eligible, backup_state, pub_key, sign_count] = row
+                        [
+                            user_handle,
+                            cred_id,
+                            backup_eligible,
+                            backup_state,
+                            pub_key,
+                            sign_count,
+                        ] = row
                         user_cred = {
-                            'user_handle': user_handle,
-                            'cred_id': cred_id,
-                            'backup_eligible': backup_eligible,
-                            'backup_state': backup_state,
-                            'pub_key': pub_key,
-                            'sign_count': sign_count,
+                            "user_handle": user_handle,
+                            "cred_id": cred_id,
+                            "backup_eligible": backup_eligible,
+                            "backup_state": backup_state,
+                            "pub_key": pub_key,
+                            "sign_count": sign_count,
                         }
                         return user_cred
                     else:
                         return None
 
-        auth_data = get_passkey(INTERFACE, self.origin, self.origin, self.rp_id, cred_ids, retrieve_user_cred)
-        print("Received passkey", auth_data)
+        auth_data = get_passkey(
+            INTERFACE,
+            self.origin,
+            self.origin,
+            self.rp_id,
+            cred_ids,
+            retrieve_user_cred,
+        )
+        print("Received passkey:")
+        pprint(auth_data)
 
     @GObject.Property(type=Gtk.StringList)
-    def uv_prefs(self):
+    def uv_pref(self):
         model = Gtk.StringList()
         for o in ["preferred", "required", "discouraged"]:
             model.append(o)
         return model
 
     @GObject.Property(type=Gtk.StringList)
-    def resident_credential_options(self):
+    def discoverable_cred_pref(self):
         model = Gtk.StringList()
         for o in ["preferred", "required", "discouraged"]:
             model.append(o)
@@ -192,7 +230,10 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _get_registration_options(self, user_handle: bytes, username: str):
         username = self.username.get_text()
-        user_verification = self.uv_prefs_dropdown.get_selected_item().get_string()
+        user_verification = self.uv_pref_dropdown.get_selected_item().get_string()
+        resident_key = (
+            self.discoverable_cred_pref_dropdown.get_selected_item().get_string()
+        )
         options = {
             "challenge": util.b64_encode(secrets.token_bytes(16)),
             "rp": {
@@ -210,6 +251,9 @@ class MainWindow(Gtk.ApplicationWindow):
                 {"type": "public-key", "alg": -8},
             ],
             "userVerification": user_verification,
+            "authenticatorSelection": {
+                "residentKey": resident_key,
+            },
         }
 
         return options
@@ -243,7 +287,7 @@ def create_passkey(
     print(
         f"Sending {'same' if is_same_origin else 'cross'}-origin request for {origin} using options:"
     )
-    pprint(options)
+    # pprint(options)
     print()
 
     req_json = json.dumps(options)
@@ -268,9 +312,8 @@ def create_passkey(
     )
     return webauthn.verify_create_response(response_json, options, origin)
 
-def get_passkey(
-    interface, origin, top_origin, rp_id, cred_ids, cred_lookup_fn
-):
+
+def get_passkey(interface, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
     is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
@@ -283,7 +326,7 @@ def get_passkey(
     print(
         f"Sending {'same' if is_same_origin else 'cross'}-origin request for {origin} using options:"
     )
-    pprint(options)
+    # pprint(options)
     print()
 
     req_json = json.dumps(options)
@@ -305,9 +348,12 @@ def get_passkey(
     response_json = json.loads(
         rsp["public_key"].value["authentication_response_json"].value
     )
-    response_json['rawId'] = util.b64_decode(response_json['rawId'])
+    response_json["rawId"] = util.b64_decode(response_json["rawId"])
+    if user_handle := response_json["response"].get("userHandle"):
+        response_json["response"]["userHandle"] = util.b64_decode(user_handle)
 
     return webauthn.verify_get_response(response_json, options, origin, cred_lookup_fn)
+
 
 def connect_to_bus():
     global INTERFACE
@@ -335,7 +381,6 @@ def setup_db():
         / "xyz.iinuwa.credentialsd.DemoCredentialsUi"
         / "users.db"
     )
-    print(db_path)
     db_path.parent.mkdir(exist_ok=True)
 
     DB = sqlite3.connect(db_path)
