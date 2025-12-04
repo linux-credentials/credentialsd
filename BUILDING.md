@@ -14,9 +14,13 @@ should work.
 
 ## Package requirements
 
+To build, you need the following utility packages and development library packages.
+
 - GTK4
 - gettext
 - libdbus-1
+- libnfc
+- libpcsclite
 - libssl/openssl
 - libudev
 - desktop-file-utils
@@ -34,7 +38,7 @@ sudo apt update && sudo apt install \
   # Meson/Ninja dependencies
   meson ninja-build \
   # project dependencies
-  libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
+  libgtk-4-dev gettext libdbus-1-dev libnfc-dev libpcsclite-dev libssl-dev libudev-dev \
   # packaging dependencies
   desktop-file-utils \
   # web extension dependencies
@@ -51,7 +55,7 @@ sudo dnf install \
   # Meson/Ninja dependencies
   meson ninja-build \
   # project dependencies
-  gtk4-devel gettext dbus-devel openssl-devel systemd-udev \
+  gtk4-devel gettext dbus-devel libnfc-devel pcsc-lite-devel openssl-devel systemd-udev \
   # packaging dependencies
   desktop-file-utils \
   # web extension dependencies
