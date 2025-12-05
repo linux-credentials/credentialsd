@@ -7,7 +7,8 @@ use serde::{
     de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, LE, NoneValue, Optional, OwnedValue, SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields
+    self, Array, DeserializeDict, DynamicDeserialize, LE, NoneValue, Optional, OwnedValue,
+    SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
 use crate::model::{BackgroundEvent, Operation, RequestingApplication};
@@ -622,7 +623,7 @@ pub struct ViewRequest {
     pub requesting_app: RequestingApplication,
 
     /// Client window handle.
-    pub window_handle: WindowHandle,
+    pub window_handle: Optional<WindowHandle>,
 }
 
 #[derive(Type, PartialEq, Debug)]
@@ -643,33 +644,38 @@ impl NoneValue for WindowHandle {
 impl Serialize for WindowHandle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         serializer.serialize_str(&self.to_string())
     }
 }
 
-impl <'de> Deserialize<'de> for WindowHandle {
+impl<'de> Deserialize<'de> for WindowHandle {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de> {
-        deserializer.deserialize_str(WindowHandleVisitor { })
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(WindowHandleVisitor {})
     }
 }
 
 struct WindowHandleVisitor;
 
-impl <'de> Visitor<'de> for WindowHandleVisitor {
+impl<'de> Visitor<'de> for WindowHandleVisitor {
     type Value = WindowHandle;
 
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "a window handle formatted as `<window system>:<handle value>`")
+        write!(
+            f,
+            "a window handle formatted as `<window system>:<handle value>`"
+        )
     }
 
     fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error, {
-                v.try_into().map_err(E::custom)
-
+    where
+        E: serde::de::Error,
+    {
+        v.try_into().map_err(E::custom)
     }
 }
 
@@ -686,8 +692,8 @@ impl TryFrom<&str> for WindowHandle {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.split_once(':') {
-            Some(("x11", handle)) => { Ok(Self::X11(handle.to_string())) },
-            Some(("wayland", xid)) => { Ok(Self::Wayland(xid.to_string())) },
+            Some(("x11", handle)) => Ok(Self::X11(handle.to_string())),
+            Some(("wayland", xid)) => Ok(Self::Wayland(xid.to_string())),
             Some((window_system, _)) => Err(format!("Unknown windowing system: {window_system}")),
             None => Err("Invalid window handle string format".to_string()),
         }

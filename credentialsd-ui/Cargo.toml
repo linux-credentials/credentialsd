@@ -6,7 +6,7 @@ authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.
 license = "LGPL-3.0-only"
 
 [dependencies]
-ashpd = { version = "0.12.0", features = ["backend", "gtk4_wayland", "gtk4_x11", "wayland"] }
+ashpd = { version = "0.12.0", features = ["async-std", "backend", "gtk4_wayland", "gtk4_x11", "wayland"], default-features = false }
 async-std = { version = "1.13.1", features = ["unstable"] }
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"

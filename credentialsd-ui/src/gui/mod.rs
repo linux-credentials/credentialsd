@@ -1,10 +1,9 @@
 pub mod view_model;
 
-use std::str::FromStr;
 use std::thread;
 use std::{sync::Arc, thread::JoinHandle};
 
-use ashpd::{WindowIdentifier, WindowIdentifierType};
+use ashpd::{WindowIdentifierType};
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
 use credentialsd_common::server::ViewRequest;
@@ -29,9 +28,13 @@ fn run_gui<F: FlowController + Send + Sync + 'static>(
     flow_controller: Arc<AsyncMutex<F>>,
     request: ViewRequest,
 ) {
-    let parent_window = WindowIdentifierType::from_str(&request.window_handle.to_string())
-        .inspect_err(|err| tracing::warn!("Failed to parse parent window handle: {err}"))
-        .ok();
+    let parent_window: Option<WindowIdentifierType> =
+        request.window_handle.as_ref().and_then(|h| {
+            h.to_string()
+                .parse()
+                .inspect_err(|err| tracing::warn!("Failed to parse parent window handle: {err}"))
+                .ok()
+        });
 
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
