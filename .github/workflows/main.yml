@@ -21,7 +21,8 @@ jobs:
             curl git build-essential \
             libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
             libxml2-utils blueprint-compiler desktop-file-utils \
-            python3-pip ninja-build libnfc-dev libpcsclite-dev
+            python3-pip ninja-build libnfc-dev libpcsclite-dev \
+            libwayland-dev libx11-dev
       - name: Install Meson
         run: |
           # Newer version needed for --interactive flag needed below
