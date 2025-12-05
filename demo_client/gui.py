@@ -20,8 +20,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkWayland", "4.0")
+gi.require_version("GdkX11", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402,F401
+from gi.repository import GdkWayland, GdkX11, Gio, GObject, Gtk, Adw  # noqa: E402,F401
 
 import webauthn  # noqa: E402
 import util  # noqa: E402
@@ -95,11 +96,19 @@ class MainWindow(Gtk.ApplicationWindow):
 
         def cb(user_id, toplevel, handle):
             cur = DB.cursor()
-            window_handle = f"wayland:{handle}"
-            print(window_handle)
-            auth_data = create_passkey(
-                INTERFACE, window_handle, self.origin, self.origin, options
-            )
+            if isinstance(toplevel, GdkWayland.WaylandToplevel):
+                window_system = "wayland"
+            elif isinstance(toplevel, GdkX11.X11Surface):
+                window_system = "x11"
+            window_handle = f"{window_system}:{handle}"
+            try:
+                auth_data = create_passkey(
+                    INTERFACE, window_handle, self.origin, self.origin, options
+                )
+            except Exception as err:
+                print(err)
+                print("failed to add passkey")
+                return
             if not user_id:
                 cur.execute(
                     "insert into users (username, user_handle, created_time) values (?, ?, ?)",
@@ -132,7 +141,11 @@ class MainWindow(Gtk.ApplicationWindow):
             cur.close()
 
         toplevel = self.get_surface()
-        toplevel.export_handle(functools.partial(cb, user_id))
+        if isinstance(toplevel, GdkWayland.WaylandToplevel):
+            toplevel.export_handle(functools.partial(cb, user_id))
+        elif isinstance(toplevel, GdkX11.X11Surface):
+            xid = toplevel.get_xid()
+            cb(user_id, toplevel, xid)
         cur.close()
 
     @Gtk.Template.Callback()
@@ -222,26 +235,33 @@ class MainWindow(Gtk.ApplicationWindow):
                         return None
 
         def cb(toplevel, window_handle):
+            if isinstance(toplevel, GdkWayland.WaylandToplevel):
+                window_system = "wayland"
+            elif isinstance(toplevel, GdkX11.X11Surface):
+                window_system = "x11"
             print(f"received window handle: {window_handle}")
-            window_handle = f"wayland:{window_handle}"
+            portal_handle = f"{window_system}:{window_handle}"
 
             auth_data = get_passkey(
                 INTERFACE,
-                window_handle,
+                portal_handle,
                 self.origin,
                 self.origin,
                 self.rp_id,
                 cred_ids,
                 retrieve_user_cred,
             )
+            toplevel.unexport_handle(window_handle)
             print("Received passkey:")
             pprint(auth_data)
 
         toplevel = self.get_surface()
-        print(type(toplevel))
-        toplevel.export_handle(cb)
+        if isinstance(toplevel, GdkWayland.WaylandToplevel):
+            toplevel.export_handle(cb)
+        elif isinstance(toplevel, GdkX11.X11Surface):
+            xid = toplevel.get_xid()
+            cb(toplevel, xid)
         print("Waiting for handle to complete")
-        # event.wait()
 
     @GObject.Property(type=Gtk.StringList)
     def uv_pref(self):
