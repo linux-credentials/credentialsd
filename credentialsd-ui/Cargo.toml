@@ -5,8 +5,12 @@ edition = "2024"
 authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.sirringhaus@suse.com>", "Alfie Fresta <alfie.fresta@gmail.com>"]
 license = "LGPL-3.0-only"
 
+[features]
+default = ["wayland"]
+wayland = ["ashpd/gtk4_wayland", "ashpd/wayland"]
+
 [dependencies]
-ashpd = { version = "0.12.0", features = ["async-std", "backend", "gtk4_wayland", "gtk4_x11", "wayland"], default-features = false }
+ashpd = { version = "0.12.0", features = ["async-std", "backend"], default-features = false }
 async-std = { version = "1.13.1", features = ["unstable"] }
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"
