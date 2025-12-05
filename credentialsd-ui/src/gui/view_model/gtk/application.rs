@@ -1,3 +1,4 @@
+use ashpd::WindowIdentifierType;
 use async_std::channel::{Receiver, Sender};
 use tracing::{debug, info};
 
@@ -13,6 +14,7 @@ mod imp {
     use crate::gui::view_model::gtk::ModelState;
 
     use super::*;
+    use ashpd::WindowIdentifierType;
     use glib::{WeakRef, clone};
     use std::{
         cell::{OnceCell, RefCell},
@@ -23,6 +25,7 @@ mod imp {
     pub struct CredentialsUi {
         pub window: OnceCell<WeakRef<CredentialsUiWindow>>,
 
+        pub(super) parent_window: RefCell<Option<WindowIdentifierType>>,
         pub(super) tx: RefCell<Option<Sender<ViewEvent>>>,
         pub(super) rx: RefCell<Option<Receiver<ViewUpdate>>>,
     }
@@ -48,11 +51,16 @@ mod imp {
                 return;
             }
 
-            let tx = self.tx.take().expect("sender to be initiated");
-            let rx = self.rx.take().expect("receiver to be initiated");
+            let tx = self.tx.take().expect("sender to be initialized");
+            let rx = self.rx.take().expect("receiver to be initialized");
             let view_model = ViewModel::new(tx, rx);
             let vm2 = view_model.clone();
+
             let window = CredentialsUiWindow::new(&app, view_model);
+            if let Some(parent_window) = self.parent_window.borrow().as_ref() {
+                parent_window.set_parent_of(&window);
+            }
+
             let window2 = window.clone();
             vm2.clone().connect_completed_notify(move |vm| {
                 if vm.completed() {
@@ -157,7 +165,7 @@ impl CredentialsUi {
         ApplicationExtManual::run(self)
     }
 
-    pub(crate) fn new(tx: Sender<ViewEvent>, rx: Receiver<ViewUpdate>) -> Self {
+    pub(crate) fn new(parent_window: Option<WindowIdentifierType>, tx: Sender<ViewEvent>, rx: Receiver<ViewUpdate>) -> Self {
         let app: Self = glib::Object::builder()
             .property("application-id", APP_ID)
             .property(
@@ -165,6 +173,7 @@ impl CredentialsUi {
                 "/xyz/iinuwa/credentialsd/CredentialUI/",
             )
             .build();
+        app.imp().parent_window.replace(parent_window);
         app.imp().tx.replace(Some(tx));
         app.imp().rx.replace(Some(rx));
         app

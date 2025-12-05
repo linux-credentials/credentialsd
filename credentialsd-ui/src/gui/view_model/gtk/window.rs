@@ -1,13 +1,12 @@
 use std::cell::RefCell;
 
-use glib::Properties;
-use gtk::gdk::Texture;
+use gtk::{gdk, gio, glib};
+
 use gtk::subclass::prelude::*;
+
+use gdk::Texture;
+use glib::{clone, Properties};
 use gtk::{Picture, prelude::*};
-use gtk::{
-    gio,
-    glib::{self, clone},
-};
 
 use super::application::CredentialsUi;
 use super::{ViewModel, device::DeviceObject};
@@ -15,8 +14,6 @@ use crate::config::{APP_ID, PROFILE};
 use crate::gui::view_model::Transport;
 
 mod imp {
-    use gtk::Picture;
-
     use crate::gui::view_model::ViewEvent;
 
     use super::*;
@@ -134,7 +131,7 @@ mod imp {
 glib::wrapper! {
     pub struct CredentialsUiWindow(ObjectSubclass<imp::CredentialsUiWindow>)
         @extends gtk::Widget, gtk::Window, gtk::ApplicationWindow,
-        @implements gio::ActionMap, gio::ActionGroup, gtk::Root;
+        @implements gtk::Accessible, gio::ActionMap, gio::ActionGroup, gtk::Buildable, gtk::ConstraintTarget, gtk::Native, gtk::Root, gtk::ShortcutManager;
 
 }
 

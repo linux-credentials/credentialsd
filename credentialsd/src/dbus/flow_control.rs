@@ -8,7 +8,7 @@ use credentialsd_common::model::{
     BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError,
     RequestingApplication, WebAuthnError,
 };
-use credentialsd_common::server::{Device, RequestId};
+use credentialsd_common::server::{Device, RequestId, WindowHandle};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -46,6 +46,7 @@ pub async fn start_flow_control_service<
     Sender<(
         CredentialRequest,
         Option<RequestingApplication>, // Application name sending the request
+        Option<WindowHandle>, // Client window handle
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
@@ -70,10 +71,10 @@ pub async fn start_flow_control_service<
     let (initiator_tx, mut initiator_rx) = mpsc::channel(2);
     tokio::spawn(async move {
         let svc = svc2;
-        while let Some((msg, requesting_app, tx)) = initiator_rx.recv().await {
+        while let Some((msg, requesting_app, window_handle, tx)) = initiator_rx.recv().await {
             svc.lock()
                 .await
-                .init_request(&msg, requesting_app, tx)
+                .init_request(&msg, requesting_app, window_handle, tx)
                 .await;
         }
     });
@@ -370,6 +371,7 @@ pub trait CredentialRequestController {
         &self,
         requesting_app: Option<RequestingApplication>,
         request: CredentialRequest,
+        window_handle: Option<WindowHandle>,
     ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
 }
 
@@ -377,6 +379,7 @@ pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
         Option<RequestingApplication>, // Application name sending the request
+        Option<WindowHandle>, // Client window handle,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }
@@ -386,10 +389,11 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         &self,
         requesting_app: Option<RequestingApplication>,
         request: CredentialRequest,
+        window_handle: Option<WindowHandle>,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
         self.initiator
-            .send((request, requesting_app, tx))
+            .send((request, requesting_app, window_handle, tx))
             .await
             .unwrap();
         let response = rx.await.map_err(|_| {

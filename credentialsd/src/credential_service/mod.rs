@@ -24,7 +24,7 @@ use credentialsd_common::{
         CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
         RequestingApplication, Transport,
     },
-    server::{RequestId, ViewRequest},
+    server::{RequestId, ViewRequest, WindowHandle},
 };
 
 use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
@@ -101,6 +101,7 @@ impl<
         &self,
         request: &CredentialRequest,
         requesting_app: Option<RequestingApplication>,
+        window_handle: Option<WindowHandle>,
         tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
         let request_id = {
@@ -135,6 +136,7 @@ impl<
             id: request_id,
             rp_id,
             requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
+            window_handle: window_handle.into()
         };
 
         let launch_ui_response = self
@@ -434,7 +436,7 @@ mod test {
                 cred_service
                     .lock()
                     .await
-                    .init_request(&request, None, request_tx)
+                    .init_request(&request, None, None, request_tx)
                     .await;
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)
