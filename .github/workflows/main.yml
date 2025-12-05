@@ -20,7 +20,7 @@ jobs:
           sudo apt install -y --no-install-recommends \
             curl git build-essential \
             libgtk-4-dev gettext libdbus-1-dev libssl-dev libudev-dev \
-            libxml2-utils desktop-file-utils \
+            libxml2-utils blueprint-compiler desktop-file-utils \
             python3-pip ninja-build libnfc-dev libpcsclite-dev
       - name: Install Meson
         run: |

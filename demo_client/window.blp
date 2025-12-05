@@ -1,0 +1,55 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $MyAppWindow: ApplicationWindow {
+  default-width: 600;
+  default-height: 300;
+  title: _("Hello, Blueprint!");
+
+  Box {
+    orientation: vertical;
+    margin-start: 100;
+    margin-end: 100;
+
+    Entry username {
+      placeholder-text: _("Enter your username");
+    }
+
+    Box {
+      orientation: horizontal;
+
+      Button make_credential_btn {
+        label: "Register";
+        clicked => $on_register();
+      }
+
+      Button get_assertion_btn {
+        label: "Authenticate";
+        clicked => $on_authenticate();
+      }
+    }
+
+    Adw.ExpanderRow {
+      title: "Settings";
+      margin-top: 50;
+
+      Adw.PreferencesGroup {
+        Adw.ActionRow {
+          title: "User Verification";
+
+          DropDown uv_pref_dropdown {
+            model: bind template.uv_pref;
+          }
+        }
+
+        Adw.ActionRow {
+          title: "Discoverable Credential";
+
+          DropDown discoverable_cred_pref_dropdown {
+            model: bind template.discoverable_cred_pref;
+          }
+        }
+      }
+    }
+  }
+}

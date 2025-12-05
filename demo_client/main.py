@@ -75,6 +75,8 @@ async def run(cmd):
     elif cmd == "get":
         user_data = json.load(open("./user.json", "r"))
         cred_id = util.b64_decode(user_data["cred_id"])
+        user_data["cred_id"] = cred_id
+        user_data["pub_key"] = util.b64_decode(user_data["pub_key"])
         try:
             auth_data = await get_passkey(
                 interface, origin, top_origin, rp_id, cred_id, user_data
@@ -224,8 +226,14 @@ async def get_passkey(
     response_json = json.loads(
         rsp["public_key"].value["authentication_response_json"].value
     )
-    print(user)
-    return webauthn.verify_get_response(response_json, options, origin, user, None)
+    response_json["rawId"] = util.b64_decode(response_json["rawId"])
+    if user_handle_b64 := response_json["response"]["userHandle"]:
+        response_json["response"]["userHandle"] = util.b64_decode(user_handle_b64)
+
+    def lookup_fn(user_handle, cred_id):
+        return user
+
+    return webauthn.verify_get_response(response_json, options, origin, lookup_fn)
 
 
 def main():
@@ -313,7 +321,7 @@ class VerificationTests(unittest.TestCase):
         expected_origin = "https://example.com"
 
         auth_data = webauthn.verify_get_response(
-            response, options, "https://example.com", user, None
+            response, options, expected_origin, user, None
         )
         self.assertTrue(auth_data.has_flag("UV"))
         self.assertFalse(auth_data.has_flag("BS"))
