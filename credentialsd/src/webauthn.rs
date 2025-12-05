@@ -678,16 +678,76 @@ pub fn create_client_data_hash(json: &str) -> Vec<u8> {
         .to_owned()
 }
 
-pub fn format_client_data_json(
-    op: Operation,
-    challenge: &str,
-    origin: &str,
-    is_cross_origin: bool,
-) -> String {
+pub fn format_client_data_json(op: Operation, challenge: &str, origin: &Origin) -> String {
     let op_str = match op {
         Operation::Create => "webauthn.create",
         Operation::Get => "webauthn.get",
     };
-    let cross_origin_str = if is_cross_origin { "true" } else { "false" };
-    format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
+    let mut client_data_json = format!(
+        r#"{{"type":"{}","challenge":"{}","origin":"{}""#,
+        op_str,
+        challenge,
+        origin.origin()
+    );
+    if let Some(top_origin) = origin.top_origin() {
+        client_data_json.push_str(&format!(
+            r#","crossOrigin":true,"topOrigin":{top_origin}}}"#
+        ));
+    } else {
+        client_data_json.push_str(r#","crossOrigin":false}"#);
+    }
+    client_data_json
+}
+
+pub(crate) enum Origin {
+    AppId(String),
+    SameOrigin(String),
+    CrossOrigin((String, String)),
+}
+
+impl Origin {
+    pub(crate) fn origin(&self) -> &str {
+        &match self {
+            Origin::AppId(app_id) => app_id,
+            Origin::SameOrigin(origin) => origin,
+            Origin::CrossOrigin((origin, _)) => origin,
+        }
+    }
+
+    pub(crate) fn top_origin(&self) -> Option<&str> {
+        match self {
+            Origin::AppId(_) => None,
+            Origin::SameOrigin(_) => None,
+            Origin::CrossOrigin((_, ref top_origin)) => Some(top_origin),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_client_data_json, Operation, Origin};
+    #[test]
+    fn test_same_origin_client_data_json_str() {
+        let expected = r#"{"type":"webauthn.create","challenge":"abcd","origin":"https://example.com","crossOrigin":false}"#;
+        let json = format_client_data_json(
+            Operation::Create,
+            "abcd",
+            &Origin::SameOrigin("https://example.com".to_string()),
+        );
+        assert_eq!(expected, json);
+    }
+
+    #[test]
+    fn test_cross_origin_client_data_json_str() {
+        let expected = r#"{"type":"webauthn.create","challenge":"abcd","origin":"https://example.com","crossOrigin":true,"topOrigin":"https://example.org}"#;
+        let json = format_client_data_json(
+            Operation::Create,
+            "abcd",
+            &Origin::CrossOrigin((
+                "https://example.com".to_string(),
+                "https://example.org".to_string(),
+            )),
+        );
+        assert_eq!(expected, json);
+    }
 }

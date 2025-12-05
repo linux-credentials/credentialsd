@@ -36,6 +36,14 @@ fn run_gui<F: FlowController + Send + Sync + 'static>(
                 .ok()
         });
 
+    tracing::debug!("YO? {parent_window:?}");
+
+    if let Some(WindowIdentifierType::X11(_)) = parent_window {
+        // SAFETY: running this in a single thread
+        unsafe { std::env::set_var("GDK_BACKEND", "x11"); }
+        tracing::debug!("Set GDK_BACKEND to x11");
+    }
+
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
     let event_loop = async_std::task::spawn(async move {

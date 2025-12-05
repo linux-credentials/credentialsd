@@ -20,13 +20,14 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkWayland", "4.0")
+gi.require_version("GdkX11", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402
+from gi.repository import GdkWayland, GdkX11, Gio, GObject, Gtk, Adw  # noqa: E402
 
 import webauthn  # noqa: E402
 import util  # noqa: E402
 
-
+APP_ID = "xyz.iinuwa.credentialsd.DemoCredentialsUi"
 def dbus_error_from_message(msg: Message):
     assert msg.message_type == MessageType.ERROR
     return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
@@ -92,10 +93,22 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         options = self._get_registration_options(user_handle, username)
         print(f"registration options: {options}")
+
         def cb(user_id, toplevel, handle):
             cur = DB.cursor()
-            window_handle = "wayland:{handle}"
-            auth_data = create_passkey(INTERFACE, window_handle, self.origin, self.origin, options)
+            if isinstance(toplevel, GdkWayland.WaylandToplevel):
+                window_system = "wayland"
+            elif isinstance(toplevel, GdkX11.X11Surface):
+                window_system = "x11"
+            window_handle = f"{window_system}:{handle}"
+            try:
+                auth_data = create_passkey(
+                    INTERFACE, window_handle, self.origin, self.origin, options
+                )
+            except Exception as err:
+                print(err)
+                print("failed to add passkey")
+                return
             if not user_id:
                 cur.execute(
                     "insert into users (username, user_handle, created_time) values (?, ?, ?)",
@@ -106,7 +119,9 @@ class MainWindow(Gtk.ApplicationWindow):
                 "user_handle": user_handle,
                 "cred_id": auth_data.cred_id,
                 "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
-                "sign_count": None if auth_data.sign_count == 0 else auth_data.sign_count,
+                "sign_count": None
+                if auth_data.sign_count == 0
+                else auth_data.sign_count,
                 "backup_eligible": 1 if "BE" in auth_data.flags else 0,
                 "backup_state": 1 if "BS" in auth_data.flags else 0,
                 "uv_initialized": 1 if "UV" in auth_data.flags else 0,
@@ -124,8 +139,13 @@ class MainWindow(Gtk.ApplicationWindow):
             print("Added passkey")
             DB.commit()
             cur.close()
+
         toplevel = self.get_surface()
-        toplevel.export_handle(functools.partial(cb, user_id))
+        if isinstance(toplevel, GdkWayland.WaylandToplevel):
+            toplevel.export_handle(functools.partial(cb, user_id))
+        elif isinstance(toplevel, GdkX11.X11Surface):
+            xid = toplevel.get_xid()
+            cb(user_id, toplevel, xid)
         cur.close()
 
     @Gtk.Template.Callback()
@@ -213,25 +233,37 @@ class MainWindow(Gtk.ApplicationWindow):
                         return user_cred
                     else:
                         return None
+
         def cb(toplevel, window_handle):
+            if isinstance(toplevel, GdkWayland.WaylandToplevel):
+                window_system = "wayland"
+            elif isinstance(toplevel, GdkX11.X11Surface):
+                window_system = "x11"
             print(f"received window handle: {window_handle}")
-            window_handle = f"wayland:{window_handle}"
+            portal_handle = f"{window_system}:{window_handle}"
 
             auth_data = get_passkey(
                 INTERFACE,
-                window_handle,
+                portal_handle,
                 self.origin,
                 self.origin,
                 self.rp_id,
                 cred_ids,
                 retrieve_user_cred,
             )
+            toplevel.unexport_handle(window_handle)
             print("Received passkey:")
             pprint(auth_data)
 
         toplevel = self.get_surface()
-        print(type(toplevel))
-        toplevel.export_handle(cb)
+        # dir(GdkWayland)
+        # print(type(toplevel))
+        # print(dir(toplevel))
+        if isinstance(toplevel, GdkWayland.WaylandToplevel):
+            toplevel.export_handle(cb)
+        elif isinstance(toplevel, GdkX11.X11Surface):
+            xid = toplevel.get_xid()
+            cb(toplevel, xid)
         print("Waiting for handle to complete")
         # event.wait()
 
@@ -302,7 +334,11 @@ class MyApp(Adw.Application):
 
 
 def create_passkey(
-    interface: ProxyInterface, window_handle: str, origin: str, top_origin: str, options: dict
+    interface: ProxyInterface,
+    window_handle: str,
+    origin: str,
+    top_origin: str,
+    options: dict,
 ) -> webauthn.AuthenticatorData:
     is_same_origin = origin == top_origin
     print(
@@ -319,10 +355,10 @@ def create_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_create_credential_sync([window_handle, req])
+    rsp = interface.call_create_credential_sync("/org/freedesktop/portal/request/1_000/token", APP_ID, "Demo Credentials UI", window_handle, origin, top_origin or "", req, {})
 
-    # print("Received response")
-    # pprint(rsp)
+    print("Received response")
+    pprint(rsp)
     if rsp["type"].value != "public-key":
         raise Exception(
             f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
@@ -334,7 +370,9 @@ def create_passkey(
     return webauthn.verify_create_response(response_json, options, origin)
 
 
-def get_passkey(interface, window_handle, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
+def get_passkey(
+    interface, window_handle, origin, top_origin, rp_id, cred_ids, cred_lookup_fn
+):
     is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
@@ -380,18 +418,17 @@ def connect_to_bus():
     global INTERFACE
     bus = MessageBus().connect_sync()
 
-    with open(
-        f"{os.path.dirname(os.path.realpath(__file__))}/xyz.iinuwa.credentialsd.Credentials.xml",
-        "r",
-    ) as f:
+    # file = f"{os.path.dirname(os.path.realpath(__file__))}/xyz.iinuwa.credentialsd.Credentials.xml",
+    file = f"{os.path.dirname(os.path.realpath(__file__))}/../../../../portal/xdg-desktop-portal/data/org.freedesktop.impl.portal.CredentialsX.xml"
+    with open(file, "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(
         "xyz.iinuwa.credentialsd.Credentials",
-        "/xyz/iinuwa/credentialsd/Credentials",
+        "/org/freedesktop/portal/desktop",
         introspection,
     )
-    INTERFACE = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
+    INTERFACE = proxy_object.get_interface("org.freedesktop.impl.portal.CredentialsX")
 
 
 def setup_db():
@@ -441,7 +478,7 @@ def main():
     connect_to_bus()
     setup_db()
 
-    app = MyApp(application_id="xyz.iinuwa.credentialsd.DemoCredentialsUi")
+    app = MyApp(application_id=APP_ID)
     app.run(sys.argv)
     DB.close()
 

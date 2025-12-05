@@ -97,8 +97,8 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreateCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
+    // pub origin: Option<String>,
+    // pub is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     pub r#type: String,
     #[zvariant(rename = "publicKey")]
@@ -231,8 +231,8 @@ impl TryFrom<&Value<'_>> for crate::model::Error {
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct GetCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
+    // pub origin: Option<String>,
+    // pub is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     pub r#type: String,
     #[zvariant(rename = "publicKey")]
@@ -691,9 +691,10 @@ impl TryFrom<&str> for WindowHandle {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
+        println!("{value}");
         match value.split_once(':') {
-            Some(("x11", handle)) => Ok(Self::X11(handle.to_string())),
-            Some(("wayland", xid)) => Ok(Self::Wayland(xid.to_string())),
+            Some(("x11", xid)) => Ok(Self::X11(xid.to_string())),
+            Some(("wayland", handle)) => Ok(Self::Wayland(handle.to_string())),
             Some((window_system, _)) => Err(format!("Unknown windowing system: {window_system}")),
             None => Err("Invalid window handle string format".to_string()),
         }

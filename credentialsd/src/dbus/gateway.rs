@@ -1,7 +1,7 @@
 //! Implements the service that public clients can connect to. Responsible for
 //! authorizing clients for origins and validating request parameters.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use credentialsd_common::{
     model::{
@@ -15,18 +15,26 @@ use credentialsd_common::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    Connection, DBusError, fdo, interface, message::Header, names::{BusName, UniqueName}, zvariant::Optional
+    fdo, interface,
+    message::Header,
+    names::{BusName, UniqueName},
+    zvariant::{ObjectPath, Optional, OwnedValue, Value},
+    Connection, DBusError,
 };
 
-use crate::dbus::{
-    create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
-    get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
-    CredentialRequestController,
+use crate::{
+    dbus::{
+        create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
+        get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
+        CredentialRequestController,
+    },
+    webauthn::Origin,
 };
 use std::os::fd::AsRawFd;
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
-pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
+// pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
+pub const SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
 pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'static>(
     controller: C,
@@ -53,7 +61,7 @@ struct CredentialGateway<C: CredentialRequestController> {
 async fn query_peer_pid_via_fdinfo(
     connection: &Connection,
     sender_unique_name: &UniqueName<'_>,
-) -> Option<u32> {
+) -> Option<(u32, Option<u32>)> {
     let dbus_proxy = match zbus::fdo::DBusProxy::new(connection).await {
         Ok(p) => p,
         Err(e) => {
@@ -109,7 +117,11 @@ async fn query_peer_pid_via_fdinfo(
         }
     };
 
-    Some(pid)
+    let pidns: Option<u32> = fdinfo_str
+        .lines()
+        .find(|line| line.starts_with("NSPid:\t"))
+        .and_then(|line| line["NSPid:\t".len()..].parse().ok());
+    Some((pid, pidns))
 }
 
 async fn query_peer_pid_via_dbus(
@@ -165,7 +177,9 @@ async fn query_connection_peer_binary(
     // Get the senders PID.
     //
     // First, try to get the PID via the more secure fdinfo
-    let mut pid = query_peer_pid_via_fdinfo(connection, sender_unique_name).await;
+    let mut pid = query_peer_pid_via_fdinfo(connection, sender_unique_name)
+        .await
+        .map(|(pid, _pidns)| pid);
     // If that fails, we fall back to asking dbus directly for the peers PID
     if pid.is_none() {
         pid = query_peer_pid_via_dbus(connection, sender_unique_name).await;
@@ -204,35 +218,67 @@ async fn query_connection_peer_binary(
     tracing::debug!("Request is from: {exe_path:?}");
 
     Some(RequestingApplication {
-        name: command_name,
-        path: exe_path,
+        name: Some(command_name).into(),
+        path: exe_path.to_string_lossy().to_string(),
         pid,
     })
 }
 
+async fn should_trust_app_id(connection: &Connection, header: &Header<'_>) -> bool {
+    if let Some(unique_name) = header.sender() {
+        if let Some((pid, None)) = query_peer_pid_via_fdinfo(connection, unique_name).await {
+            if let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{pid}/exe")).await {
+                tracing::debug!(?exe_path, %pid, "Found executable path:");
+                let trusted_callers = ["/usr/bin/xdg-desktop-portal"];
+                // return trusted_callers.contains(exe_path).ends_with("xdg-desktop-portal");
+                return exe_path.ends_with("xdg-desktop-portal");
+            };
+        }
+    }
+    false
+}
+
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
-#[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
+// #[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
+#[interface(name = "org.freedesktop.impl.portal.CredentialsX")]
 impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C> {
     async fn create_credential(
         &self,
-        #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
+        claimed_app_id: String,
+        app_display_name: Optional<String>,
         parent_window: Optional<WindowHandle>,
+        origin: Optional<String>,
+        top_origin: Optional<String>,
         request: CreateCredentialRequest,
+        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
     ) -> Result<CreateCredentialResponse, Error> {
-        let (_origin, is_same_origin, _top_origin) =
-            check_origin(request.origin.as_deref(), request.is_same_origin)
-                .await
-                .map_err(Error::from)?;
+        // TODO: should also verify app_display_name, or look it up with app_id after validation.
+        let app_id = get_app_id(connection, &header, &claimed_app_id).await?;
+        let requesting_app = Some(RequestingApplication {
+            name: app_display_name,
+            path: app_id.clone(),
+            pid: 0,
+        });
+        let origin = check_origin(
+            &app_id,
+            origin
+                .as_deref()
+                .map(|o| (o, top_origin.as_deref().into()))
+                .into(),
+        )
+        .map_err(Error::from)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            if !is_same_origin {
+            if let Origin::CrossOrigin(_) = origin {
                 // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
                 // We should still reject cross-origin requests for conditionally-mediated requests.
                 tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
                 return Err(WebAuthnError::NotAllowedError.into());
             }
             let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request).map_err(|e| {
+                create_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
                     if let WebAuthnError::TypeError = e {
                         tracing::error!(
                             "Could not parse passkey creation request. Rejecting request."
@@ -245,7 +291,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 return Err(Error::NotSupportedError);
             }
             // Find out where this request is coming from (which application is requesting this)
-            let requesting_app = query_connection_peer_binary(header, connection).await;
+            // let requesting_app = query_connection_peer_binary(header, connection).await;
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
 
@@ -282,17 +328,28 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
 
     async fn get_credential(
         &self,
-        #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
+        claimed_app_id: String,
+        app_display_name: Optional<String>,
+        origin: Optional<String>,
+        top_origin: Optional<String>,
         request: GetCredentialRequest,
+        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
     ) -> Result<GetCredentialResponse, Error> {
-        let (_origin, is_same_origin, _top_origin) =
-            check_origin(request.origin.as_deref(), request.is_same_origin)
-                .await
-                .map_err(Error::from)?;
+        let app_id = get_app_id(connection, &header, &claimed_app_id).await?;
+        let origin = check_origin(
+            &app_id,
+            origin
+                .as_deref()
+                .map(|o| (o, top_origin.as_deref().into()))
+                .into(),
+        )
+        .map_err(Error::from)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            if !is_same_origin {
+            if let Origin::CrossOrigin(_) = origin {
                 // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
                 tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
                 return Err(WebAuthnError::NotAllowedError.into());
@@ -306,7 +363,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request).map_err(|e| {
+                get_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
                     tracing::error!("Could not parse passkey assertion request: {e:?}");
                     WebAuthnError::TypeError
                 })?;
@@ -360,32 +417,55 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
     }
 }
 
-async fn check_origin(
-    origin: Option<&str>,
-    is_same_origin: Option<bool>,
-    // TODO: Replace is_same_origin with explicit top_origin
-    // top_origin: Option<&str>,
-) -> Result<(String, bool, String), WebAuthnError> {
-    let origin = if let Some(origin) = origin {
-        origin.to_string()
-    } else {
-        tracing::warn!(
-            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
-        );
-        return Err(WebAuthnError::SecurityError);
-    };
-    if !origin.starts_with("https://") {
-        tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
-        return Err(WebAuthnError::SecurityError);
+async fn get_app_id(
+    connection: &Connection,
+    header: &Header<'_>,
+    claimed_app_id: &str,
+) -> Result<String, Error> {
+    /*
+    if claimed_app_id.is_empty() || !should_trust_app_id(connection, &header).await {
+        tracing::warn!("App ID could not be determined. Rejecting request.");
+        return Err(Error::SecurityError);
     }
-    let is_same_origin = is_same_origin.unwrap_or(false);
-    let top_origin = if is_same_origin {
-        origin.clone()
-    } else {
+    */
+    Ok(format!("app:{claimed_app_id}"))
+}
+
+fn check_origin<'a>(
+    app_id: &str,
+    client_context: Option<(&str, Option<&str>)>,
+) -> Result<Origin, WebAuthnError> {
+    let trusted_clients = [
+        "org.mozilla.firefox",
+        "xyz.iinuwa.credentialsd.DemoCredentialsUi",
+    ];
+    let is_privileged_client = trusted_clients.contains(&app_id.as_ref());
+    let origin = match (is_privileged_client, client_context) {
+        (true, Some((origin, top_origin))) => {
+            if !origin.starts_with("https://") {
+                tracing::warn!(
+                    "Caller requested non-HTTPS schemed origin, which is not supported."
+                );
+                return Err(WebAuthnError::SecurityError);
+            }
+            if let Some(top_origin) = top_origin {
+                if origin == top_origin {
+                    Origin::SameOrigin(origin.to_string())
+                } else {
+                    Origin::CrossOrigin((origin.to_string(), top_origin.to_string()))
+                }
+            } else {
+                Origin::SameOrigin(origin.to_string())
+            }
+        }
+        _ => Origin::AppId(app_id.to_string()),
+    };
+
+    if let Origin::CrossOrigin(_) = origin {
         tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
         return Err(WebAuthnError::NotAllowedError);
     };
-    Ok((origin, true, top_origin))
+    Ok(origin)
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -447,21 +527,21 @@ impl From<WebAuthnError> for Error {
 
 #[cfg(test)]
 mod test {
-    use std::future::Future;
-
     use credentialsd_common::model::WebAuthnError;
 
-    use crate::dbus::gateway::check_origin;
+    use crate::{dbus::gateway::check_origin, webauthn::Origin};
 
-    #[tokio::test]
-    async fn test_only_https_origins() {
-        let check = |origin: &'static str| async { check_origin(Some(origin), Some(true)).await };
+    #[test]
+    fn test_only_https_origins() {
+        let check = |origin: &'static str| {
+            check_origin("org.mozilla.firefox", Some((origin, Some(origin))))
+        };
         assert!(matches!(
-            check("https://example.com").await,
-            Ok((o, ..)) if o == "https://example.com"
+            check("https://example.com"),
+            Ok(Origin::SameOrigin(o)) if o == "https://example.com"
         ));
         assert!(matches!(
-            check("http://example.com").await,
+            check("http://example.com"),
             Err(WebAuthnError::SecurityError)
         ));
     }

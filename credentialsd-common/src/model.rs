@@ -1,7 +1,7 @@
 use std::{fmt::Display, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use zvariant::{SerializeDict, Type};
+use zvariant::{Optional, SerializeDict, Type};
 
 pub use libwebauthn::ops::webauthn::{
     Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
@@ -172,8 +172,8 @@ impl Transport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
 pub struct RequestingApplication {
-    pub name: String,
-    pub path: PathBuf,
+    pub name: Optional<String>,
+    pub path: String,
     pub pid: u32,
 }
 

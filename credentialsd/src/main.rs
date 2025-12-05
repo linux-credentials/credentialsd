@@ -31,8 +31,9 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn Error>> {
     print!("Connecting to D-Bus as client...\t");
     let dbus_client_conn = zbus::connection::Builder::session()?.build().await?;
-    println!(" ✅");
+    let server_conn = dbus_client_conn.clone();
 
+    println!(" ✅");
     print!("Starting D-Bus UI -> Credential control service...");
     let ui_controller = UiControlServiceClient::new(dbus_client_conn);
     let credential_service = CredentialService::new(
@@ -49,6 +50,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let initiator = CredentialRequestControllerClient { initiator };
     let _gateway_conn = dbus::start_gateway(initiator).await?;
     println!(" ✅");
+
+    // print!("Starting CredentialsX portal");
+    // server_conn.request_name("org.freedesktop.impl.portal.CredentialsX").await?;
+    // println!(" ✅");
 
     println!("Waiting for messages...");
     loop {

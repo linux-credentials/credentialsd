@@ -136,7 +136,7 @@ impl<
             id: request_id,
             rp_id,
             requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
-            window_handle: window_handle.into()
+            window_handle: window_handle.into(),
         };
 
         let launch_ui_response = self
@@ -389,7 +389,7 @@ mod test {
     use crate::{
         credential_service::usb::InProcessUsbHandler,
         dbus::test::{DummyFlowServer, DummyUiServer},
-        webauthn,
+        webauthn::{self, Origin},
     };
     use credentialsd_common::model::{CredentialRequest, MakeCredentialRequest, Operation};
 
@@ -454,8 +454,7 @@ mod test {
         let client_data_json = webauthn::format_client_data_json(
             Operation::Create,
             challenge,
-            &origin,
-            is_cross_origin,
+            &Origin::SameOrigin("https://webauthn.io".to_string()),
         );
         let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
         let make_request = MakeCredentialRequest {
