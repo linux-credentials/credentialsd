@@ -319,7 +319,7 @@ def create_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_create_credential_sync([req, window_handle])
+    rsp = interface.call_create_credential_sync([window_handle, req])
 
     # print("Received response")
     # pprint(rsp)
@@ -358,7 +358,7 @@ def get_passkey(interface, window_handle, origin, top_origin, rp_id, cred_ids, c
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_get_credential_sync([req, window_handle])
+    rsp = interface.call_get_credential_sync([window_handle, req])
     # print("Received response")
     # pprint(rsp)
     if rsp["type"].value != "public-key":

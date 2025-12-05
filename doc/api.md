@@ -153,6 +153,21 @@ it would pass this request to this API:
 }
 ```
 
+## Window Identifiers
+
+For window identifiers, we follow the same format as the
+[XDG Desktop Portal conventions for window identifiers][xdg-window-identifiers].
+
+Where a `parent_window` is specified, the value should be a string in the format:
+
+`<window_system>:<handle>`
+
+The supported window systems are `wayland` and `x11`.
+
+If the client does not have a window or cannot access it, pass an empty string.
+
+[xdg-window-identifiers]: https://flatpak.github.io/xdg-desktop-portal/docs/window-identifiers.html
+
 # Gateway API
 
 The Gateway is the entrypoint for public clients to retrieve and store
@@ -174,13 +189,18 @@ for what kind of credential the client would like to create.
 ### Request
 
 ```
-CreateCredentialRequest[a{sv}] {
-    origin: string
-    is_same_origin: string
-    type: CredentialType
-    <extra_fields>
-}
+CreateCredentialRequest(
+    IN parent_window s,
+    IN options a{sv} {
+        origin: string
+        is_same_origin: string
+        type: CredentialType
+        <extra_fields>
+    }
+)
 ```
+
+For information on `parent_window`, see [Window Identifiers](#window-identifiers).
 
 > TODO: We should make this a tagged enum
 
@@ -287,12 +307,17 @@ credentials the client will accept.
 ### Request
 
 ```
-GetCredentialRequest[a{sv}] {
-    origin: string
-    is_same_origin: string
-    publicKey: GetPublicKeyCredentialOptions?
-}
+GetCredentialRequest (
+    IN parent_window s
+    IN options a{sv} {
+        origin: string
+        is_same_origin: string
+        publicKey: GetPublicKeyCredentialOptions?
+    }
+)
 ```
+
+For information on `parent_window`, see [Window Identifiers](#window-identifiers).
 
 Note that while only one credential type can be specified in
 `CreateCredential()`, credential types in this `GetCredential()` are not mutually
