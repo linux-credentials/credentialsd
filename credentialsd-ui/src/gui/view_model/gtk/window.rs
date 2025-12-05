@@ -217,9 +217,6 @@ impl CredentialsUiWindow {
         imp.settings.set_int("window-width", width)?;
         imp.settings.set_int("window-height", height)?;
 
-        imp.settings
-            .set_boolean("is-maximized", self.is_maximized())?;
-
         Ok(())
     }
 
@@ -228,12 +225,7 @@ impl CredentialsUiWindow {
 
         let width = imp.settings.int("window-width");
         let height = imp.settings.int("window-height");
-        let is_maximized = imp.settings.boolean("is-maximized");
 
         self.set_default_size(width, height);
-
-        if is_maximized {
-            self.maximize();
-        }
     }
 }
