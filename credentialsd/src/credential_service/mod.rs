@@ -377,6 +377,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 mod test {
     use std::{sync::Arc, time::Duration};
 
+    use base64::Engine as _;
     use libwebauthn::{
         ops::webauthn::{
             MakeCredentialRequest, ResidentKeyRequirement, UserVerificationRequirement,
@@ -395,6 +396,7 @@ mod test {
         webauthn,
     };
     use credentialsd_common::model::Operation;
+    use credentialsd_common::model::{CredentialRequest, MakeCredentialRequest};
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
@@ -454,16 +456,14 @@ mod test {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
         let origin = "webauthn.io".to_string();
         let is_cross_origin = false;
-        let client_data_json = webauthn::format_client_data_json(
-            Operation::Create,
-            challenge,
-            &origin,
-            is_cross_origin,
-        );
-        let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
+        // Decode the challenge from base64url
+        let challenge_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(challenge)
+            .expect("valid base64url challenge");
         let make_request = MakeCredentialRequest {
-            hash: client_data_hash,
-            origin: "webauthn.io".to_string(),
+            challenge: challenge_bytes,
+            origin: origin.clone(),
+            cross_origin: Some(is_cross_origin),
             relying_party: Ctap2PublicKeyCredentialRpEntity {
                 id: "webauthn.io".to_string(),
                 name: Some("webauthn.io".to_string()),

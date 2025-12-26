@@ -1,31 +1,14 @@
-use std::{collections::HashMap, time::Duration};
-
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use libwebauthn::{
-    ops::webauthn::{CredentialProtectionPolicy, MakeCredentialLargeBlobExtension},
-    proto::ctap2::{
-        Ctap2AttestationStatement, Ctap2CredentialType, Ctap2PublicKeyCredentialType,
-        Ctap2Transport,
-    },
-};
-use ring::digest;
-use serde::{Deserialize, Serialize};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use libwebauthn::proto::ctap2::Ctap2AttestationStatement;
+use serde::Serialize;
 use serde_json::json;
 use tracing::debug;
 
-use credentialsd_common::model::Operation;
+use crate::cose::CoseKeyAlgorithmIdentifier;
 
-use crate::cose::{CoseKeyAlgorithmIdentifier, CoseKeyType};
-
+// Re-exports from libwebauthn
 pub use libwebauthn::ops::webauthn::{
-    CredentialProtectionExtension, GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension,
-    GetAssertionRequest, GetAssertionRequestExtensions, MakeCredentialHmacOrPrfInput,
-    MakeCredentialRequest, MakeCredentialsRequestExtensions, ResidentKeyRequirement,
-    UserVerificationRequirement,
-};
-pub use libwebauthn::proto::ctap2::{
-    Ctap2PublicKeyCredentialDescriptor, Ctap2PublicKeyCredentialRpEntity,
-    Ctap2PublicKeyCredentialUserEntity,
+    GetAssertionRequest, MakeCredentialRequest, RelyingPartyId, WebAuthnIDL,
 };
 
 #[derive(Debug)]
@@ -95,255 +78,6 @@ pub(crate) fn create_attestation_object(
     Ok(attestation_object)
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct MakeCredentialOptions {
-    /// Timeout in milliseconds
-    #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
-    #[serde(default)]
-    pub timeout: Option<Duration>,
-    #[serde(rename = "excludeCredentials")]
-    pub excluded_credentials: Option<Vec<CredentialDescriptor>>,
-    #[serde(rename = "authenticatorSelection")]
-    pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
-    /// https://www.w3.org/TR/webauthn-3/#enum-attestation-convey
-    #[allow(dead_code)]
-    pub attestation: Option<String>,
-    /// extensions input as a JSON object
-    pub extensions: Option<MakeCredentialExtensions>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MakeCredentialExtensions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cred_blob: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cred_props: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_pin_length: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credential_protection_policy: Option<CredentialProtectionPolicy>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enforce_credential_protection_policy: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub large_blob: Option<LargeBlobExtension>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prf: Option<Prf>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct LargeBlobExtension {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub support: Option<MakeCredentialLargeBlobExtension>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub read: Option<bool>,
-    #[allow(dead_code)] // TODO: Not currently used, but we should eventually implement
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub write: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Prf {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) eval: Option<PRFValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) eval_by_credential: Option<HashMap<String, PRFValue>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PRFValue {
-    // base64 encoded data
-    pub first: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub second: Option<String>,
-}
-
-impl PRFValue {
-    pub(crate) fn decode(&self) -> libwebauthn::ops::webauthn::PRFValue {
-        let mut res = libwebauthn::ops::webauthn::PRFValue::default();
-        let first = URL_SAFE_NO_PAD.decode(&self.first).unwrap();
-        let len_to_copy = std::cmp::min(first.len(), 32); // Determine how many bytes to copy
-        res.first[..len_to_copy].copy_from_slice(&first[..len_to_copy]);
-        if let Some(second) = self
-            .second
-            .as_ref()
-            .map(|second| URL_SAFE_NO_PAD.decode(second).unwrap())
-        {
-            let len_to_copy = std::cmp::min(second.len(), 32); // Determine how many bytes to copy
-            let mut res_second = [0u8; 32];
-            res_second[..len_to_copy].copy_from_slice(&second[..len_to_copy]);
-            res.second = Some(res_second);
-        }
-        res
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct GetCredentialOptions {
-    /// Challenge bytes in base64url-encoding with no padding.
-    pub(crate) challenge: String,
-
-    #[serde(deserialize_with = "crate::serde::duration::from_opt_ms")]
-    #[serde(default)]
-    pub(crate) timeout: Option<Duration>,
-
-    /// Relying Party ID.
-    /// If not set, the request origin's effective domain will be used instead.
-    #[serde(rename = "rpId")]
-    pub(crate) rp_id: Option<String>,
-
-    /// An list of allowed credentials, in descending order of RP preference.
-    /// If empty, then any credential that can fulfill the request is allowed.
-    #[serde(rename = "allowCredentials")]
-    #[serde(default)]
-    pub(crate) allow_credentials: Vec<CredentialDescriptor>,
-
-    /// Defaults to `preferred`
-    #[serde(rename = "userVerification")]
-    pub(crate) user_verification: Option<String>,
-
-    /// Contextual information from the RP to help the client guide the user
-    /// through the authentication ceremony.
-    #[allow(dead_code)] // TODO: Not currently used, but we should eventually implement support for hints.
-    #[serde(default)]
-    pub(crate) hints: Vec<String>,
-
-    pub(crate) extensions: Option<GetCredentialExtensions>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GetCredentialExtensions {
-    // TODO: appid
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub get_cred_blob: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub large_blob: Option<LargeBlobExtension>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prf: Option<Prf>,
-}
-
-#[derive(Debug, Deserialize)]
-/// https://www.w3.org/TR/webauthn-3/#dictionary-credential-descriptor
-pub(crate) struct CredentialDescriptor {
-    /// Type of the public key credential the caller is referring to.
-    ///
-    /// The value SHOULD be a member of PublicKeyCredentialType but client
-    /// platforms MUST ignore any PublicKeyCredentialDescriptor with an unknown
-    /// type.
-    #[serde(rename = "type")]
-    pub(crate) cred_type: String,
-    /// Credential ID of the public key credential the caller is referring to.
-    #[serde(with = "crate::serde::b64")]
-    pub(crate) id: Vec<u8>,
-    pub(crate) transports: Option<Vec<String>>,
-}
-
-impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
-    type Error = Error;
-    fn try_from(value: &CredentialDescriptor) -> Result<Self, Self::Error> {
-        let transports = value.transports.as_ref().filter(|t| !t.is_empty());
-        let transports = match transports {
-            Some(transports) => {
-                let mut transport_list = transports.iter().map(|t| match t.as_ref() {
-                    "ble" => Some(Ctap2Transport::Ble),
-                    "nfc" => Some(Ctap2Transport::Nfc),
-                    "usb" => Some(Ctap2Transport::Usb),
-                    "internal" => Some(Ctap2Transport::Internal),
-                    _ => None,
-                });
-                if transport_list.any(|t| t.is_none()) {
-                    return Err(Error::Internal(
-                        "Invalid transport type specified".to_owned(),
-                    ));
-                }
-                transport_list.collect()
-            }
-            None => None,
-        };
-        Ok(Self {
-            r#type: Ctap2PublicKeyCredentialType::PublicKey,
-            id: value.id.clone().into(),
-            transports,
-        })
-    }
-}
-impl TryFrom<CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
-    type Error = Error;
-    fn try_from(value: CredentialDescriptor) -> Result<Self, Self::Error> {
-        Ctap2PublicKeyCredentialDescriptor::try_from(&value)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-/// https://www.w3.org/TR/webauthn-3/#dictionary-authenticatorSelection
-pub(crate) struct AuthenticatorSelectionCriteria {
-    // /// https://www.w3.org/TR/webauthn-3/#enum-attachment
-    // #[zvariant(rename = "authenticatorAttachment")]
-    // pub authenticator_attachment: Option<String>,
-    //
-    /// https://www.w3.org/TR/webauthn-3/#enum-residentKeyRequirement
-    #[serde(rename = "residentKey")]
-    pub resident_key: Option<String>,
-
-    // Implied by resident_key == "required", deprecated in webauthn
-    // https://www.w3.org/TR/webauthn-3/#enum-residentKeyRequirement
-    #[serde(rename = "requireResidentKey")]
-    pub require_resident_key: Option<bool>,
-
-    /// https://www.w3.org/TR/webauthn-3/#enumdef-userverificationrequirement
-    #[serde(rename = "userVerification")]
-    pub user_verification: Option<String>,
-}
-
-#[derive(Clone, Deserialize)]
-/// https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialparameters
-pub(crate) struct PublicKeyCredentialParameters {
-    pub alg: i64,
-}
-
-impl TryFrom<&PublicKeyCredentialParameters> for Ctap2CredentialType {
-    type Error = Error;
-
-    fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
-        let algorithm = match value.alg {
-            -7 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::ES256,
-            -8 => libwebauthn::proto::ctap2::Ctap2COSEAlgorithmIdentifier::EDDSA,
-            // TODO: we should still pass on the raw value to the authenticator and let it decide whether it's supported.
-            _ => {
-                return Err(Error::Internal(
-                    "Invalid algorithm passed for new credential".to_owned(),
-                ))
-            }
-        };
-        Ok(Self {
-            public_key_type: Ctap2PublicKeyCredentialType::PublicKey,
-            algorithm,
-        })
-    }
-}
-
-impl TryFrom<&PublicKeyCredentialParameters> for CoseKeyType {
-    type Error = String;
-    fn try_from(value: &PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
-        match value.alg {
-            -7 => Ok(CoseKeyType::Es256P256),
-            -8 => Ok(CoseKeyType::EddsaEd25519),
-            -257 => Ok(CoseKeyType::RS256),
-            _ => Err("Invalid or unsupported algorithm specified".to_owned()),
-        }
-    }
-}
-
-impl TryFrom<PublicKeyCredentialParameters> for CoseKeyType {
-    type Error = String;
-    fn try_from(value: PublicKeyCredentialParameters) -> Result<Self, Self::Error> {
-        CoseKeyType::try_from(&value)
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub(crate) enum AttestationStatement {
     None,
@@ -381,7 +115,11 @@ impl TryFrom<&Ctap2AttestationStatement> for AttestationStatement {
             }
             Ctap2AttestationStatement::FidoU2F(att_stmt) => Ok(Self::U2F {
                 signature: att_stmt.signature.as_ref().to_vec(),
-                certificate: att_stmt.certificate.to_vec(),
+                certificate: att_stmt
+                    .certificates
+                    .first()
+                    .map(|c| c.as_ref().to_vec())
+                    .unwrap_or_default(),
             }),
             _ => {
                 debug!("Unsupported attestation type: {:?}", value);
@@ -670,26 +408,6 @@ impl GetPublicKeyCredentialResponse {
         });
         output.to_string()
     }
-}
-
-pub fn create_client_data_hash(json: &str) -> Vec<u8> {
-    digest::digest(&digest::SHA256, json.as_bytes())
-        .as_ref()
-        .to_owned()
-}
-
-pub fn format_client_data_json(
-    op: Operation,
-    challenge: &str,
-    origin: &str,
-    is_cross_origin: bool,
-) -> String {
-    let op_str = match op {
-        Operation::Create => "webauthn.create",
-        Operation::Get => "webauthn.get",
-    };
-    let cross_origin_str = if is_cross_origin { "true" } else { "false" };
-    format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
 }
 
 #[derive(Debug)]
