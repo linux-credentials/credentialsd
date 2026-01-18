@@ -17,7 +17,7 @@ futures-lite = "2.6.0"
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_6"] }
 qrcode = "0.14.1"
-serde = { version = "1.0.219", features = ["derive"] }
-tracing = "0.1.41"
+serde.workspace = true
+tracing.workspace = true
 tracing-subscriber = "0.3.19"
-zbus = "5.9.0"
+zbus = { workspace = true, default-features = false, features = ["async-io"]}

@@ -31,10 +31,10 @@ run_command(
 
 if get_option('profile') == 'default'
   cargo_options += ['--release']
-  rust_target = 'release'
+  rust_profile = 'release'
   message('Building in release mode')
 else
-  rust_target = 'debug'
+  rust_profile = 'debug'
   message('Building in debug mode')
 endif
 
@@ -57,7 +57,7 @@ custom_target(
     cargo_options,
     '&&',
     'cp',
-    gui_build_dir / 'target' / rust_target / gui_executable_name,
+    cargo_target_dir / rust_profile / gui_executable_name,
     '@OUTPUT@',
   ],
 )

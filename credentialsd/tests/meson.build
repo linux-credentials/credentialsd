@@ -5,7 +5,7 @@ test_config.set_quoted(
 )
 test_config.set(
   'DBUS_EXECUTABLE',
-  meson.project_build_root() / backend_build_dir / 'target' / rust_target / backend_executable_name,
+  cargo_target_dir / rust_profile / backend_executable_name,
 )
 configure_file(
   input: 'config' / 'mod.rs.in',

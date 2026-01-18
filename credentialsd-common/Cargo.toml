@@ -6,8 +6,7 @@ authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.
 license = "LGPL-3.0-only"
 
 [dependencies]
-futures-lite = "2.6.0"
-# libwebauthn = "0.2"
-libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn.git", revision="604b53b", features = ["libnfc","pcsc"] }
-serde = { version = "1", features = ["derive"] }
-zvariant = "5.6.0"
+futures-lite.workspace = true
+libwebauthn.workspace = true
+serde = { workspace = true, features = ["derive"] }
+zvariant.workspace = true

@@ -18,6 +18,8 @@ if cargo_home == ''
   cargo_home = meson.project_build_root() / 'cargo-home'
 endif
 
+cargo_target_dir = meson.project_build_root() / 'target'
+
 meson.add_dist_script(
   'build-aux/dist-vendor.sh',
   meson.project_build_root() / 'meson-dist' / meson.project_name()

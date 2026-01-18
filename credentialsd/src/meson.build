@@ -1,9 +1,9 @@
 if get_option('profile') == 'default'
   cargo_options += ['--release']
-  rust_target = 'release'
+  rust_profile = 'release'
   message('Building in release mode')
 else
-  rust_target = 'debug'
+  rust_profile = 'debug'
   message('Building in debug mode')
 endif
 
@@ -26,7 +26,7 @@ custom_target(
     cargo_options,
     '&&',
     'cp',
-    backend_build_dir / 'target' / rust_target / backend_executable_name,
+    cargo_target_dir / rust_profile / backend_executable_name,
     '@OUTPUT@',
   ],
 )

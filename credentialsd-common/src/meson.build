@@ -3,10 +3,10 @@
 
 if get_option('profile') == 'default'
   cargo_options += ['--release']
-  rust_target = 'release'
+  rust_profile = 'release'
   message('Building in release mode')
 else
-  rust_target = 'debug'
+  rust_profile = 'debug'
   message('Building in debug mode')
 endif
 
@@ -28,7 +28,7 @@ cargo_env = ['CARGO_HOME=' + cargo_home]
 #     cargo_options,
 #     '&&',
 #     'cp',
-#     common_lib_name / 'src' / rust_target / common_lib_name,
+#     common_lib_name / 'src' / rust_profile / common_lib_name,
 #     '@OUTPUT@',
 #   ],
 # )

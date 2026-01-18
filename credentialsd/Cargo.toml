@@ -5,27 +5,26 @@ authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.
 edition = "2021"
 license = "LGPL-3.0-only"
 
-[profile.release]
-lto = true
-
 [dependencies]
 async-stream = "0.3.6"
-async-trait = "0.1.88"
 base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
-futures-lite = "2.6.0"
-libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn.git", revision="604b53b", features = ["libnfc","pcsc"] }
-# libwebauthn = "~0.2.2"
+futures-lite.workspace = true
+libwebauthn.workspace = true
+# TODO: split nfc and pcsc into separate features
+# Also, 0.6.1 fails to build with non-vendored library.
+# https://github.com/alexrsagen/rs-nfc1/issues/15
+nfc1 = { version = "=0.6.0", default-features = false }
 openssl = "0.10.72"
 rand = "0.9.2"
 ring = "0.17.14"
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12", "ring", "log", "logging", "prefer-post-quantum"] }
-serde = { version = "1.0.219", features = ["derive"] }
+serde.workspace = true
 serde_json = "1.0.140"
 tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
-tracing = "0.1.41"
-tracing-subscriber = "0.3"
-zbus = { version = "5.9.0", default-features = false, features = ["tokio"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zbus = { workspace = true, default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 gio = "0.21.0"
