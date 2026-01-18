@@ -3,7 +3,7 @@ pub mod view_model;
 use std::thread;
 use std::{sync::Arc, thread::JoinHandle};
 
-use ashpd::{WindowIdentifierType};
+use ashpd::WindowIdentifierType;
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
 use credentialsd_common::server::ViewRequest;

@@ -5,7 +5,7 @@ use gtk::{gdk, gio, glib};
 use gtk::subclass::prelude::*;
 
 use gdk::Texture;
-use glib::{clone, Properties};
+use glib::{Properties, clone};
 use gtk::{Picture, prelude::*};
 
 use super::application::CredentialsUi;

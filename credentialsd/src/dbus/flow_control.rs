@@ -46,7 +46,7 @@ pub async fn start_flow_control_service<
     Sender<(
         CredentialRequest,
         Option<RequestingApplication>, // Application name sending the request
-        Option<WindowHandle>, // Client window handle
+        Option<WindowHandle>,          // Client window handle
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
@@ -379,7 +379,7 @@ pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
         Option<RequestingApplication>, // Application name sending the request
-        Option<WindowHandle>, // Client window handle,
+        Option<WindowHandle>,          // Client window handle,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }

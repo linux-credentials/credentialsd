@@ -15,7 +15,11 @@ use credentialsd_common::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    Connection, DBusError, fdo, interface, message::Header, names::{BusName, UniqueName}, zvariant::Optional
+    fdo, interface,
+    message::Header,
+    names::{BusName, UniqueName},
+    zvariant::Optional,
+    Connection, DBusError,
 };
 
 use crate::dbus::{

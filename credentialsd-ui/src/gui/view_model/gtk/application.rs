@@ -165,7 +165,11 @@ impl CredentialsUi {
         ApplicationExtManual::run(self)
     }
 
-    pub(crate) fn new(parent_window: Option<WindowIdentifierType>, tx: Sender<ViewEvent>, rx: Receiver<ViewUpdate>) -> Self {
+    pub(crate) fn new(
+        parent_window: Option<WindowIdentifierType>,
+        tx: Sender<ViewEvent>,
+        rx: Receiver<ViewUpdate>,
+    ) -> Self {
         let app: Self = glib::Object::builder()
             .property("application-id", APP_ID)
             .property(

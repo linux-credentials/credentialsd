@@ -136,7 +136,7 @@ impl<
             id: request_id,
             rp_id,
             requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
-            window_handle: window_handle.into()
+            window_handle: window_handle.into(),
         };
 
         let launch_ui_response = self
