@@ -3,6 +3,7 @@ pub mod credential;
 pub mod device;
 mod window;
 
+use ashpd::WindowIdentifierType;
 use async_std::channel::{Receiver, Sender};
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
@@ -369,6 +370,7 @@ impl ViewModel {
 }
 
 pub fn start_gtk_app(
+    parent_window: Option<WindowIdentifierType>,
     tx_event: async_std::channel::Sender<ViewEvent>,
     rx_update: async_std::channel::Receiver<ViewUpdate>,
 ) {
@@ -385,7 +387,7 @@ pub fn start_gtk_app(
     let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
     gio::resources_register(&res);
 
-    let app = CredentialsUi::new(tx_event, rx_update);
+    let app = CredentialsUi::new(parent_window, tx_event, rx_update);
     app.run();
 }
 

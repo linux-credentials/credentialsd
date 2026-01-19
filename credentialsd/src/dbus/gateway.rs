@@ -10,7 +10,7 @@ use credentialsd_common::{
     },
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
-        GetCredentialResponse,
+        GetCredentialResponse, WindowHandle,
     },
 };
 use tokio::sync::Mutex as AsyncMutex;
@@ -18,6 +18,7 @@ use zbus::{
     fdo, interface,
     message::Header,
     names::{BusName, UniqueName},
+    zvariant::Optional,
     Connection, DBusError,
 };
 
@@ -220,6 +221,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
+        parent_window: Optional<WindowHandle>,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -255,7 +257,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(requesting_app, cred_request)
+                .request_credential(requesting_app, cred_request, parent_window.into())
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -286,6 +288,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(connection)] connection: &Connection,
+        parent_window: Optional<WindowHandle>,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
         let (_origin, is_same_origin, _top_origin) =
@@ -319,7 +322,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .controller
                 .lock()
                 .await
-                .request_credential(requesting_app, cred_request)
+                .request_credential(requesting_app, cred_request, parent_window.into())
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {

@@ -300,7 +300,7 @@ async def create_passkey(interface, options, origin, top_origin):
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
     logging.debug("Sending request to D-Bus API")
-    rsp = await interface.call_create_credential(req)
+    rsp = await interface.call_create_credential(["", req])
     if rsp["type"].value != "public-key":
         raise Exception(
             f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
@@ -335,7 +335,7 @@ async def get_passkey(interface, options, origin, top_origin):
     }
 
     logging.debug("Sending request to D-Bus API")
-    rsp = await interface.call_get_credential(req)
+    rsp = await interface.call_get_credential(["", req])
     if rsp["type"].value != "public-key":
         raise Exception(
             f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
