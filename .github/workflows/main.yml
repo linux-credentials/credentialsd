@@ -8,6 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_HOME: build/cargo-home
+  CARGO_TARGET_DIR: ${{ github.workspace }}/build/target
+
 jobs:
   build:
     env:
@@ -16,6 +18,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
+
+      - run: rustup show active-toolchain
+      - run: rustup component add rustfmt clippy
+
+      - name: Configure Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> build/target"
+          cache-workspace-crates: true
+
+
       - name: Update apt cache
         run: sudo apt update
       - name: Install system dependencies
@@ -26,21 +39,26 @@ jobs:
             libpcsclite-dev libxml2-utils \
             blueprint-compiler desktop-file-utils gettext ninja-build python3-pip \
             udev zip
+
       - name: Install Meson
         run: |
           # Newer version needed for --interactive flag needed below
           python3 -m pip install --user -v 'meson==1.5.0'
       - name: Setup meson project
         run: meson setup build
+
       - name: Build
         run: ninja -C build
+
       - name: Test
         # We have to use the --interactive flag because of some
         # weird issue with meson hanging after cargo exits due to the TestDBus.
         # Probably has to do with forking the test processes.
         run: meson test --interactive
         working-directory: build/
+
       - name: Check clippy recommendations
-        run: cargo clippy --workspace --all-features --target-dir build/target
+        run: cargo clippy --locked --workspace --all-features --target-dir build/target
+
       - name: Check formatting
         run: cargo fmt --all --check

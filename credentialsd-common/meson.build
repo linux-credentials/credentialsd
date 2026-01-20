@@ -8,6 +8,7 @@ cargo_options = [
   '--manifest-path', meson.project_source_root() / meson.current_source_dir() / 'Cargo.toml',
 ]
 cargo_options += ['--target-dir', cargo_target_dir]
+cargo_options += '--locked'
 if get_option('cargo_offline') == true
   cargo_options += ['--offline']
 endif
