@@ -45,7 +45,7 @@ jobs:
           # Newer version needed for --interactive flag needed below
           python3 -m pip install --user -v 'meson==1.5.0'
       - name: Setup meson project
-        run: meson setup build
+        run: meson setup -Dprofile=development build
 
       - name: Build
         run: ninja -C build
