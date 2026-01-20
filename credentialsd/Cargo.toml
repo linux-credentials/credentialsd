@@ -15,7 +15,6 @@ libwebauthn.workspace = true
 # Also, 0.6.1 fails to build with non-vendored library.
 # https://github.com/alexrsagen/rs-nfc1/issues/15
 nfc1 = { version = "=0.6.0", default-features = false }
-openssl = "0.10.72"
 rand = "0.9.2"
 ring = "0.17.14"
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12", "ring", "log", "logging", "prefer-post-quantum"] }
