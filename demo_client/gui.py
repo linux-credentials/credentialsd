@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from contextlib import closing
+import functools
 import json
 import math
 import os
@@ -18,8 +19,9 @@ from dbus_next import DBusError, Message, MessageType, Variant
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("GdkWayland", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gio, GObject, Gtk, Adw  # noqa: E402
+from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402
 
 import webauthn  # noqa: E402
 import util  # noqa: E402
@@ -72,6 +74,9 @@ class MainWindow(Gtk.ApplicationWindow):
         now = math.floor(time.time())
         cur = DB.cursor()
         username = self.username.get_text()
+        if not username:
+            print("Username is required")
+            return
         cur.execute(
             "select user_id, user_handle from users where username = ?", (username,)
         )
@@ -87,34 +92,40 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         options = self._get_registration_options(user_handle, username)
         print(f"registration options: {options}")
-        auth_data = create_passkey(INTERFACE, self.origin, self.origin, options)
-        if not user_id:
-            cur.execute(
-                "insert into users (username, user_handle, created_time) values (?, ?, ?)",
-                (username, user_handle, now),
-            )
-            user_id = cur.lastrowid
-        params = {
-            "user_handle": user_handle,
-            "cred_id": auth_data.cred_id,
-            "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
-            "sign_count": None if auth_data.sign_count == 0 else auth_data.sign_count,
-            "backup_eligible": 1 if "BE" in auth_data.flags else 0,
-            "backup_state": 1 if "BS" in auth_data.flags else 0,
-            "uv_initialized": 1 if "UV" in auth_data.flags else 0,
-            "cose_pub_key": auth_data.pub_key_bytes,
-            "created_time": now,
-        }
+        def cb(user_id, toplevel, handle):
+            cur = DB.cursor()
+            window_handle = "wayland:{handle}"
+            auth_data = create_passkey(INTERFACE, window_handle, self.origin, self.origin, options)
+            if not user_id:
+                cur.execute(
+                    "insert into users (username, user_handle, created_time) values (?, ?, ?)",
+                    (username, user_handle, now),
+                )
+                user_id = cur.lastrowid
+            params = {
+                "user_handle": user_handle,
+                "cred_id": auth_data.cred_id,
+                "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
+                "sign_count": None if auth_data.sign_count == 0 else auth_data.sign_count,
+                "backup_eligible": 1 if "BE" in auth_data.flags else 0,
+                "backup_state": 1 if "BS" in auth_data.flags else 0,
+                "uv_initialized": 1 if "UV" in auth_data.flags else 0,
+                "cose_pub_key": auth_data.pub_key_bytes,
+                "created_time": now,
+            }
 
-        add_passkey_sql = """
-            insert into user_passkeys
-            (user_handle, cred_id, aaguid, sign_count, backup_eligible, backup_state, uv_initialized, cose_pub_key, created_time)
-            values
-            (:user_handle, :cred_id, :aaguid, :sign_count, :backup_eligible, :backup_state, :uv_initialized, :cose_pub_key, :created_time)
-        """
-        cur.execute(add_passkey_sql, params)
-        print("Added passkey")
-        DB.commit()
+            add_passkey_sql = """
+                insert into user_passkeys
+                (user_handle, cred_id, aaguid, sign_count, backup_eligible, backup_state, uv_initialized, cose_pub_key, created_time)
+                values
+                (:user_handle, :cred_id, :aaguid, :sign_count, :backup_eligible, :backup_state, :uv_initialized, :cose_pub_key, :created_time)
+            """
+            cur.execute(add_passkey_sql, params)
+            print("Added passkey")
+            DB.commit()
+            cur.close()
+        toplevel = self.get_surface()
+        toplevel.export_handle(functools.partial(cb, user_id))
         cur.close()
 
     @Gtk.Template.Callback()
@@ -202,17 +213,27 @@ class MainWindow(Gtk.ApplicationWindow):
                         return user_cred
                     else:
                         return None
+        def cb(toplevel, window_handle):
+            print(f"received window handle: {window_handle}")
+            window_handle = f"wayland:{window_handle}"
 
-        auth_data = get_passkey(
-            INTERFACE,
-            self.origin,
-            self.origin,
-            self.rp_id,
-            cred_ids,
-            retrieve_user_cred,
-        )
-        print("Received passkey:")
-        pprint(auth_data)
+            auth_data = get_passkey(
+                INTERFACE,
+                window_handle,
+                self.origin,
+                self.origin,
+                self.rp_id,
+                cred_ids,
+                retrieve_user_cred,
+            )
+            print("Received passkey:")
+            pprint(auth_data)
+
+        toplevel = self.get_surface()
+        print(type(toplevel))
+        toplevel.export_handle(cb)
+        print("Waiting for handle to complete")
+        # event.wait()
 
     @GObject.Property(type=Gtk.StringList)
     def uv_pref(self):
@@ -281,7 +302,7 @@ class MyApp(Adw.Application):
 
 
 def create_passkey(
-    interface: ProxyInterface, origin: str, top_origin: str, options: dict
+    interface: ProxyInterface, window_handle: str, origin: str, top_origin: str, options: dict
 ) -> webauthn.AuthenticatorData:
     is_same_origin = origin == top_origin
     print(
@@ -298,7 +319,7 @@ def create_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_create_credential_sync(req)
+    rsp = interface.call_create_credential_sync([window_handle, req])
 
     # print("Received response")
     # pprint(rsp)
@@ -313,7 +334,7 @@ def create_passkey(
     return webauthn.verify_create_response(response_json, options, origin)
 
 
-def get_passkey(interface, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
+def get_passkey(interface, window_handle, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
     is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
@@ -337,7 +358,7 @@ def get_passkey(interface, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_get_credential_sync(req)
+    rsp = interface.call_get_credential_sync([window_handle, req])
     # print("Received response")
     # pprint(rsp)
     if rsp["type"].value != "public-key":
