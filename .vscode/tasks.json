@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "meson",
+            "target": "credentialsd",
+            "mode": "build",
+            "problemMatcher": [
+                "$meson-gcc"
+            ],
+            "group": "build",
+            "label": "Meson: Build Daemon"
+        },
+        {
+            "type": "meson",
+            "target": "credentialsd-ui",
+            "mode": "build",
+            "problemMatcher": [
+                "$meson-gcc"
+            ],
+            "group": "build",
+            "label": "Meson: Build UI"
+        }
+    ]
+}

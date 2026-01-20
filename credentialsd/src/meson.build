@@ -11,7 +11,7 @@ cargo_env = ['CARGO_HOME=' + cargo_home]
 message('@0@'.format(cargo_options))
 
 custom_target(
-  'cargo-build',
+  'credentialsd',
   build_by_default: true,
   build_always_stale: true,
   output: backend_executable_name,

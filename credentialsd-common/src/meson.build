@@ -13,7 +13,7 @@ endif
 cargo_env = ['CARGO_HOME=' + cargo_home]
 #
 # custom_target(
-#   'cargo-build',
+#   'credentialsd-common',
 #   build_by_default: true,
 #   build_always_stale: true,
 #   output: common_lib_name,

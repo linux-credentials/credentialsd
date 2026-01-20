@@ -41,7 +41,7 @@ endif
 cargo_env = ['CARGO_HOME=' + cargo_home]
 
 custom_target(
-  'cargo-build',
+  'credentialsd-ui',
   build_by_default: true,
   build_always_stale: true,
   output: gui_executable_name,

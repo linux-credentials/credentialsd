@@ -17,5 +17,5 @@ __pycache__
 /vendor
 
 # IDE
-/.vscode
+/.vscode/settings.json
 .idea
