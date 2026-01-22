@@ -3,8 +3,8 @@ pub mod credential;
 pub mod device;
 mod window;
 
-use ashpd::WindowIdentifierType;
 use async_std::channel::{Receiver, Sender};
+use credentialsd_common::server::WindowHandle;
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
 use gtk::gdk::Texture;
@@ -370,7 +370,7 @@ impl ViewModel {
 }
 
 pub fn start_gtk_app(
-    parent_window: Option<WindowIdentifierType>,
+    parent_window: Option<WindowHandle>,
     tx_event: async_std::channel::Sender<ViewEvent>,
     rx_update: async_std::channel::Receiver<ViewUpdate>,
 ) {
