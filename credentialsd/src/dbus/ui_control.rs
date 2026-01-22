@@ -29,7 +29,7 @@ impl UiControlServiceClient {
         Self { conn }
     }
 
-    async fn proxy(&self) -> Result<UiControlServiceProxy, zbus::Error> {
+    async fn proxy(&self) -> Result<UiControlServiceProxy<'_>, zbus::Error> {
         UiControlServiceProxy::new(&self.conn).await
     }
 }

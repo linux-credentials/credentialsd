@@ -162,21 +162,11 @@ where
             while let Some(state) = stream.next().await {
                 let event = credentialsd_common::model::BackgroundEvent::HybridQrStateChanged(
                     state.clone().into(),
-                )
-                .try_into();
-                match event {
-                    Err(err) => {
-                        tracing::error!("Failed to serialize state update: {err}");
-                        break;
-                    }
-                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            tracing::error!("Failed to send state update to UI: {err}");
-                            break;
-                        }
-                    },
-                }
+                );
+                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
+                    tracing::error!("Failed to send state update to UI: {err}");
+                    break;
+                };
                 match state {
                     HybridState::Completed | HybridState::Failed => {
                         break;
@@ -213,20 +203,11 @@ where
                 }
             };
             while let Some(state) = stream.next().await {
-                match credentialsd_common::model::BackgroundEvent::UsbStateChanged((&state).into())
-                    .try_into()
-                {
-                    Err(err) => {
-                        tracing::error!("Failed to serialize state update: {err}");
-                        break;
-                    }
-                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            tracing::error!("Failed to send state update to UI: {err}");
-                            break;
-                        }
-                    },
+                let event =
+                    credentialsd_common::model::BackgroundEvent::UsbStateChanged((&state).into());
+                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
+                    tracing::error!("Failed to send state update to UI: {err}");
+                    break;
                 };
                 match state {
                     UsbState::NeedsPin { pin_tx, .. } => {
@@ -272,20 +253,11 @@ where
                 }
             };
             while let Some(state) = stream.next().await {
-                match credentialsd_common::model::BackgroundEvent::NfcStateChanged((&state).into())
-                    .try_into()
-                {
-                    Err(err) => {
-                        tracing::error!("Failed to serialize state update: {err}");
-                        break;
-                    }
-                    Ok(event) => match send_state_update(emitter, &signal_state, event).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            tracing::error!("Failed to send state update to UI: {err}");
-                            break;
-                        }
-                    },
+                let event =
+                    credentialsd_common::model::BackgroundEvent::NfcStateChanged((&state).into());
+                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
+                    tracing::error!("Failed to send state update to UI: {err}");
+                    break;
                 };
                 match state {
                     NfcState::NeedsPin { pin_tx, .. } => {

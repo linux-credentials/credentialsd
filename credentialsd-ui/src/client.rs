@@ -13,7 +13,7 @@ impl DbusCredentialClient {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
     }
-    async fn proxy(&self) -> std::result::Result<FlowControlServiceProxy, ()> {
+    async fn proxy(&self) -> std::result::Result<FlowControlServiceProxy<'_>, ()> {
         FlowControlServiceProxy::new(&self.conn)
             .await
             .map_err(|err| tracing::error!("Failed to communicate with D-Bus service: {err}"))
