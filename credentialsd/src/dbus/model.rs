@@ -299,12 +299,18 @@ pub(super) fn get_credential_request_try_into_ctap2(
             return Err(WebAuthnError::TypeError);
         }
     };
-    let relying_party_id = options.rp_id.unwrap_or_else(|| {
-        // TODO: We're assuming that the origin is `<scheme>://data`, which is
-        // currently checked by the caller, but we should encode this in a type.
-        let (_, effective_domain) = origin.rsplit_once('/').unwrap();
-        effective_domain.to_string()
-    });
+    let relying_party_id = options
+        .rp_id
+        .or_else(|| {
+            // TODO: We're assuming that the origin is `<scheme>://data`, which is
+            // currently checked by the caller, but we should encode this in a type.
+            origin
+                .origin()
+                .strip_prefix("https://")
+                .and_then(|rest| rest.split_once('/'))
+                .map(|(effective_domain, _)| effective_domain.to_string())
+        })
+        .ok_or(WebAuthnError::SecurityError)?;
 
     let extensions = if let Some(incoming_extensions) = options.extensions {
         let extensions = GetAssertionRequestExtensions {
