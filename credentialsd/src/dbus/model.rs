@@ -23,13 +23,14 @@ use crate::{
         GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
         GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
         MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
-        PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
+        Origin, PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
     },
 };
 
 // Helper functions for translating D-Bus types into internal types
 pub(super) fn create_credential_request_try_into_ctap2(
     request: &CreateCredentialRequest,
+    origin: &Origin,
 ) -> std::result::Result<(MakeCredentialRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
         return Err(WebAuthnError::NotSupportedError);
@@ -181,24 +182,13 @@ pub(super) fn create_credential_request_try_into_ctap2(
             .filter_map(|e| e.ok())
             .collect()
     });
-    let (origin, is_cross_origin) = match (request.origin.as_ref(), request.is_same_origin.as_ref())
-    {
-        (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
-        (Some(origin), None) => (origin.to_string(), true),
-        // origin should always be set on request either by client or D-Bus service,
-        // so this shouldn't be called
-        (None, _) => {
-            tracing::info!("Error reading origin from request.");
-            return Err(WebAuthnError::TypeError);
-        }
-    };
     let client_data_json =
-        webauthn::format_client_data_json(Operation::Create, &challenge, &origin, is_cross_origin);
+        webauthn::format_client_data_json(Operation::Create, &challenge, &origin);
     let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
     Ok((
         MakeCredentialRequest {
             hash: client_data_hash,
-            origin,
+            origin: origin.origin().to_string(),
 
             relying_party: rp,
             user,
@@ -256,6 +246,7 @@ pub(super) fn create_credential_response_try_from_ctap2(
 
 pub(super) fn get_credential_request_try_into_ctap2(
     request: &GetCredentialRequest,
+    origin: &Origin,
 ) -> std::result::Result<(GetAssertionRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
         return Err(WebAuthnError::NotSupportedError);
@@ -290,24 +281,9 @@ pub(super) fn get_credential_request_try_into_ctap2(
     for c in allow.iter_mut() {
         c.transports = None;
     }
-    let (origin, is_cross_origin) = match (request.origin.as_ref(), request.is_same_origin.as_ref())
-    {
-        (Some(origin), Some(is_same_origin)) => (origin.to_string(), !is_same_origin),
-        (Some(origin), None) => (origin.to_string(), true),
-        // origin should always be set on request either by client or D-Bus service,
-        // so this shouldn't be called
-        (None, _) => {
-            tracing::info!("Error reading origin from client request.");
-            return Err(WebAuthnError::TypeError);
-        }
-    };
 
-    let client_data_json = webauthn::format_client_data_json(
-        Operation::Get,
-        &options.challenge,
-        &origin,
-        is_cross_origin,
-    );
+    let client_data_json =
+        webauthn::format_client_data_json(Operation::Get, &options.challenge, &origin);
     let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
     // TODO: actually calculate correct effective domain, and use fallback to related origin requests to fill this in. For now, just default to origin.
     let user_verification = match options

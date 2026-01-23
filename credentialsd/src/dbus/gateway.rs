@@ -26,6 +26,7 @@ use crate::{
         CredentialRequestController,
     },
     model::{CredentialRequest, CredentialResponse},
+    webauthn::Origin,
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
@@ -172,19 +173,25 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         parent_window: Optional<WindowHandle>,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
-        let (_origin, is_same_origin, _top_origin) =
-            check_origin(request.origin.as_deref(), request.is_same_origin)
-                .await
-                .map_err(Error::from)?;
+        // TODO: Add authorization check for privileged client.
+        let top_origin = if request.is_same_origin.unwrap_or_default() {
+            None
+        } else {
+            // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
+            // We should still reject cross-origin requests for conditionally-mediated requests.
+            tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
+            return Err(WebAuthnError::NotAllowedError.into());
+        };
+        let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            if !is_same_origin {
-                // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
-                // We should still reject cross-origin requests for conditionally-mediated requests.
-                tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-                return Err(WebAuthnError::NotAllowedError.into());
-            }
+            // TODO: assert that RP ID is bound to origin:
+            // - if RP ID is not set, set the RP ID to the origin's effective domain
+            // - if RP ID is set, assert that it matches origin's effective domain
+            // - if RP ID is set, but origin's effective domain doesn't match
+            //    - query for related origins, if supported
+            //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request).map_err(|e| {
+                create_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
                     if let WebAuthnError::TypeError = e {
                         tracing::error!(
                             "Could not parse passkey creation request. Rejecting request."
@@ -239,16 +246,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         parent_window: Optional<WindowHandle>,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
-        let (_origin, is_same_origin, _top_origin) =
-            check_origin(request.origin.as_deref(), request.is_same_origin)
-                .await
-                .map_err(Error::from)?;
+        // TODO: Add authorization check for privileged client.
+        let top_origin = if request.is_same_origin.unwrap_or_default() {
+            None
+        } else {
+            // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
+            // We should still reject cross-origin requests for conditionally-mediated requests.
+            tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
+            return Err(WebAuthnError::NotAllowedError.into());
+        };
+        let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            if !is_same_origin {
-                // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
-                tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-                return Err(WebAuthnError::NotAllowedError.into());
-            }
             // Setup request
 
             // TODO: assert that RP ID is bound to origin:
@@ -258,7 +266,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request).map_err(|e| {
+                get_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
                     tracing::error!("Could not parse passkey assertion request: {e:?}");
                     WebAuthnError::TypeError
                 })?;
@@ -404,32 +412,43 @@ fn check_origin_from_app<'a>(
     }
 }
 
-async fn check_origin(
+fn check_origin_from_privileged_client(
     origin: Option<&str>,
-    is_same_origin: Option<bool>,
-    // TODO: Replace is_same_origin with explicit top_origin
-    // top_origin: Option<&str>,
-) -> Result<(String, bool, String), WebAuthnError> {
-    let origin = if let Some(origin) = origin {
-        origin.to_string()
-    } else {
-        tracing::warn!(
-            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
-        );
-        return Err(WebAuthnError::SecurityError);
+    top_origin: Option<&str>,
+) -> Result<Origin, WebAuthnError> {
+    let origin = match (origin, top_origin) {
+        (Some(origin), top_origin) => {
+            if !origin.starts_with("https://") {
+                tracing::warn!(
+                    "Caller requested non-HTTPS schemed origin, which is not supported."
+                );
+                return Err(WebAuthnError::SecurityError);
+            }
+            if let Some(top_origin) = top_origin {
+                if origin == top_origin {
+                    Origin::SameOrigin(origin.to_string())
+                } else {
+                    Origin::CrossOrigin((origin.to_string(), top_origin.to_string()))
+                }
+            } else {
+                Origin::SameOrigin(origin.to_string())
+            }
+        }
+        (None, Some(_)) => {
+            tracing::warn!("Top origin cannot be set if origin is not set.");
+            return Err(WebAuthnError::SecurityError);
+        }
+        (None, None) => {
+            tracing::warn!("No origin given. Rejecting request.");
+            return Err(WebAuthnError::SecurityError);
+        }
     };
-    if !origin.starts_with("https://") {
-        tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
-        return Err(WebAuthnError::SecurityError);
-    }
-    let is_same_origin = is_same_origin.unwrap_or(false);
-    let top_origin = if is_same_origin {
-        origin.clone()
-    } else {
+
+    if let Origin::CrossOrigin(_) = origin {
         tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
         return Err(WebAuthnError::NotAllowedError);
     };
-    Ok((origin, true, top_origin))
+    Ok(origin)
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -493,17 +512,25 @@ impl From<WebAuthnError> for Error {
 mod test {
     use credentialsd_common::model::WebAuthnError;
 
-    use crate::dbus::gateway::check_origin;
+    use crate::webauthn::Origin;
 
-    #[tokio::test]
-    async fn test_only_https_origins() {
-        let check = |origin: &'static str| async { check_origin(Some(origin), Some(true)).await };
+    use super::check_origin_from_privileged_client;
+    fn check_same_origin(origin: &str) -> Result<Origin, WebAuthnError> {
+        check_origin_from_privileged_client(Some(origin), Some(origin))
+    }
+
+    #[test]
+    fn test_only_https_origins() {
         assert!(matches!(
-            check("https://example.com").await,
-            Ok((o, ..)) if o == "https://example.com"
-        ));
+            check_same_origin("https://example.com"),
+            Ok(Origin::SameOrigin(o)) if o == "https://example.com"
+        ))
+    }
+
+    #[test]
+    fn test_privileged_client_cannot_set_http_origins() {
         assert!(matches!(
-            check("http://example.com").await,
+            check_same_origin("http://example.com"),
             Err(WebAuthnError::SecurityError)
         ));
     }
