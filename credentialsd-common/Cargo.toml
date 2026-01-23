@@ -7,6 +7,5 @@ license = "LGPL-3.0-only"
 
 [dependencies]
 futures-lite.workspace = true
-libwebauthn.workspace = true
 serde = { workspace = true, features = ["derive"] }
 zvariant.workspace = true

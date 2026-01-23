@@ -17,9 +17,9 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{
-    Credential, CredentialRequest, Error, GetAssertionResponseInternal,
-};
+use credentialsd_common::model::{Credential, Error};
+
+use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
 use super::{AuthenticatorResponse, CredentialResponse};
 

@@ -7,9 +7,7 @@ use std::{collections::HashMap, time::Duration};
 use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use credentialsd_common::{
-    model::{
-        GetAssertionResponseInternal, MakeCredentialResponseInternal, Operation, WebAuthnError,
-    },
+    model::{Operation, WebAuthnError},
     server::{
         CreateCredentialRequest, CreatePublicKeyCredentialResponse, GetCredentialRequest,
         GetPublicKeyCredentialResponse,
@@ -18,6 +16,7 @@ use credentialsd_common::{
 
 use crate::{
     cose::CoseKeyAlgorithmIdentifier,
+    model::{GetAssertionResponseInternal, MakeCredentialResponseInternal},
     webauthn::{
         self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,
         Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity,

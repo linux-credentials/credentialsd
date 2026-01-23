@@ -20,14 +20,14 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot::Sender;
 
 use credentialsd_common::{
-    model::{
-        CredentialRequest, CredentialResponse, Device, Error as CredentialServiceError, Operation,
-        RequestingApplication, Transport,
-    },
+    model::{Device, Error as CredentialServiceError, Operation, RequestingApplication, Transport},
     server::{RequestId, ViewRequest, WindowHandle},
 };
 
-use crate::credential_service::{hybrid::HybridEvent, usb::UsbEvent};
+use crate::{
+    credential_service::{hybrid::HybridEvent, usb::UsbEvent},
+    model::{CredentialRequest, CredentialResponse},
+};
 
 use self::{
     hybrid::{HybridHandler, HybridState, HybridStateInternal},
@@ -378,7 +378,9 @@ mod test {
     use std::{sync::Arc, time::Duration};
 
     use libwebauthn::{
-        ops::webauthn::{ResidentKeyRequirement, UserVerificationRequirement},
+        ops::webauthn::{
+            MakeCredentialRequest, ResidentKeyRequirement, UserVerificationRequirement,
+        },
         proto::ctap2::{
             Ctap2COSEAlgorithmIdentifier, Ctap2CredentialType, Ctap2PublicKeyCredentialRpEntity,
             Ctap2PublicKeyCredentialType, Ctap2PublicKeyCredentialUserEntity,
@@ -389,9 +391,10 @@ mod test {
     use crate::{
         credential_service::usb::InProcessUsbHandler,
         dbus::test::{DummyFlowServer, DummyUiServer},
+        model::CredentialRequest,
         webauthn,
     };
-    use credentialsd_common::model::{CredentialRequest, MakeCredentialRequest, Operation};
+    use credentialsd_common::model::Operation;
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},

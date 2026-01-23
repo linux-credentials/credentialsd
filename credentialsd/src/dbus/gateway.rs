@@ -1,13 +1,10 @@
 //! Implements the service that public clients can connect to. Responsible for
 //! authorizing clients for origins and validating request parameters.
 
-use std::sync::Arc;
+use std::{os::fd::AsRawFd, sync::Arc};
 
 use credentialsd_common::{
-    model::{
-        CredentialRequest, CredentialResponse, GetClientCapabilitiesResponse,
-        RequestingApplication, WebAuthnError,
-    },
+    model::{GetClientCapabilitiesResponse, RequestingApplication, WebAuthnError},
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
         GetCredentialResponse, WindowHandle,
@@ -22,12 +19,14 @@ use zbus::{
     Connection, DBusError,
 };
 
-use crate::dbus::{
-    create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
-    get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
-    CredentialRequestController,
+use crate::{
+    dbus::{
+        create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
+        get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
+        CredentialRequestController,
+    },
+    model::{CredentialRequest, CredentialResponse},
 };
-use std::os::fd::AsRawFd;
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
@@ -451,8 +450,6 @@ impl From<WebAuthnError> for Error {
 
 #[cfg(test)]
 mod test {
-    use std::future::Future;
-
     use credentialsd_common::model::WebAuthnError;
 
     use crate::dbus::gateway::check_origin;
