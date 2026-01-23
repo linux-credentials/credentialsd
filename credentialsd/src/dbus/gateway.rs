@@ -115,47 +115,6 @@ async fn query_peer_pid_via_fdinfo(
     Some(pid)
 }
 
-async fn query_peer_pid_via_dbus(
-    connection: &Connection,
-    sender_unique_name: &UniqueName<'_>,
-) -> Option<u32> {
-    // Use the connection to query the D-Bus daemon for more info
-    let proxy = match zbus::Proxy::new(
-        connection,
-        "org.freedesktop.DBus",
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
-            return None;
-        }
-    };
-
-    // Get the Process ID (PID) of the peer
-    let pid_result = match proxy
-        .call_method("GetConnectionUnixProcessID", &(sender_unique_name))
-        .await
-    {
-        Ok(pid) => pid,
-        Err(e) => {
-            tracing::error!("Failed to get peer PID via DBus: {e:?}");
-            return None;
-        }
-    };
-    let pid: u32 = match pid_result.body().deserialize() {
-        Ok(pid) => pid,
-        Err(e) => {
-            tracing::error!("Retrieved peer PID is not an integer: {e:?}");
-            return None;
-        }
-    };
-    Some(pid)
-}
-
 async fn query_connection_peer_binary(
     header: Header<'_>,
     connection: &Connection,
@@ -165,25 +124,14 @@ async fn query_connection_peer_binary(
 
     tracing::debug!("Received request from sender: {}", sender_unique_name);
 
-    // Get the senders PID.
-    //
-    // First, try to get the PID via the more secure fdinfo
-    let mut pid = query_peer_pid_via_fdinfo(connection, sender_unique_name).await;
-    // If that fails, we fall back to asking dbus directly for the peers PID
-    if pid.is_none() {
-        pid = query_peer_pid_via_dbus(connection, sender_unique_name).await;
-    }
-
-    let Some(pid) = pid else {
-        tracing::error!("Failed to determine peers PID. Skipping application details query.");
+    // First, try to get the PID by peer's pidfd
+    let Some(pid) = query_peer_pid_via_fdinfo(connection, sender_unique_name).await else {
+        tracing::error!("Failed to determine peer's PID. Skipping application details query.");
         return None;
     };
 
-    // Get binary path via PID from /proc file-system
-    // TODO: To be REALLY sure, we may want to look at /proc/PID/exe instead. It is a symlink to
-    //       the actual binary, giving a full path instead of only the command name.
-    //       This should in theory be "more secure", but also may disconcert novice users with no
-    //       technical background.
+    // Get binary path via PID from /proc file-system. Use command name as a
+    // friendly name, and exe path as the more definitive name.
     let command_name = match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
         Ok(c) => c.trim().to_string(),
         Err(e) => {
@@ -195,6 +143,7 @@ async fn query_connection_peer_binary(
     };
     tracing::debug!("Request is from: {command_name}");
 
+    // TODO: Check the mount namespace of the executable; if we're not in the same namespace, we should not return the path at all.
     let exe_path = match std::fs::read_link(format!("/proc/{pid}/exe")) {
         Ok(p) => p,
         Err(e) => {
