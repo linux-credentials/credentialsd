@@ -23,14 +23,15 @@ use crate::{
         GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
         GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
         MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
-        Origin, PublicKeyCredentialParameters, ResidentKeyRequirement, UserVerificationRequirement,
+        Origin, PublicKeyCredentialParameters, NavigationContext, ResidentKeyRequirement,
+        UserVerificationRequirement,
     },
 };
 
 // Helper functions for translating D-Bus types into internal types
 pub(super) fn create_credential_request_try_into_ctap2(
     request: &CreateCredentialRequest,
-    origin: &Origin,
+    origin: &NavigationContext,
 ) -> std::result::Result<(MakeCredentialRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
         return Err(WebAuthnError::NotSupportedError);
@@ -246,7 +247,7 @@ pub(super) fn create_credential_response_try_from_ctap2(
 
 pub(super) fn get_credential_request_try_into_ctap2(
     request: &GetCredentialRequest,
-    origin: &Origin,
+    request_env: &NavigationContext,
 ) -> std::result::Result<(GetAssertionRequest, String), WebAuthnError> {
     if request.public_key.is_none() {
         return Err(WebAuthnError::NotSupportedError);
@@ -283,7 +284,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
     }
 
     let client_data_json =
-        webauthn::format_client_data_json(Operation::Get, &options.challenge, &origin);
+        webauthn::format_client_data_json(Operation::Get, &options.challenge, &request_env);
     let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
     // TODO: actually calculate correct effective domain, and use fallback to related origin requests to fill this in. For now, just default to origin.
     let user_verification = match options
@@ -299,12 +300,14 @@ pub(super) fn get_credential_request_try_into_ctap2(
             return Err(WebAuthnError::TypeError);
         }
     };
-    let relying_party_id = options.rp_id.unwrap_or_else(|| {
-        // TODO: We're assuming that the origin is `<scheme>://data`, which is
-        // currently checked by the caller, but we should encode this in a type.
-        let (_, effective_domain) = origin.origin().rsplit_once('/').unwrap();
-        effective_domain.to_string()
-    });
+    let relying_party_id = match (options.rp_id, request_env.origin()) {
+        (Some(rp_id), _) => rp_id,
+        (None, Origin::Https { host, .. }) => host.to_string(),
+        (None, Origin::AppId(_)) => {
+            tracing::info!("RP ID required if using app ID as origin");
+            return Err(WebAuthnError::SecurityError);
+        }
+    };
 
     let extensions = if let Some(incoming_extensions) = options.extensions {
         let extensions = GetAssertionRequestExtensions {

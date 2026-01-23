@@ -392,7 +392,7 @@ mod test {
         credential_service::usb::InProcessUsbHandler,
         dbus::test::{DummyFlowServer, DummyUiServer},
         model::CredentialRequest,
-        webauthn::{self, Origin},
+        webauthn::{self, NavigationContext},
     };
     use credentialsd_common::model::Operation;
 
@@ -452,14 +452,13 @@ mod test {
 
     fn create_credential_request() -> CredentialRequest {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
-        let origin = Origin::SameOrigin("webauthn.io".to_string());
-        let is_cross_origin = false;
+        let origin = NavigationContext::SameOrigin("https://webauthn.io".parse().unwrap());
         let client_data_json =
             webauthn::format_client_data_json(Operation::Create, challenge, &origin);
         let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
         let make_request = MakeCredentialRequest {
             hash: client_data_hash,
-            origin: "webauthn.io".to_string(),
+            origin: "https://webauthn.io".to_string(),
             relying_party: Ctap2PublicKeyCredentialRpEntity {
                 id: "webauthn.io".to_string(),
                 name: Some("webauthn.io".to_string()),

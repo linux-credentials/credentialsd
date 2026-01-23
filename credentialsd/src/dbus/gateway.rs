@@ -26,7 +26,7 @@ use crate::{
         CredentialRequestController,
     },
     model::{CredentialRequest, CredentialResponse},
-    webauthn::Origin,
+    webauthn::{AppId, NavigationContext, Origin},
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
@@ -233,7 +233,23 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
             return Err(WebAuthnError::NotAllowedError.into());
         };
-        let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
+        let Some(origin) = request
+            .origin
+            .as_ref()
+            .map(|o| {
+                o.parse::<Origin>().map_err(|_| {
+                    tracing::warn!("Invalid origin specified: {:?}", request.origin);
+                    Error::SecurityError
+                })
+            })
+            .transpose()?
+        else {
+            tracing::warn!(
+            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
+        );
+            return Err(Error::SecurityError);
+        };
+        let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             // TODO: assert that RP ID is bound to origin:
             // - if RP ID is not set, set the RP ID to the origin's effective domain
@@ -241,15 +257,16 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             // - if RP ID is set, but origin's effective domain doesn't match
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
-                    if let WebAuthnError::TypeError = e {
-                        tracing::error!(
-                            "Could not parse passkey creation request. Rejecting request."
-                        );
-                    }
-                    e
-                })?;
+            let (make_cred_request, client_data_json) = create_credential_request_try_into_ctap2(
+                &request,
+                &request_environment,
+            )
+            .map_err(|e| {
+                if let WebAuthnError::TypeError = e {
+                    tracing::error!("Could not parse passkey creation request. Rejecting request.");
+                }
+                e
+            })?;
             if make_cred_request.algorithms.is_empty() {
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
                 return Err(Error::NotSupportedError);
@@ -306,7 +323,23 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
             return Err(WebAuthnError::NotAllowedError.into());
         };
-        let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
+        let Some(origin) = request
+            .origin
+            .as_ref()
+            .map(|o| {
+                o.parse::<Origin>().map_err(|_| {
+                    tracing::warn!("Invalid origin specified: {:?}", request.origin);
+                    Error::SecurityError
+                })
+            })
+            .transpose()?
+        else {
+            tracing::warn!(
+            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
+        );
+            return Err(Error::SecurityError);
+        };
+        let request_env = check_origin_from_privileged_client(origin, top_origin)?;
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             // Setup request
 
@@ -317,7 +350,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
+                get_credential_request_try_into_ctap2(&request, &request_env).map_err(|e| {
                     tracing::error!("Could not parse passkey assertion request: {e:?}");
                     WebAuthnError::TypeError
                 })?;
@@ -378,7 +411,7 @@ async fn validate_app_details(
     claimed_app_display_name: Option<String>,
     claimed_origin: Option<String>,
     claimed_top_origin: Option<String>,
-) -> Result<(RequestingApplication, Origin), Error> {
+) -> Result<(RequestingApplication, NavigationContext), Error> {
     let Some(unique_name) = header.sender() else {
         return Err(Error::SecurityError);
     };
@@ -392,21 +425,40 @@ async fn validate_app_details(
         return Err(Error::SecurityError);
     }
     // Now we can trust these app detail parameters.
-    let app_id = format!("app:{claimed_app_id}");
+    let Ok(app_id) = claimed_app_id.parse::<AppId>() else {
+        tracing::warn!("Invalid app ID passed: {claimed_app_id}");
+        return Err(Error::SecurityError);
+    };
     let display_name = claimed_app_display_name.unwrap_or_default();
 
     // Verify that the origin is valid for the given app ID.
-    let origin = check_origin_from_app(
-        &app_id,
-        claimed_origin.as_deref(),
-        claimed_top_origin.as_deref(),
-    )?;
+    let claimed_origin = claimed_origin
+        .map(|o| {
+            o.parse().map_err(|_| {
+                tracing::warn!("Invalid origin passed: {o}");
+                Error::SecurityError
+            })
+        })
+        .transpose()?;
+    let request_env = if let Some(claimed_origin) = claimed_origin {
+        let claimed_top_origin = claimed_top_origin
+            .map(|o| {
+                o.parse().map_err(|_| {
+                    tracing::warn!("Invalid origin passed: {o}");
+                    Error::SecurityError
+                })
+            })
+            .transpose()?;
+        check_origin_from_app(&app_id, claimed_origin, claimed_top_origin)?
+    } else {
+        NavigationContext::SameOrigin(Origin::AppId(app_id))
+    };
     let app_details = RequestingApplication {
         name: display_name,
-        path: app_id,
+        path: claimed_app_id,
         pid,
     };
-    Ok((app_details, origin))
+    Ok((app_details, request_env))
 }
 
 async fn should_trust_app_id(pid: u32) -> bool {
@@ -456,10 +508,10 @@ async fn should_trust_app_id(pid: u32) -> bool {
 }
 
 fn check_origin_from_app<'a>(
-    app_id: &str,
-    origin: Option<&str>,
-    top_origin: Option<&str>,
-) -> Result<Origin, WebAuthnError> {
+    app_id: &AppId,
+    origin: Origin,
+    top_origin: Option<Origin>,
+) -> Result<NavigationContext, WebAuthnError> {
     let trusted_clients = [
         "org.mozilla.firefox",
         "xyz.iinuwa.credentialsd.DemoCredentialsUi",
@@ -468,47 +520,28 @@ fn check_origin_from_app<'a>(
     if is_privileged_client {
         check_origin_from_privileged_client(origin, top_origin)
     } else {
-        Ok(Origin::AppId(app_id.to_string()))
+        Ok(NavigationContext::SameOrigin(Origin::AppId(app_id.clone())))
     }
 }
 
 fn check_origin_from_privileged_client(
-    origin: Option<&str>,
-    top_origin: Option<&str>,
-) -> Result<Origin, WebAuthnError> {
-    let origin = match (origin, top_origin) {
-        (Some(origin), top_origin) => {
-            if !origin.starts_with("https://") {
-                tracing::warn!(
-                    "Caller requested non-HTTPS schemed origin, which is not supported."
-                );
-                return Err(WebAuthnError::SecurityError);
-            }
-            if let Some(top_origin) = top_origin {
-                if origin == top_origin {
-                    Origin::SameOrigin(origin.to_string())
-                } else {
-                    Origin::CrossOrigin((origin.to_string(), top_origin.to_string()))
-                }
+    origin: Origin,
+    top_origin: Option<Origin>,
+) -> Result<NavigationContext, WebAuthnError> {
+    match (origin, top_origin) {
+        (origin @ Origin::Https { .. }, None) => Ok(NavigationContext::SameOrigin(origin)),
+        (origin @ Origin::Https { .. }, Some(top_origin @ Origin::Https { .. })) => {
+            if origin == top_origin {
+                Ok(NavigationContext::SameOrigin(origin))
             } else {
-                Origin::SameOrigin(origin.to_string())
+                Ok(NavigationContext::CrossOrigin((origin, top_origin)))
             }
         }
-        (None, Some(_)) => {
-            tracing::warn!("Top origin cannot be set if origin is not set.");
+        _ => {
+            tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
             return Err(WebAuthnError::SecurityError);
         }
-        (None, None) => {
-            tracing::warn!("No origin given. Rejecting request.");
-            return Err(WebAuthnError::SecurityError);
-        }
-    };
-
-    if let Origin::CrossOrigin(_) = origin {
-        tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-        return Err(WebAuthnError::NotAllowedError);
-    };
-    Ok(origin)
+    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -572,18 +605,19 @@ impl From<WebAuthnError> for Error {
 mod test {
     use credentialsd_common::model::WebAuthnError;
 
-    use crate::webauthn::Origin;
+    use crate::webauthn::{NavigationContext, Origin};
 
     use super::check_origin_from_privileged_client;
-    fn check_same_origin(origin: &str) -> Result<Origin, WebAuthnError> {
-        check_origin_from_privileged_client(Some(origin), Some(origin))
+    fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
+        let origin = origin.parse().unwrap();
+        check_origin_from_privileged_client(origin, None)
     }
 
     #[test]
     fn test_only_https_origins() {
         assert!(matches!(
             check_same_origin("https://example.com"),
-            Ok(Origin::SameOrigin(o)) if o == "https://example.com"
+            Ok(NavigationContext::SameOrigin(Origin::Https { host, .. })) if host == "example.com"
         ))
     }
 
