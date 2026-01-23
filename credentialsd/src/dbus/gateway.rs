@@ -31,10 +31,12 @@ use crate::{
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
+pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
 pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'static>(
     controller: C,
 ) -> Result<Connection, zbus::Error> {
+    let controller = Arc::new(AsyncMutex::new(controller));
     zbus::connection::Builder::session()
         .inspect_err(|err| {
             tracing::error!("Failed to connect to D-Bus session: {err}");
@@ -43,7 +45,13 @@ pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'stati
         .serve_at(
             SERVICE_PATH,
             CredentialGateway {
-                controller: Arc::new(AsyncMutex::new(controller)),
+                controller: controller.clone(),
+            },
+        )?
+        .serve_at(
+            PORTAL_SERVICE_PATH,
+            CredentialPortalGateway {
+                controller: controller.clone(),
             },
         )?
         .build()
@@ -51,6 +59,10 @@ pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'stati
 }
 
 struct CredentialGateway<C: CredentialRequestController> {
+    controller: Arc<AsyncMutex<C>>,
+}
+
+struct CredentialPortalGateway<C: CredentialRequestController> {
     controller: Arc<AsyncMutex<C>>,
 }
 
@@ -400,6 +412,74 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         })
     }
 }
+
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
+impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGateway<C> {
+    async fn create_credential(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
+        claimed_app_id: String,
+        claimed_app_display_name: Optional<String>,
+        parent_window: Optional<WindowHandle>,
+        claimed_origin: Optional<String>,
+        claimed_top_origin: Optional<String>,
+        request: CreateCredentialRequest,
+        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    ) -> Result<CreateCredentialResponse, Error> {
+        let (app_details, origin) = validate_app_details(
+            connection,
+            &header,
+            claimed_app_id,
+            claimed_app_display_name.into(),
+            claimed_origin.into(),
+            claimed_top_origin.into(),
+        )
+        .await?;
+        tracing::debug!(
+            ?app_details,
+            ?origin,
+            ?request,
+            ?parent_window,
+            ?portal_request_handle,
+            "Received request for creating credential"
+        );
+        // TODO
+        Err(Error::NotSupportedError)
+    }
+
+    fn get_credential(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
+        parent_window: Optional<WindowHandle>,
+        claimed_app_id: String,
+        app_display_name: Optional<String>,
+        origin: Optional<String>,
+        top_origin: Optional<String>,
+        request: GetCredentialRequest,
+        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    ) {
+    }
+
+    fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
+        Ok(GetClientCapabilitiesResponse {
+            conditional_create: false,
+            conditional_get: false,
+            hybrid_transport: true,
+            passkey_platform_authenticator: false,
+            user_verifying_platform_authenticator: false,
+            related_origins: false,
+            signal_all_accepted_credentials: false,
+            signal_current_user_details: false,
+            signal_unknown_credential: false,
+        })
+    }
+}
+
+async fn handle_create_credential() {}
 
 async fn validate_app_details(
     connection: &Connection,
