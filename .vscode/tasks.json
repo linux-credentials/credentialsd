@@ -3,7 +3,7 @@
     "tasks": [
         {
             "type": "meson",
-            "target": "credentialsd",
+            "target": "credentialsd/src/credentialsd:custom",
             "mode": "build",
             "problemMatcher": [
                 "$meson-gcc"
@@ -13,7 +13,7 @@
         },
         {
             "type": "meson",
-            "target": "credentialsd-ui",
+            "target": "credentialsd-ui/src/credentialsd-ui:custom",
             "mode": "build",
             "problemMatcher": [
                 "$meson-gcc"

@@ -15,7 +15,8 @@
             },
             "sourceLanguages": ["rust"],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Meson: Build Daemon"
+            "preLaunchTask": "Meson: Build Daemon",
+            "console": "internalConsole",
         },
         {
             "type": "lldb",

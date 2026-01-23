@@ -49,8 +49,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!(" ✅");
 
     println!("Waiting for messages...");
-    loop {
-        // wait forever, handle D-Bus in the background
-        std::future::pending::<()>().await;
-    }
+    tokio::signal::ctrl_c()
+        .await
+        .map_err(|err| format!("Failed to wait for shutdown signals: {err}. Shutting down"))?;
+
+    Ok(())
 }
