@@ -48,7 +48,9 @@ cargo_options = [
 cargo_options += [
   '--target-dir', cargo_target_dir,
 ]
-cargo_options += '--locked'
+if get_option('cargo_locked') == true
+  cargo_options += '--locked'
+endif
 if get_option('cargo_offline') == true
   cargo_options += ['--offline']
 endif

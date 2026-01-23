@@ -11,6 +11,12 @@ option(
   description: 'The directory to store files downloaded by Cargo',
 )
 option(
+  'cargo_locked',
+  type: 'boolean',
+  value: false,
+  description: 'Whether Cargo.lock will be used without modification. Defaults to false to automatically resolve dependencies.',
+)
+option(
   'cargo_offline',
   type: 'boolean',
   value: false,
