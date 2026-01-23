@@ -602,7 +602,7 @@ impl From<WebAuthnError> for Error {
 mod test {
     use credentialsd_common::model::WebAuthnError;
 
-    use crate::webauthn::{AppId, NavigationContext, Origin};
+    use crate::webauthn::{NavigationContext, Origin};
 
     use super::check_origin_from_privileged_client;
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
