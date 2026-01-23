@@ -800,7 +800,6 @@ name = "credentialsd-common"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
- "libwebauthn",
  "serde",
  "zvariant",
 ]

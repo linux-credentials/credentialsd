@@ -5,8 +5,7 @@ use std::future::Future;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use credentialsd_common::model::{
-    BackgroundEvent, CredentialRequest, CredentialResponse, Error as CredentialServiceError,
-    RequestingApplication, WebAuthnError,
+    BackgroundEvent, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
 };
 use credentialsd_common::server::{Device, RequestId, WindowHandle};
 use futures_lite::StreamExt;
@@ -25,12 +24,16 @@ use zbus::{
     ObjectServer,
 };
 
-use crate::credential_service::nfc::{NfcHandler, NfcState};
-use crate::credential_service::{
-    hybrid::{HybridHandler, HybridState},
-    usb::UsbHandler,
-    CredentialService, UiController, UsbState,
+use crate::{
+    credential_service::{
+        hybrid::{HybridHandler, HybridState},
+        nfc::{NfcHandler, NfcState},
+        usb::UsbHandler,
+        CredentialService, UiController, UsbState,
+    },
+    model::{CredentialRequest, CredentialResponse},
 };
+
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/FlowControl";
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
 
