@@ -1,5 +1,5 @@
-use ashpd::WindowIdentifierType;
 use async_std::channel::{Receiver, Sender};
+use credentialsd_common::server::WindowHandle;
 use tracing::{debug, info};
 
 use gtk::prelude::*;
@@ -14,7 +14,7 @@ mod imp {
     use crate::gui::view_model::gtk::ModelState;
 
     use super::*;
-    use ashpd::WindowIdentifierType;
+    use credentialsd_common::server::WindowHandle;
     use glib::{WeakRef, clone};
     use std::{
         cell::{OnceCell, RefCell},
@@ -25,7 +25,7 @@ mod imp {
     pub struct CredentialsUi {
         pub window: OnceCell<WeakRef<CredentialsUiWindow>>,
 
-        pub(super) parent_window: RefCell<Option<WindowIdentifierType>>,
+        pub(super) parent_window: RefCell<Option<WindowHandle>>,
         pub(super) tx: RefCell<Option<Sender<ViewEvent>>>,
         pub(super) rx: RefCell<Option<Receiver<ViewUpdate>>>,
     }
@@ -58,7 +58,7 @@ mod imp {
 
             let window = CredentialsUiWindow::new(&app, view_model);
             if let Some(parent_window) = self.parent_window.borrow().as_ref() {
-                parent_window.set_parent_of(&window);
+                _ = self.set_dialog_window(&window, parent_window);
             }
 
             let window2 = window.clone();
@@ -112,6 +112,53 @@ mod imp {
     }
 
     impl GtkApplicationImpl for CredentialsUi {}
+    impl CredentialsUi {
+        #[cfg(not(feature = "wayland"))]
+        fn set_dialog_window(
+            &self,
+            dialog_window: &CredentialsUiWindow,
+            parent_window: &WindowHandle,
+        ) -> Result<(), ()> {
+            tracing::warn!("Windowing system not supported");
+            Err(())
+        }
+
+        #[cfg(feature = "wayland")]
+        fn set_dialog_window(
+            &self,
+            dialog_window: &CredentialsUiWindow,
+            parent_window: &WindowHandle,
+        ) -> Result<(), ()> {
+            let surface = match dialog_window.surface() {
+                Some(surface) => surface,
+                None => {
+                    WidgetExt::realize(dialog_window);
+                    dialog_window.surface().expect("surface to exist on window")
+                }
+            };
+            dialog_window.set_modal(true);
+
+            match parent_window {
+                WindowHandle::Wayland(handle) => {
+                    use gdk_wayland::WaylandToplevel;
+
+                    let toplevel = surface.dynamic_cast::<WaylandToplevel>().map_err(|_| {
+                        tracing::warn!(
+                            "Failed to get toplevel from surface, not setting parent window"
+                        )
+                    })?;
+                    if !toplevel.set_transient_for_exported(handle) {
+                        tracing::warn!(?parent_window, "Failed to set window handle as parent.");
+                    }
+                    Ok(())
+                }
+                _ => {
+                    tracing::warn!(?parent_window, "Unsupported window handle passed");
+                    Err(())
+                }
+            }
+        }
+    }
 }
 
 glib::wrapper! {
@@ -166,7 +213,7 @@ impl CredentialsUi {
     }
 
     pub(crate) fn new(
-        parent_window: Option<WindowIdentifierType>,
+        parent_window: Option<WindowHandle>,
         tx: Sender<ViewEvent>,
         rx: Receiver<ViewUpdate>,
     ) -> Self {

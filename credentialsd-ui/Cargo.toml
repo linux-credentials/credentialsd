@@ -7,15 +7,15 @@ license = "LGPL-3.0-only"
 
 [features]
 default = ["wayland"]
-wayland = ["ashpd/gtk4_wayland", "ashpd/wayland"]
+wayland = ["gdk-wayland"]
 
 [dependencies]
-ashpd = { version = "0.12.0", features = ["async-std", "backend"], default-features = false }
 async-std = { version = "1.13.1", features = ["unstable"] }
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite = "2.6.0"
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_6"] }
+gdk-wayland = { version = "0.10.3", package = "gdk4-wayland", optional = true }
 qrcode = "0.14.1"
 serde.workspace = true
 tracing.workspace = true

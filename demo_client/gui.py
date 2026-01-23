@@ -21,7 +21,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkWayland", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402
+from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402,F401
 
 import webauthn  # noqa: E402
 import util  # noqa: E402
@@ -92,10 +92,14 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         options = self._get_registration_options(user_handle, username)
         print(f"registration options: {options}")
+
         def cb(user_id, toplevel, handle):
             cur = DB.cursor()
-            window_handle = "wayland:{handle}"
-            auth_data = create_passkey(INTERFACE, window_handle, self.origin, self.origin, options)
+            window_handle = f"wayland:{handle}"
+            print(window_handle)
+            auth_data = create_passkey(
+                INTERFACE, window_handle, self.origin, self.origin, options
+            )
             if not user_id:
                 cur.execute(
                     "insert into users (username, user_handle, created_time) values (?, ?, ?)",
@@ -106,7 +110,9 @@ class MainWindow(Gtk.ApplicationWindow):
                 "user_handle": user_handle,
                 "cred_id": auth_data.cred_id,
                 "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
-                "sign_count": None if auth_data.sign_count == 0 else auth_data.sign_count,
+                "sign_count": None
+                if auth_data.sign_count == 0
+                else auth_data.sign_count,
                 "backup_eligible": 1 if "BE" in auth_data.flags else 0,
                 "backup_state": 1 if "BS" in auth_data.flags else 0,
                 "uv_initialized": 1 if "UV" in auth_data.flags else 0,
@@ -124,6 +130,7 @@ class MainWindow(Gtk.ApplicationWindow):
             print("Added passkey")
             DB.commit()
             cur.close()
+
         toplevel = self.get_surface()
         toplevel.export_handle(functools.partial(cb, user_id))
         cur.close()
@@ -213,6 +220,7 @@ class MainWindow(Gtk.ApplicationWindow):
                         return user_cred
                     else:
                         return None
+
         def cb(toplevel, window_handle):
             print(f"received window handle: {window_handle}")
             window_handle = f"wayland:{window_handle}"
@@ -302,7 +310,11 @@ class MyApp(Adw.Application):
 
 
 def create_passkey(
-    interface: ProxyInterface, window_handle: str, origin: str, top_origin: str, options: dict
+    interface: ProxyInterface,
+    window_handle: str,
+    origin: str,
+    top_origin: str,
+    options: dict,
 ) -> webauthn.AuthenticatorData:
     is_same_origin = origin == top_origin
     print(
@@ -334,7 +346,9 @@ def create_passkey(
     return webauthn.verify_create_response(response_json, options, origin)
 
 
-def get_passkey(interface, window_handle, origin, top_origin, rp_id, cred_ids, cred_lookup_fn):
+def get_passkey(
+    interface, window_handle, origin, top_origin, rp_id, cred_ids, cred_lookup_fn
+):
     is_same_origin = origin == top_origin
     options = {
         "challenge": util.b64_encode(secrets.token_bytes(16)),
