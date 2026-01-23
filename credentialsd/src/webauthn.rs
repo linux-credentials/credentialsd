@@ -690,6 +690,7 @@ pub fn format_client_data_json(
     };
     let cross_origin_str = if is_cross_origin { "true" } else { "false" };
     format!("{{\"type\":\"{op_str}\",\"challenge\":\"{challenge}\",\"origin\":\"{origin}\",\"crossOrigin\":{cross_origin_str}}}")
+}
 
 #[derive(Debug)]
 pub(crate) enum Origin {
@@ -708,10 +709,10 @@ impl Origin {
     }
 
     pub(crate) fn top_origin(&self) -> Option<&str> {
+        match self {
             Origin::AppId(_) => None,
             Origin::SameOrigin(_) => None,
             Origin::CrossOrigin((_, ref top_origin)) => Some(top_origin),
         }
     }
-}
 }

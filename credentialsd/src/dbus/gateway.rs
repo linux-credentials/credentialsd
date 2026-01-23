@@ -26,6 +26,7 @@ use crate::{
         CredentialRequestController,
     },
     model::{CredentialRequest, CredentialResponse},
+    webauthn::Origin,
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
@@ -361,6 +362,146 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             signal_unknown_credential: false,
         })
     }
+}
+
+async fn validate_app_details(
+    connection: &Connection,
+    header: &Header<'_>,
+    claimed_app_id: String,
+    claimed_app_display_name: Option<String>,
+    claimed_origin: Option<String>,
+    claimed_top_origin: Option<String>,
+) -> Result<(RequestingApplication, Origin), Error> {
+    let Some(unique_name) = header.sender() else {
+        return Err(Error::SecurityError);
+    };
+
+    let Some(pid) = query_peer_pid_via_fdinfo(connection, unique_name).await else {
+        return Err(Error::SecurityError);
+    };
+
+    if claimed_app_id.is_empty() || !should_trust_app_id(pid).await {
+        tracing::warn!("App ID could not be determined. Rejecting request.");
+        return Err(Error::SecurityError);
+    }
+    // Now we can trust these app detail parameters.
+    let app_id = format!("app:{claimed_app_id}");
+    let display_name = claimed_app_display_name.unwrap_or_default();
+
+    // Verify that the origin is valid for the given app ID.
+    let origin = check_origin_from_app(
+        &app_id,
+        claimed_origin.as_deref(),
+        claimed_top_origin.as_deref(),
+    )?;
+    let app_details = RequestingApplication {
+        name: display_name,
+        path: app_id,
+        pid,
+    };
+    Ok((app_details, origin))
+}
+
+async fn should_trust_app_id(pid: u32) -> bool {
+    // Verify if we should trust the peer based on the file name. We verify that
+    // we're in the same mount namespace before using the exe path.
+
+    // TODO: If the portal is running in a separate mount namespace for security
+    // reasons, then this check will fail with a false negative.
+    // In the future, we should retrieve this information from another trusted
+    // source, e.g. check if the PID is in a cgroup managed by systemd and
+    // corresponds to the org.freedesktop.portal.Desktop D-Bus service unit.
+    let Ok(my_mnt_ns) = tokio::fs::read_link("/proc/self/ns/mnt").await else {
+        tracing::debug!("Could not read peer mount namespace");
+        return false;
+    };
+    let Ok(peer_mnt_ns) = tokio::fs::read_link(format!("/proc/{pid}/ns/mnt")).await else {
+        tracing::debug!("Could not determine our mount namespace");
+        return false;
+    };
+    tracing::debug!(
+        "mount namespace:\n  ours:\t{:?}\n  theirs:\t{:?}",
+        my_mnt_ns,
+        peer_mnt_ns
+    );
+    if my_mnt_ns != peer_mnt_ns {
+        tracing::warn!("Peer mount namespace is not the same as ours, not trusting the request.");
+        return false;
+    }
+
+    let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{pid}/exe")).await else {
+        return false;
+    };
+
+    // The target binaries are hard-coded to valid UTF-8, so it's acceptable to
+    // lose some data here.
+    let Some(exe_path) = exe_path.to_str() else {
+        return false;
+    };
+    tracing::debug!(?exe_path, %pid, "Found executable path:");
+    let trusted_callers: Vec<String> = if cfg!(debug_assertions) {
+        let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
+        trusted_callers_env.split(',').map(String::from).collect()
+    } else {
+        vec!["/usr/bin/xdg-desktop-portal".to_string()]
+    };
+    return trusted_callers.as_slice().contains(&exe_path.to_string());
+}
+
+fn check_origin_from_app<'a>(
+    app_id: &str,
+    origin: Option<&str>,
+    top_origin: Option<&str>,
+) -> Result<Origin, WebAuthnError> {
+    let trusted_clients = [
+        "org.mozilla.firefox",
+        "xyz.iinuwa.credentialsd.DemoCredentialsUi",
+    ];
+    let is_privileged_client = trusted_clients.contains(&app_id.as_ref());
+    if is_privileged_client {
+        check_origin_from_privileged_client(origin, top_origin)
+    } else {
+        Ok(Origin::AppId(app_id.to_string()))
+    }
+}
+
+fn check_origin_from_privileged_client(
+    origin: Option<&str>,
+    top_origin: Option<&str>,
+) -> Result<Origin, WebAuthnError> {
+    let origin = match (origin, top_origin) {
+        (Some(origin), top_origin) => {
+            if !origin.starts_with("https://") {
+                tracing::warn!(
+                    "Caller requested non-HTTPS schemed origin, which is not supported."
+                );
+                return Err(WebAuthnError::SecurityError);
+            }
+            if let Some(top_origin) = top_origin {
+                if origin == top_origin {
+                    Origin::SameOrigin(origin.to_string())
+                } else {
+                    Origin::CrossOrigin((origin.to_string(), top_origin.to_string()))
+                }
+            } else {
+                Origin::SameOrigin(origin.to_string())
+            }
+        }
+        (None, Some(_)) => {
+            tracing::warn!("Top origin cannot be set if origin is not set.");
+            return Err(WebAuthnError::SecurityError);
+        }
+        (None, None) => {
+            tracing::warn!("No origin given. Rejecting request.");
+            return Err(WebAuthnError::SecurityError);
+        }
+    };
+
+    if let Origin::CrossOrigin(_) = origin {
+        tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
+        return Err(WebAuthnError::NotAllowedError);
+    };
+    Ok(origin)
 }
 
 async fn check_origin(
