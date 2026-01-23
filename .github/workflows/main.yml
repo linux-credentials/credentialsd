@@ -39,6 +39,9 @@ jobs:
             blueprint-compiler desktop-file-utils gettext ninja-build python3-pip \
             udev zip
 
+      - name: Set up mold as default linker
+        uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878
+
       - name: Install Meson
         run: |
           # Newer version needed for --interactive flag needed below
