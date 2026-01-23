@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use zvariant::{SerializeDict, Type};
@@ -99,7 +99,7 @@ impl Transport {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
 pub struct RequestingApplication {
     pub name: String,
-    pub path: PathBuf,
+    pub path: String,
     pub pid: u32,
 }
 

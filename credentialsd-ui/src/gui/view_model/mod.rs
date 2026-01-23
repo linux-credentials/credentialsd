@@ -107,7 +107,7 @@ impl<F: FlowController + Send> ViewModel<F> {
         subtitle = subtitle.replace("%s1", &self.rp_id);
         subtitle = subtitle.replace("%i1", &format!("{}", requesting_app.pid));
         subtitle = subtitle.replace("%s2", &requesting_app.name);
-        subtitle = subtitle.replace("%s3", &requesting_app.path.to_string_lossy());
+        subtitle = subtitle.replace("%s3", &requesting_app.path);
         self.title = title;
         self.subtitle = subtitle;
         self.tx_update

@@ -208,7 +208,7 @@ async fn query_connection_peer_binary(
 
     Some(RequestingApplication {
         name: command_name,
-        path: exe_path,
+        path: exe_path.to_string_lossy().to_string(),
         pid,
     })
 }
