@@ -33,7 +33,9 @@ where
     subtitle: String,
     operation: Operation,
     rp_id: String,
-    requesting_app: RequestingApplication,
+    app_name: String,
+    app_path_or_id: String,
+    app_pid: u32,
 
     // This includes devices like platform authenticator, USB, hybrid
     devices: Vec<Device>,
@@ -52,13 +54,22 @@ impl<F: FlowController + Send> ViewModel<F> {
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
+        let RequestingApplication {
+            name: app_name,
+            path,
+            pid,
+        } = request.requesting_app;
+
+        let app_name: Option<String> = app_name.into();
         Self {
             flow_controller,
             rx_event,
             tx_update,
             operation: request.operation,
             rp_id: request.rp_id,
-            requesting_app: request.requesting_app,
+            app_name: app_name.unwrap_or_else(|| gettext("unknown application")),
+            app_path_or_id: path,
+            app_pid: pid,
             title: String::default(),
             subtitle: String::default(),
             devices: Vec::new(),
@@ -69,11 +80,6 @@ impl<F: FlowController + Send> ViewModel<F> {
     }
 
     async fn update_title(&mut self) {
-        let mut requesting_app = self.requesting_app.clone();
-
-        if requesting_app.name.is_empty() {
-            requesting_app.name = gettext("unknown application");
-        };
         let mut title = match self.operation {
             Operation::Create => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
@@ -105,9 +111,9 @@ impl<F: FlowController + Send> ViewModel<F> {
         }
         .to_string();
         subtitle = subtitle.replace("%s1", &self.rp_id);
-        subtitle = subtitle.replace("%i1", &format!("{}", requesting_app.pid));
-        subtitle = subtitle.replace("%s2", &requesting_app.name);
-        subtitle = subtitle.replace("%s3", &requesting_app.path);
+        subtitle = subtitle.replace("%i1", &format!("{}", self.app_pid));
+        subtitle = subtitle.replace("%s2", &self.app_name);
+        subtitle = subtitle.replace("%s3", &self.app_path_or_id);
         self.title = title;
         self.subtitle = subtitle;
         self.tx_update

@@ -220,7 +220,7 @@ async fn query_connection_peer_binary(
     tracing::debug!("Request is from: {exe_path:?}");
 
     Some(RequestingApplication {
-        name: command_name,
+        name: Some(command_name).into(),
         path: exe_path.to_string_lossy().to_string(),
         pid,
     })
@@ -531,7 +531,7 @@ async fn validate_app_details(
         NavigationContext::SameOrigin(Origin::AppId(app_id))
     };
     let app_details = RequestingApplication {
-        name: display_name,
+        name: Some(display_name).into(),
         path: claimed_app_id,
         pid,
     };
