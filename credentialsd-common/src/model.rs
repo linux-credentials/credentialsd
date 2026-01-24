@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zvariant::{SerializeDict, Type};
+use zvariant::{Optional, SerializeDict, Type};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -98,8 +98,8 @@ impl Transport {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
 pub struct RequestingApplication {
-    pub name: String,
-    pub path: String,
+    pub path_or_app_id: String,
+    pub name: Optional<String>,
     pub pid: u32,
 }
 
