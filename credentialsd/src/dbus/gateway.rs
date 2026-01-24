@@ -558,7 +558,7 @@ async fn should_trust_app_id(pid: u32) -> bool {
         return false;
     };
     tracing::debug!(
-        "mount namespace:\n  ours:\t{:?}\n  theirs:\t{:?}",
+        "mount namespace:\n  ours:  {:?}\n  theirs: {:?}",
         my_mnt_ns,
         peer_mnt_ns
     );
