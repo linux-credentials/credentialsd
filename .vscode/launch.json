@@ -11,9 +11,13 @@
             "program": "${workspaceFolder}/build/credentialsd/src/credentialsd",
             "args": [],
             "env": {
-                "RUST_LOG": "credentialsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug"
+                "RUST_LOG": "credentialsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug",
+                "CREDSD_TRUSTED_CALLERS": "/usr/bin/python3.14",
+                "CREDSD_TRUSTED_APP_IDS": "app:xyz.iinuwa.credentialsd.DemoCredentialsUi",
             },
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Meson: Build Daemon"
         },
@@ -27,7 +31,9 @@
                 "GSETTINGS_SCHEMA_DIR": "${workspaceFolder}/build/credentialsd-ui/data",
                 "RUST_LOG": "credentialsd_ui=debug,zbus::trace,zbus::object_server::debug"
             },
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Meson: Build UI"
         },
@@ -35,7 +41,10 @@
     "compounds": [
         {
             "name": "Server/Client",
-            "configurations": ["Debug UI (credentialsd-ui)", "Debug Daemon (credentialsd)"]
+            "configurations": [
+                "Debug UI (credentialsd-ui)",
+                "Debug Daemon (credentialsd)"
+            ]
         }
     ]
 }
