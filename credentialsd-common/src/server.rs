@@ -1,6 +1,6 @@
 //! Types for serializing across D-Bus instances
 
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::{
     Deserialize, Serialize,
@@ -111,6 +111,14 @@ pub struct CreateCredentialResponse {
     #[zvariant(rename = "type")]
     r#type: String,
     public_key: Option<CreatePublicKeyCredentialResponse>,
+}
+
+impl NoneValue for CreateCredentialResponse {
+    type NoneType = HashMap<String, OwnedValue>;
+
+    fn null_value() -> Self::NoneType {
+        HashMap::new()
+    }
 }
 
 #[derive(Clone, Debug, DeserializeDict, Type)]

@@ -415,6 +415,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
 
 #[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
 impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGateway<C> {
+    #[zbus(out_args("response", "results"))]
     async fn create_credential(
         &self,
         #[zbus(connection)] connection: &Connection,
@@ -427,7 +428,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGat
         claimed_top_origin: Optional<String>,
         request: CreateCredentialRequest,
         _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
-    ) -> Result<CreateCredentialResponse, Error> {
+    ) -> Result<(u32, Optional<CreateCredentialResponse>), Error> {
         let (app_details, origin) = validate_app_details(
             connection,
             &header,
@@ -446,7 +447,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGat
             "Received request for creating credential"
         );
         // TODO
-        Err(Error::NotSupportedError)
+        Ok((2, None.into()))
+        // Err(Error::NotSupportedError)
     }
 
     fn get_credential(
