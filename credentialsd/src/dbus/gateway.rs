@@ -458,7 +458,7 @@ async fn should_trust_app_id(connection: &Connection, header: &Header<'_>) -> bo
         return false;
     };
     tracing::debug!(
-        "mount namespace:\n  ours:\t{:?}\n  theirs:\t{:?}",
+        "mount namespace:\n  ours:  {:?}\n  theirs: {:?}",
         my_mnt_ns,
         peer_mnt_ns
     );
@@ -471,10 +471,19 @@ async fn should_trust_app_id(connection: &Connection, header: &Header<'_>) -> bo
         return false;
     };
 
+    // The target binaries are hard-coded to valid UTF-8, so it's acceptable to
+    // lose some data here.
+    let Some(exe_path) = exe_path.to_str() else {
+        return false;
+    };
     tracing::debug!(?exe_path, %pid, "Found executable path:");
-    let trusted_callers = ["/usr/bin/xdg-desktop-portal"];
-    // return trusted_callers.contains(exe_path).ends_with("xdg-desktop-portal");
-    return exe_path.ends_with("xdg-desktop-portal");
+    let trusted_callers: Vec<String> = if cfg!(debug_assertions) {
+        let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
+        trusted_callers_env.split(',').map(String::from).collect()
+    } else {
+        vec!["/usr/bin/xdg-desktop-portal".to_string()]
+    };
+    return trusted_callers.as_slice().contains(&exe_path.to_string());
 }
 
 fn check_origin_from_app<'a>(
