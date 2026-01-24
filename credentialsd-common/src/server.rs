@@ -261,6 +261,14 @@ pub struct GetCredentialResponse {
     public_key: Option<GetPublicKeyCredentialResponse>,
 }
 
+impl NoneValue for GetCredentialResponse {
+    type NoneType = HashMap<String, OwnedValue>;
+
+    fn null_value() -> Self::NoneType {
+        HashMap::new()
+    }
+}
+
 #[derive(SerializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct GetPublicKeyCredentialResponse {

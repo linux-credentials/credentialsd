@@ -10,12 +10,13 @@ use credentialsd_common::{
         GetCredentialResponse, WindowHandle,
     },
 };
+use serde::{ser::SerializeTuple, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     fdo, interface,
     message::Header,
     names::{BusName, UniqueName},
-    zvariant::{self, ObjectPath, Optional},
+    zvariant::{ObjectPath, Optional, OwnedValue, Type, Value},
     Connection, DBusError,
 };
 
@@ -195,60 +196,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             return Err(WebAuthnError::NotAllowedError.into());
         };
         let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            // TODO: assert that RP ID is bound to origin:
-            // - if RP ID is not set, set the RP ID to the origin's effective domain
-            // - if RP ID is set, assert that it matches origin's effective domain
-            // - if RP ID is set, but origin's effective domain doesn't match
-            //    - query for related origins, if supported
-            //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
-                    if let WebAuthnError::TypeError = e {
-                        tracing::error!(
-                            "Could not parse passkey creation request. Rejecting request."
-                        );
-                    }
-                    e
-                })?;
-            if make_cred_request.algorithms.is_empty() {
-                tracing::info!("No supported algorithms given in request. Rejecting request.");
-                return Err(Error::NotSupportedError);
-            }
-            // Find out where this request is coming from (which application is requesting this)
-            let requesting_app = query_connection_peer_binary(header, connection).await;
-            let cred_request =
-                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
-
-            let response = self
-                .controller
-                .lock()
-                .await
-                .request_credential(requesting_app, cred_request, parent_window.into())
-                .await?;
-
-            if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    create_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
-                Ok(public_key_response.into())
-            } else {
-                // TODO: is response safe to log here?
-                // tracing::error!("Expected create public key credential response, received {response:?}");
-                tracing::error!("Did not receive expected create public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError.into())
-            }
-        } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
-            Err(WebAuthnError::TypeError.into())
-        }
+        // Find out where this request is coming from (which application is requesting this)
+        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let response = handle_create_credential(
+            &self.controller,
+            request,
+            origin,
+            requesting_app,
+            parent_window.into(),
+        )
+        .await?;
+        Ok(response)
     }
 
     async fn get_credential(
@@ -268,53 +226,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             return Err(WebAuthnError::NotAllowedError.into());
         };
         let origin = check_origin_from_privileged_client(request.origin.as_deref(), top_origin)?;
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            // Setup request
-
-            // TODO: assert that RP ID is bound to origin:
-            // - if RP ID is not set, set the RP ID to the origin's effective domain
-            // - if RP ID is set, assert that it matches origin's effective domain
-            // - if RP ID is set, but origin's effective domain doesn't match
-            //    - query for related origins, if supported
-            //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
-                    tracing::error!("Could not parse passkey assertion request: {e:?}");
-                    WebAuthnError::TypeError
-                })?;
-            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
-            // Find out where this request is coming from (which application is requesting this)
-            let requesting_app = query_connection_peer_binary(header, connection).await;
-
-            let response = self
-                .controller
-                .lock()
-                .await
-                .request_credential(requesting_app, cred_request, parent_window.into())
-                .await?;
-
-            if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    get_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
-                Ok(public_key_response.into())
-            } else {
-                // TODO: is response safe to log here?
-                // tracing::error!("Expected get public key credential response, received {response:?}");
-                tracing::error!("Did not receive expected get public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError.into())
-            }
-        } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
-            Err(WebAuthnError::TypeError.into())
-        }
+        // Find out where this request is coming from (which application is requesting this)
+        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let response = handle_get_credential(
+            &self.controller,
+            request,
+            origin,
+            requesting_app,
+            parent_window.into(),
+        )
+        .await?;
+        Ok(response)
     }
 
     async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
@@ -346,9 +268,9 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGat
         claimed_origin: Optional<String>,
         claimed_top_origin: Optional<String>,
         request: CreateCredentialRequest,
-        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
-    ) -> Result<(u32, Optional<CreateCredentialResponse>), Error> {
-        let (app_details, origin) = validate_app_details(
+        _options: HashMap<String, OwnedValue>,
+    ) -> PortalResult<CreateCredentialResponse, Error> {
+        let app_validation_result = validate_app_details(
             connection,
             &header,
             claimed_app_id,
@@ -356,33 +278,77 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGat
             claimed_origin.into(),
             claimed_top_origin.into(),
         )
-        .await?;
+        .await;
+        let (requesting_app, origin) = match app_validation_result {
+            Ok(validated) => validated,
+            Err(err) => return Err(err).into(),
+        };
         tracing::debug!(
-            ?app_details,
+            ?requesting_app,
             ?origin,
             ?request,
             ?parent_window,
             ?portal_request_handle,
             "Received request for creating credential"
         );
-        // TODO
-        Ok((2, None.into()))
-        // Err(Error::NotSupportedError)
+        let response = handle_create_credential(
+            &self.controller,
+            request,
+            origin,
+            Some(requesting_app),
+            parent_window.into(),
+        )
+        .await
+        .map_err(Error::from);
+
+        response.into()
     }
 
-    fn get_credential(
+    async fn get_credential(
         &self,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         portal_request_handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
-        app_display_name: Optional<String>,
-        origin: Optional<String>,
-        top_origin: Optional<String>,
+        claimed_app_display_name: Optional<String>,
+        claimed_origin: Optional<String>,
+        claimed_top_origin: Optional<String>,
         request: GetCredentialRequest,
-        _options: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
-    ) {
+        _options: HashMap<String, OwnedValue>,
+    ) -> PortalResult<GetCredentialResponse, Error> {
+        let app_validation_result = validate_app_details(
+            connection,
+            &header,
+            claimed_app_id,
+            claimed_app_display_name.into(),
+            claimed_origin.into(),
+            claimed_top_origin.into(),
+        )
+        .await;
+        let (requesting_app, origin) = match app_validation_result {
+            Ok(validated) => validated,
+            Err(err) => return Err(err).into(),
+        };
+
+        tracing::debug!(
+            ?requesting_app,
+            ?origin,
+            ?request,
+            ?parent_window,
+            ?portal_request_handle,
+            "Received request for retrieving credential"
+        );
+        let response = handle_get_credential(
+            &self.controller,
+            request,
+            origin,
+            Some(requesting_app),
+            parent_window.into(),
+        )
+        .await
+        .map_err(Error::from);
+        response.into()
     }
 
     fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
@@ -400,7 +366,115 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialPortalGat
     }
 }
 
-async fn handle_create_credential() {}
+async fn handle_create_credential<C: CredentialRequestController>(
+    controller: &AsyncMutex<C>,
+    request: CreateCredentialRequest,
+    origin: Origin,
+    requesting_app: Option<RequestingApplication>,
+    parent_window: Option<WindowHandle>,
+) -> Result<CreateCredentialResponse, WebAuthnError> {
+    if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        // TODO: assert that RP ID is bound to origin:
+        // - if RP ID is not set, set the RP ID to the origin's effective domain
+        // - if RP ID is set, assert that it matches origin's effective domain
+        // - if RP ID is set, but origin's effective domain doesn't match
+        //    - query for related origins, if supported
+        //    - fail if not supported, or if RP ID doesn't match any related origins.
+        let (make_cred_request, client_data_json) =
+            create_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
+                if let WebAuthnError::TypeError = e {
+                    tracing::error!("Could not parse passkey creation request. Rejecting request.");
+                }
+                e
+            })?;
+        if make_cred_request.algorithms.is_empty() {
+            tracing::info!("No supported algorithms given in request. Rejecting request.");
+            return Err(WebAuthnError::NotSupportedError);
+        }
+        let cred_request = CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
+
+        let response = controller
+            .lock()
+            .await
+            .request_credential(requesting_app, cred_request, parent_window.into())
+            .await?;
+
+        if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
+            let public_key_response =
+                create_credential_response_try_from_ctap2(&cred_response, client_data_json)
+                    .map_err(|err| {
+                        tracing::error!(
+                            "Failed to parse credential response from authenticator: {err}"
+                        );
+                        // Using NotAllowedError as a catch-all error.
+                        WebAuthnError::NotAllowedError
+                    })?;
+            Ok(public_key_response.into())
+        } else {
+            // TODO: is response safe to log here?
+            // tracing::error!("Expected create public key credential response, received {response:?}");
+            tracing::error!("Did not receive expected create public key credential response.");
+            // Using NotAllowedError as a catch-all error.
+            Err(WebAuthnError::NotAllowedError.into())
+        }
+    } else {
+        tracing::error!("Unknown credential type request: {}", request.r#type);
+        Err(WebAuthnError::TypeError)
+    }
+}
+
+async fn handle_get_credential<C: CredentialRequestController>(
+    controller: &AsyncMutex<C>,
+    request: GetCredentialRequest,
+    origin: Origin,
+    requesting_app: Option<RequestingApplication>,
+    parent_window: Option<WindowHandle>,
+) -> Result<GetCredentialResponse, WebAuthnError> {
+    if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        // Setup request
+
+        // TODO: assert that RP ID is bound to origin:
+        // - if RP ID is not set, set the RP ID to the origin's effective domain
+        // - if RP ID is set, assert that it matches origin's effective domain
+        // - if RP ID is set, but origin's effective domain doesn't match
+        //    - query for related origins, if supported
+        //    - fail if not supported, or if RP ID doesn't match any related origins.
+        let (get_cred_request, client_data_json) =
+            get_credential_request_try_into_ctap2(&request, &origin).map_err(|e| {
+                tracing::error!("Could not parse passkey assertion request: {e:?}");
+                WebAuthnError::TypeError
+            })?;
+        let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+
+        let response = controller
+            .lock()
+            .await
+            .request_credential(requesting_app, cred_request, parent_window.into())
+            .await?;
+
+        if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
+            let public_key_response = get_credential_response_try_from_ctap2(
+                &cred_response,
+                client_data_json,
+            )
+            .map_err(|err| {
+                tracing::error!("Failed to parse credential response from authenticator: {err}");
+                // Using NotAllowedError as a catch-all error.
+                WebAuthnError::NotAllowedError
+            })?;
+            Ok(public_key_response.into())
+        } else {
+            // TODO: is response safe to log here?
+            // tracing::error!("Expected get public key credential response, received {response:?}");
+            tracing::error!("Did not receive expected get public key credential response.");
+            // Using NotAllowedError as a catch-all error.
+            Err(WebAuthnError::NotAllowedError.into())
+        }
+    } else {
+        tracing::error!("Unknown credential type request: {}", request.r#type);
+        Err(WebAuthnError::TypeError.into())
+    }
+}
 
 async fn validate_app_details(
     connection: &Connection,
@@ -491,11 +565,18 @@ fn check_origin_from_app<'a>(
     origin: Option<&str>,
     top_origin: Option<&str>,
 ) -> Result<Origin, WebAuthnError> {
-    let trusted_clients = [
-        "org.mozilla.firefox",
-        "xyz.iinuwa.credentialsd.DemoCredentialsUi",
-    ];
-    let is_privileged_client = trusted_clients.contains(&app_id.as_ref());
+    let is_privileged_client = {
+        let trusted_clients = ["app:org.mozilla.firefox"];
+        let mut privileged = trusted_clients.contains(&app_id.as_ref());
+        if cfg!(debug_assertions) && !privileged {
+            let trusted_clients_env = std::env::var("CREDSD_TRUSTED_APP_IDS").unwrap_or_default();
+            privileged = trusted_clients_env
+                .split(',')
+                .map(String::from)
+                .any(|c| app_id == c);
+        }
+        privileged
+    };
     if is_privileged_client {
         check_origin_from_privileged_client(origin, top_origin)
     } else {
@@ -583,6 +664,53 @@ enum Error {
     /// The options argument was not a valid `CredentialCreationOptions` value, or
     /// the value of `user.id` was empty or was longer than 64 bytes.
     TypeError,
+}
+
+#[repr(u32)]
+#[derive(Serialize)]
+enum PortalResponse {
+    Success = 0,
+    Cancelled = 1,
+    Other = 2,
+}
+
+#[derive(Type)]
+#[zvariant(signature = "ua{sv}")]
+struct PortalResult<T, E> {
+    inner: Result<T, E>,
+}
+
+impl<T, E> Serialize for PortalResult<T, E>
+where
+    T: Serialize + Type,
+    E: std::error::Error,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_tuple(2)?;
+        match &self.inner {
+            Err(err) => {
+                map.serialize_element(&(PortalResponse::Other as u32))?;
+                map.serialize_element(&HashMap::<&str, Value<'_>>::from([(
+                    "error",
+                    Value::Str(err.to_string().into()),
+                )]))?;
+            }
+            Ok(response) => {
+                map.serialize_element(&(PortalResponse::Success as u32))?;
+                map.serialize_element(&response)?;
+            }
+        };
+        map.end()
+    }
+}
+
+impl<T, E> From<Result<T, E>> for PortalResult<T, E> {
+    fn from(value: Result<T, E>) -> Self {
+        PortalResult { inner: value }
+    }
 }
 
 impl From<WebAuthnError> for Error {
