@@ -3,7 +3,7 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2025-10-30 14:43+0100\n"
+"POT-Creation-Date: 2026-02-03 10:40+0100\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: de_DE\n"
@@ -14,7 +14,7 @@ msgstr ""
 
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
-#: src/gui/view_model/gtk/mod.rs:378
+#: src/gui/view_model/gtk/mod.rs:385
 msgid "Credential Manager"
 msgstr "Zugangsdatenmanager"
 
@@ -81,30 +81,30 @@ msgid "Devices"
 msgstr "Geräte"
 
 #: data/resources/ui/window.ui:98
-msgid "Plug in security key"
-msgstr "Stecken Sie Ihren Security-Token ein"
+msgid "Connect a security key"
+msgstr "Stecken Sie Ihren Security-Token ein."
 
-#: data/resources/ui/window.ui:138
+#: data/resources/ui/window.ui:139
 msgid "Scan the QR code to connect your device"
 msgstr "Scannen Sie den QR-Code, um Ihr Gerät zu verbinden"
 
-#: data/resources/ui/window.ui:183 data/resources/ui/window.ui:189
+#: data/resources/ui/window.ui:184 data/resources/ui/window.ui:190
 msgid "Choose credential"
 msgstr "Wählen Sie Zugangsdaten aus"
 
-#: data/resources/ui/window.ui:212
+#: data/resources/ui/window.ui:214
 msgid "Complete"
 msgstr "Abgeschlossen"
 
-#: data/resources/ui/window.ui:218
+#: data/resources/ui/window.ui:220
 msgid "Done!"
 msgstr "Fertig!"
 
-#: data/resources/ui/window.ui:229
+#: data/resources/ui/window.ui:231
 msgid "Something went wrong."
 msgstr "Etwas ist schief gegangen."
 
-#: data/resources/ui/window.ui:242 src/gui/view_model/mod.rs:280
+#: data/resources/ui/window.ui:244 src/gui/view_model/mod.rs:290
 msgid ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
@@ -112,37 +112,37 @@ msgstr ""
 "Beim Abrufen Ihrer Zugangsdaten ist ein Fehler aufgetreten. Versuchen Sie es "
 "später wieder, oder verwenden Sie einen anderen Security-Token."
 
-#: src/gui/view_model/gtk/mod.rs:145
+#: src/gui/view_model/gtk/mod.rs:147
 #, fuzzy
 msgid "Enter your PIN. One attempt remaining."
 msgid_plural "Enter your PIN. %d attempts remaining."
 msgstr[0] "Geben Sie Ihren PIN ein. Sie haben nur noch einen Versuch."
 msgstr[1] "Geben Sie Ihren PIN ein. Sie haben noch %d Versuche."
 
-#: src/gui/view_model/gtk/mod.rs:151
+#: src/gui/view_model/gtk/mod.rs:153
 msgid "Enter your PIN."
 msgstr "Geben Sie Ihren PIN ein."
 
-#: src/gui/view_model/gtk/mod.rs:160
+#: src/gui/view_model/gtk/mod.rs:163
 msgid "Touch your device again. One attempt remaining."
 msgid_plural "Touch your device again. %d attempts remaining."
 msgstr[0] "Berühren Sie Ihr Gerät. Sie haben nur noch einen Versuch."
 msgstr[1] "Berühren Sie nochmal Ihr Gerät. Sie haben nur noch %d Versuche."
 
-#: src/gui/view_model/gtk/mod.rs:166
+#: src/gui/view_model/gtk/mod.rs:169
 msgid "Touch your device."
 msgstr "Berühren Sie Ihr Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:171
+#: src/gui/view_model/gtk/mod.rs:174
 msgid "Touch your device"
 msgstr "Berühren Sie Ihr Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:174
+#: src/gui/view_model/gtk/mod.rs:177
 msgid "Scan the QR code with your device to begin authentication."
 msgstr ""
 "Scannen Sie den QR code mit ihrem Gerät um die Authentifizierung zu beginnen."
 
-#: src/gui/view_model/gtk/mod.rs:184
+#: src/gui/view_model/gtk/mod.rs:187
 msgid ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
@@ -150,15 +150,15 @@ msgstr ""
 "Verbindung zu Ihrem Gerät wird aufgebaut. Stellen Sie sicher, dass beide "
 "Geräte nah beieinander sind und Bluetooth aktiviert haben."
 
-#: src/gui/view_model/gtk/mod.rs:192
+#: src/gui/view_model/gtk/mod.rs:195
 msgid "Device connected. Follow the instructions on your device"
 msgstr "Verbindung hergestellt. Folgen Sie den Anweisungen auf Ihrem Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:318
+#: src/gui/view_model/gtk/mod.rs:321
 msgid "Insert your security key."
 msgstr "Stecken Sie Ihren Security-Token ein."
 
-#: src/gui/view_model/gtk/mod.rs:334
+#: src/gui/view_model/gtk/mod.rs:340
 msgid "Multiple devices found. Please select with which to proceed."
 msgstr "Mehrere Geräte gefunden. Bitte wählen Sie einen aus, um fortzufahren."
 
@@ -179,7 +179,7 @@ msgid "Linked Device"
 msgstr "Verbundenes Gerät"
 
 #: src/gui/view_model/gtk/device.rs:61
-msgid "A security key or card (NFC)"
+msgid "An security key or card (NFC)"
 msgstr "Ein NFC-Gerät"
 
 #: src/gui/view_model/gtk/device.rs:62
@@ -209,8 +209,9 @@ msgid ""
 "<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a "
 "credential to register at \"%s1\". Only proceed if you trust this process."
 msgstr ""
-"<b>\"%s2\"</b> (Prozess-ID: %i1, ausführbare Datei: %s3) möchte neue Zugangsdaten erstellen, "
-"um Sie bei \"%s1\" zu registrieren. Fahren Sie nur fort, wenn Sie diesem Prozess vertrauen."
+"<b>\"%s2\"</b> (Prozess-ID: %i1, ausführbare Datei: %s3) möchte neue "
+"Zugangsdaten erstellen, um Sie bei \"%s1\" zu registrieren. Fahren Sie nur "
+"fort, wenn Sie diesem Prozess vertrauen."
 
 #. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
 #. TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
@@ -221,18 +222,19 @@ msgid ""
 "<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential "
 "to sign in to \"%s1\". Only proceed if you trust this process."
 msgstr ""
-"<b>\"%s2\"</b> (Prozess-ID: %i1, ausführbare Datei: %s3) möchte Zugangsdaten abrufen, um "
-"Sie bei \"%s1\" anzumelden. Fahren Sie nur fort, wenn Sie diesem Prozess vertrauen."
+"<b>\"%s2\"</b> (Prozess-ID: %i1, ausführbare Datei: %s3) möchte Zugangsdaten "
+"abrufen, um Sie bei \"%s1\" anzumelden. Fahren Sie nur fort, wenn Sie diesem "
+"Prozess vertrauen."
 
-#: src/gui/view_model/mod.rs:220
+#: src/gui/view_model/mod.rs:227
 msgid "Failed to select credential from device."
 msgstr "Zugangsdaten vom Gerät konnten nicht ausgewählt werden."
 
-#: src/gui/view_model/mod.rs:274
+#: src/gui/view_model/mod.rs:281
 msgid "No matching credentials found on this authenticator."
 msgstr "Keine passenden Zugangsdaten auf diesem Gerät gefunden."
 
-#: src/gui/view_model/mod.rs:277
+#: src/gui/view_model/mod.rs:284
 msgid ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
@@ -240,11 +242,19 @@ msgstr ""
 "Keine weiteren PIN-Eingaben erlaubt. Versuchen Sie ihr Gerät aus- und wieder "
 "einzustecken."
 
-#: src/gui/view_model/mod.rs:283
+#: src/gui/view_model/mod.rs:287
+msgid ""
+"This server requires your device to have additional protection like a PIN, "
+"which is not set. Please set a PIN for this device and try again."
+msgstr ""
+"Für diesen Server benötigt ihr Gerät eine zusätzliche Absicherung, z.B. einen PIN. "
+"Bitte setzen Sie einen PIN für ihr Gerät und versuchen Sie es erneut."
+
+#: src/gui/view_model/mod.rs:293
 msgid "This credential is already registered on this authenticator."
 msgstr "Diese Zugangsdaten sind bereits auf diesem Gerät registriert."
 
-#: src/gui/view_model/mod.rs:331
+#: src/gui/view_model/mod.rs:395
 msgid "Something went wrong. Try again later or use a different authenticator."
 msgstr ""
 "Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später noch einmal, "

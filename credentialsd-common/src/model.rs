@@ -260,6 +260,8 @@ pub enum Error {
     /// Note that this is different than exhausting the PIN count that fully
     /// locks out the device.
     PinAttemptsExhausted,
+    /// The RP requires user verification, but the device has no PIN/Biometrics set.
+    PinNotSet,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -271,6 +273,7 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
+            Self::PinNotSet => f.write_str("PinNotSet"),
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
