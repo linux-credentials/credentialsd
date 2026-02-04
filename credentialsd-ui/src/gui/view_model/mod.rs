@@ -283,6 +283,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 Error::PinAttemptsExhausted => gettext(
                                     "No more PIN attempts allowed. Try removing your device and plugging it back in.",
                                 ),
+                                Error::PinNotSet => gettext(
+                                    "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
+                                ),
                                 Error::AuthenticatorError | Error::Internal(_) => gettext(
                                     "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
                                 ),
@@ -333,6 +336,9 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 }
                                 Error::PinAttemptsExhausted => {
                                     "No more PIN attempts allowed. Try removing your device and plugging it back in."
+                                }
+                                Error::PinNotSet => {
+                                    "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again."
                                 }
                                 Error::AuthenticatorError | Error::Internal(_) => {
                                     "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
