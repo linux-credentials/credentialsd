@@ -1,5 +1,7 @@
-use async_std::stream::Stream;
-use credentialsd_common::{client::FlowController, server::RequestId};
+use std::{pin::Pin, sync::Arc};
+
+use async_std::{channel::Receiver, stream::Stream, sync::Mutex as AsyncMutex};
+use credentialsd_common::{client::FlowController, model::BackgroundEvent, server::RequestId};
 use futures_lite::StreamExt;
 use zbus::Connection;
 
@@ -7,11 +9,17 @@ use crate::dbus::FlowControlServiceProxy;
 
 pub struct DbusCredentialClient {
     conn: Connection,
+    bg_event_stream:
+        Arc<AsyncMutex<Option<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>>>>,
 }
 
 impl DbusCredentialClient {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
+    pub fn new(conn: Connection, bg_event_rx: Receiver<BackgroundEvent>) -> Self {
+        let stream = bg_event_rx.boxed();
+        Self {
+            conn,
+            bg_event_stream: Arc::new(AsyncMutex::new(Some(stream))),
+        }
     }
     async fn proxy(&self) -> std::result::Result<FlowControlServiceProxy<'_>, ()> {
         FlowControlServiceProxy::new(&self.conn)
@@ -65,30 +73,14 @@ impl FlowController for DbusCredentialClient {
     async fn subscribe(
         &mut self,
     ) -> std::result::Result<
-        std::pin::Pin<
-            Box<dyn Stream<Item = credentialsd_common::model::BackgroundEvent> + Send + 'static>,
-        >,
+        std::pin::Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>,
         (),
     > {
-        let stream = self
-            .proxy()
-            .await?
-            .receive_state_changed()
+        self.bg_event_stream
+            .lock()
             .await
-            .map_err(|err| tracing::error!("Failed to initalize event stream: {err}"))?
-            .filter_map(|msg| {
-                msg.args()
-                    .map(|args| args.update)
-                    .inspect_err(|err| tracing::warn!("Failed to parse StateChanged signal: {err}"))
-                    .ok()
-            })
-            .boxed();
-        self.proxy()
-            .await?
-            .subscribe()
-            .await
-            .map_err(|err| tracing::error!("Failed to initialize event stream: {err}"))
-            .map(|_| stream)
+            .take()
+            .ok_or_else(|| tracing::error!("subscribe can only be called one time"))
     }
 
     async fn enter_client_pin(&mut self, pin: String) -> std::result::Result<(), ()> {

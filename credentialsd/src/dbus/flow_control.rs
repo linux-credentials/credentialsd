@@ -310,6 +310,7 @@ where
         update: BackgroundEvent,
     ) -> zbus::Result<()>;
 }
+
 async fn send_state_update(
     emitter: &SignalEmitter<'_>,
     signal_state: &Arc<AsyncMutex<SignalState>>,

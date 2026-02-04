@@ -20,12 +20,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // this allows the D-Bus service to signal to the GUI to draw a window for
     // executing the credential flow.
     let client_conn = zbus::connection::Builder::session()?.build().await?;
-    let cred_client = DbusCredentialClient::new(client_conn);
+    let (bg_event_tx, bg_event_rx) = async_std::channel::bounded(255);
+    let cred_client = DbusCredentialClient::new(client_conn, bg_event_rx);
     let _handle = gui::start_gui_thread(request_rx, cred_client)?;
     println!(" ✅");
 
     print!("Starting UI Control listener...\t");
-    let interface = UiControlService { request_tx };
+    let interface = UiControlService {
+        request_tx,
+        bg_event_tx,
+    };
     let path = "/xyz/iinuwa/credentialsd/UiControl";
     let service = "xyz.iinuwa.credentialsd.UiControl";
     let _server_conn = zbus::connection::Builder::session()?
