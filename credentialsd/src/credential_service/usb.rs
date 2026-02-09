@@ -463,7 +463,7 @@ pub enum UsbState {
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
-    SelectCredential {
+    SelectingCredential {
         creds: Vec<Credential>,
         cred_tx: mpsc::Sender<String>,
     },
@@ -496,7 +496,7 @@ impl From<UsbStateInternal> for UsbState {
             // UsbStateInternal::UserCancelled => UsbState:://UserCancelled,
             UsbStateInternal::SelectingDevice(_) => UsbState::SelectingDevice,
             UsbStateInternal::SelectCredential { response, cred_tx } => {
-                UsbState::SelectCredential {
+                UsbState::SelectingCredential {
                     creds: response
                         .assertions
                         .iter()
@@ -555,8 +555,8 @@ impl From<&UsbState> for credentialsd_common::model::UsbState {
                 }
             }
             UsbState::NeedsUserPresence => credentialsd_common::model::UsbState::NeedsUserPresence,
-            UsbState::SelectCredential { creds, .. } => {
-                credentialsd_common::model::UsbState::SelectCredential {
+            UsbState::SelectingCredential { creds, .. } => {
+                credentialsd_common::model::UsbState::SelectingCredential {
                     creds: creds.to_owned(),
                 }
             }

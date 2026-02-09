@@ -446,7 +446,7 @@ impl From<&NfcState> for credentialsd_common::model::NfcState {
                 }
             }
             NfcState::SelectCredential { creds, .. } => {
-                credentialsd_common::model::NfcState::SelectCredential {
+                credentialsd_common::model::NfcState::SelectingCredential {
                     creds: creds.to_owned(),
                 }
             }

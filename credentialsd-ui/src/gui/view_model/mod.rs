@@ -268,7 +268,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 .unwrap();
                         }
                         UsbState::Idle | UsbState::Waiting => {}
-                        UsbState::SelectCredential { creds } => {
+                        UsbState::SelectingCredential { creds } => {
                             self.tx_update
                                 .send(ViewUpdate::SetCredentials(creds))
                                 .await
@@ -322,7 +322,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
                         NfcState::Idle | NfcState::Waiting => {}
-                        NfcState::SelectCredential { creds } => {
+                        NfcState::SelectingCredential { creds } => {
                             self.tx_update
                                 .send(ViewUpdate::SetCredentials(creds))
                                 .await
