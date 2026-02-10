@@ -26,6 +26,8 @@ pub trait FlowControlService {
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()>;
     async fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
 
+    async fn set_usb_device_pin(&self, pin: String) -> fdo::Result<()>;
+    async fn set_nfc_device_pin(&self, pin: String) -> fdo::Result<()>;
     #[zbus(signal)]
     async fn state_changed(update: BackgroundEvent) -> zbus::Result<()>;
 }

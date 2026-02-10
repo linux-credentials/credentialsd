@@ -99,6 +99,22 @@ impl FlowController for DbusCredentialClient {
             .map_err(|err| tracing::error!("Failed to send PIN to authenticator: {err}"))
     }
 
+    async fn set_usb_device_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
+        self.proxy()
+            .await?
+            .set_usb_device_pin(pin)
+            .await
+            .map_err(|err| tracing::error!("Failed to set new PIN for authenticator: {err}"))
+    }
+
+    async fn set_nfc_device_pin(&mut self, pin: String) -> std::result::Result<(), ()> {
+        self.proxy()
+            .await?
+            .set_nfc_device_pin(pin)
+            .await
+            .map_err(|err| tracing::error!("Failed to set new PIN for authenticator: {err}"))
+    }
+
     async fn select_credential(&self, credential_id: String) -> std::result::Result<(), ()> {
         self.proxy()
             .await?
