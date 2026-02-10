@@ -121,6 +121,20 @@ pub struct RequestingParty {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ViewUpdateFailure {
+    GeneralFailure(String),
+    PinNotSet(String),
+}
+
+impl ViewUpdateFailure {
+    pub fn into_string(self) -> String {
+        match self {
+            ViewUpdateFailure::GeneralFailure(msg) | ViewUpdateFailure::PinNotSet(msg) => msg,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle((String, String)),
     SetDevices(Vec<Device>),
@@ -142,7 +156,7 @@ pub enum ViewUpdate {
 
     Completed,
     Cancelled,
-    Failed(String),
+    Failed(ViewUpdateFailure),
 }
 
 #[derive(Clone, Debug, Default)]
