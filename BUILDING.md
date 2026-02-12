@@ -116,8 +116,8 @@ environment variables.
 # Run the server, with debug logging enabled
 export GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data
 export RUST_LOG=credentialsd=debug,credentials_ui=debug
-./build/credentialsd/target/debug/credentialsd &
-./build/credentialsd-ui/target/debug/credentialsd-ui
+./build/credentialsd/src/credentialsd &
+./build/credentialsd-ui/src/credentialsd-ui
 ```
 
 ## Testing development builds with Firefox Web Add-On
