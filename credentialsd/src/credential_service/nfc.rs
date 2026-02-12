@@ -8,7 +8,7 @@ use libwebauthn::{
     pin::PinManagement,
     proto::CtapError,
     transport::{nfc::device::NfcDevice, Channel, Device},
-    webauthn::{Error as WebAuthnError, WebAuthn},
+    webauthn::{Error as WebAuthnError, PlatformError, WebAuthn},
     UvUpdate,
 };
 use tokio::sync::broadcast;
@@ -261,6 +261,9 @@ async fn handle_events(
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
                 WebAuthnError::Ctap(CtapError::PINNotSet) => Error::PinNotSet,
+                WebAuthnError::Platform(PlatformError::PinTooShort)
+                | WebAuthnError::Platform(PlatformError::PinTooLong)
+                | WebAuthnError::Ctap(CtapError::PINPolicyViolation) => Error::PinPolicyViolation,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,

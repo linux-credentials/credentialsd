@@ -112,13 +112,18 @@ pub struct RequestingParty {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdateFailure {
     GeneralFailure(String),
+    /// Request required UV, but it was not set on the device yet
     PinNotSet(String),
+    /// User tried to set PIN, but it was too short
+    PinPolicyViolation(String),
 }
 
 impl ViewUpdateFailure {
     pub fn into_string(self) -> String {
         match self {
-            ViewUpdateFailure::GeneralFailure(msg) | ViewUpdateFailure::PinNotSet(msg) => msg,
+            ViewUpdateFailure::GeneralFailure(msg)
+            | ViewUpdateFailure::PinNotSet(msg)
+            | ViewUpdateFailure::PinPolicyViolation(msg) => msg,
         }
     }
 }
@@ -276,6 +281,8 @@ pub enum Error {
     PinAttemptsExhausted,
     /// The RP requires user verification, but the device has no PIN/Biometrics set.
     PinNotSet,
+    /// The device declined the entered PIN, as it violates the PIN policy (e.g. PIN too short)
+    PinPolicyViolation,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -288,6 +295,7 @@ impl Display for Error {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
             Self::PinNotSet => f.write_str("PinNotSet"),
+            Self::PinPolicyViolation => f.write_str("PinPolicyViolation"),
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
