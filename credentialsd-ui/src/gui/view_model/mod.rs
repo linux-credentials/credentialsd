@@ -311,6 +311,11 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 Error::PinNotSet => ViewUpdateFailure::PinNotSet(gettext(
                                     "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
                                 )),
+                                Error::PinPolicyViolation => {
+                                    ViewUpdateFailure::PinPolicyViolation(gettext(
+                                        "The entered PIN violates the PIN-policy of this device (likely too short). Please try again.",
+                                    ))
+                                }
                                 Error::AuthenticatorError | Error::Internal(_) => {
                                     ViewUpdateFailure::GeneralFailure(gettext(
                                         "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
@@ -371,6 +376,11 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 Error::PinNotSet => ViewUpdateFailure::PinNotSet(gettext(
                                     "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
                                 )),
+                                Error::PinPolicyViolation => {
+                                    ViewUpdateFailure::PinPolicyViolation(gettext(
+                                        "The entered PIN violates the PIN-policy of this device (likely too short). Please try again.",
+                                    ))
+                                }
                                 Error::AuthenticatorError | Error::Internal(_) => {
                                     ViewUpdateFailure::GeneralFailure(gettext(
                                         "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
