@@ -373,7 +373,7 @@ impl From<&crate::model::UsbState> for Structure<'_> {
                 (0x06, Some(Value::I32(num)))
             }
             crate::model::UsbState::NeedsUserPresence => (0x07, None),
-            crate::model::UsbState::SelectCredential { creds } => {
+            crate::model::UsbState::SelectingCredential { creds } => {
                 let creds: Vec<Credential> = creds.iter().map(Credential::from).collect();
                 let value = Value::new(creds);
                 (0x08, Some(value))
@@ -430,7 +430,7 @@ impl TryFrom<&Structure<'_>> for crate::model::UsbState {
                         cred
                     })
                     .collect();
-                Ok(Self::SelectCredential { creds: creds? })
+                Ok(Self::SelectingCredential { creds: creds? })
             }
             0x09 => Ok(Self::Completed),
             0x0A => {
@@ -498,7 +498,7 @@ impl From<&crate::model::NfcState> for Structure<'_> {
                 };
                 (0x06, Some(Value::I32(num)))
             }
-            crate::model::NfcState::SelectCredential { creds } => {
+            crate::model::NfcState::SelectingCredential { creds } => {
                 let creds: Vec<Credential> = creds.iter().map(Credential::from).collect();
                 let value = Value::new(creds);
                 (0x08, Some(value))
@@ -553,7 +553,7 @@ impl TryFrom<&Structure<'_>> for crate::model::NfcState {
                         cred
                     })
                     .collect();
-                Ok(Self::SelectCredential { creds: creds? })
+                Ok(Self::SelectingCredential { creds: creds? })
             }
             0x09 => Ok(Self::Completed),
             0x0A => {
@@ -829,14 +829,14 @@ mod test {
                 username: None,
             },
         ];
-        let state = UsbState::SelectCredential { creds };
+        let state = UsbState::SelectingCredential { creds };
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
         let data = zvariant::to_bytes(ctx, &state).unwrap();
         assert_eq!("(yv)", UsbState::SIGNATURE.to_string());
 
         #[rustfmt::skip]
         let expected = [
-            8, // UsbState::SelectCredential
+            8, // UsbState::SelectingCredential
             6, 97, 97, 123, 115, 118, 125, 0, 0, 0, 0, // Signature aa{sv} + padding
             0, 0, 0, 165, // array(struct) data length
                 0, 0, 0, 83, 0, 0, 0, 0, // element 1(struct) length, + padding(4)
@@ -868,7 +868,7 @@ mod test {
     fn test_deserialize_usb_state() {
         #[rustfmt::skip]
         let input = [
-            8, // UsbState::SelectCredential
+            8, // UsbState::SelectingCredential
             6, 97, 97, 123, 115, 118, 125, 0, 0, 0, 0, // Signature aa{sv} + padding
             0, 0, 0, 165, // array(struct) data length
                 0, 0, 0, 83, 0, 0, 0, 0, // element 1(struct) length, + padding(4)
@@ -897,7 +897,7 @@ mod test {
         let data = Data::new(&input, ctx);
         let state: UsbState = data.deserialize().unwrap().0;
         match state {
-            UsbState::SelectCredential { creds } => {
+            UsbState::SelectingCredential { creds } => {
                 assert_eq!(2, creds.len());
                 assert_eq!("a1b2c3", creds[0].id,);
                 assert_eq!("user 1", creds[0].name,);

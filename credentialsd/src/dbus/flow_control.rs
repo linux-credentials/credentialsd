@@ -217,7 +217,7 @@ where
                         let mut usb_pin_tx = usb_pin_tx.lock().await;
                         let _ = usb_pin_tx.insert(pin_tx);
                     }
-                    UsbState::SelectCredential { cred_tx, .. } => {
+                    UsbState::SelectingCredential { cred_tx, .. } => {
                         let mut usb_cred_tx = usb_cred_tx.lock().await;
                         let _ = usb_cred_tx.insert(cred_tx);
                     }

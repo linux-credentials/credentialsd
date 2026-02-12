@@ -192,7 +192,7 @@ pub enum UsbState {
     // This isn't actually sent from the server.
     //UserCancelled,
     /// Multiple credentials have been found and the user has to select which to use
-    SelectCredential {
+    SelectingCredential {
         /// List of user-identities to decide which to use.
         creds: Vec<Credential>,
     },
@@ -227,7 +227,7 @@ pub enum NfcState {
     // This isn't actually sent from the server.
     //UserCancelled,
     /// Multiple credentials have been found and the user has to select which to use
-    SelectCredential {
+    SelectingCredential {
         /// List of user-identities to decide which to use.
         creds: Vec<Credential>,
     },
