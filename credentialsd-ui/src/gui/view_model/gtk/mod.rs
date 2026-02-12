@@ -213,6 +213,7 @@ impl ViewModel {
                                     view_model.set_start_setting_new_pin_visible(matches!(
                                         &error,
                                         ViewUpdateFailure::PinNotSet(_)
+                                            | ViewUpdateFailure::PinPolicyViolation(_)
                                     ));
                                     // These are already gettext messages
                                     view_model.set_prompt(error.into_string());

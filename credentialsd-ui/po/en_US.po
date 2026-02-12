@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2026-02-11 14:31+0100\n"
+"POT-Creation-Date: 2026-02-12 14:18+0100\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: en_US\n"
@@ -13,7 +13,7 @@ msgstr ""
 
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
-#: src/gui/view_model/gtk/mod.rs:400
+#: src/gui/view_model/gtk/mod.rs:401
 msgid "Credential Manager"
 msgstr "Credential Manager"
 
@@ -129,8 +129,8 @@ msgstr "Done!"
 msgid "Something went wrong."
 msgstr "Something went wrong."
 
-#: data/resources/ui/window.ui:304 src/gui/view_model/mod.rs:310
-#: src/gui/view_model/mod.rs:370
+#: data/resources/ui/window.ui:304 src/gui/view_model/mod.rs:315
+#: src/gui/view_model/mod.rs:380
 msgid ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
@@ -182,11 +182,11 @@ msgstr ""
 msgid "Device connected. Follow the instructions on your device"
 msgstr "Device connected. Follow the instructions on your device"
 
-#: src/gui/view_model/gtk/mod.rs:332
+#: src/gui/view_model/gtk/mod.rs:333
 msgid "Insert your security key."
 msgstr "Insert your security key."
 
-#: src/gui/view_model/gtk/mod.rs:351
+#: src/gui/view_model/gtk/mod.rs:352
 msgid "Multiple devices found. Please select with which to proceed."
 msgstr "Multiple devices found. Please select with which to proceed."
 
@@ -256,11 +256,11 @@ msgstr ""
 msgid "Failed to select credential from device."
 msgstr "Failed to select credential from device."
 
-#: src/gui/view_model/mod.rs:298 src/gui/view_model/mod.rs:358
+#: src/gui/view_model/mod.rs:298 src/gui/view_model/mod.rs:363
 msgid "No matching credentials found on this authenticator."
 msgstr "No matching credentials found on this authenticator."
 
-#: src/gui/view_model/mod.rs:302 src/gui/view_model/mod.rs:362
+#: src/gui/view_model/mod.rs:302 src/gui/view_model/mod.rs:367
 msgid ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
@@ -268,7 +268,7 @@ msgstr ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
 
-#: src/gui/view_model/mod.rs:306 src/gui/view_model/mod.rs:366
+#: src/gui/view_model/mod.rs:306 src/gui/view_model/mod.rs:371
 msgid ""
 "This server requires your device to have additional protection like a PIN, "
 "which is not set. Please set a PIN for this device and try again."
@@ -276,11 +276,19 @@ msgstr ""
 "This server requires your device to have additional protection like a PIN, "
 "which is not set. Please set a PIN for this device and try again."
 
-#: src/gui/view_model/mod.rs:315 src/gui/view_model/mod.rs:375
+#: src/gui/view_model/mod.rs:310 src/gui/view_model/mod.rs:375
+msgid ""
+"The entered PIN violates the PIN-policy of this device (likely too short). "
+"Please try again."
+msgstr ""
+"The entered PIN violates the PIN-policy of this device (likely too short). "
+"Please try again."
+
+#: src/gui/view_model/mod.rs:320 src/gui/view_model/mod.rs:385
 msgid "This credential is already registered on this authenticator."
 msgstr "This credential is already registered on this authenticator."
 
-#: src/gui/view_model/mod.rs:424
+#: src/gui/view_model/mod.rs:434
 msgid "Something went wrong. Try again later or use a different authenticator."
 msgstr ""
 "Something went wrong. Try again later or use a different authenticator."
