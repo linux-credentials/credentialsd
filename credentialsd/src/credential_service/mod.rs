@@ -126,10 +126,12 @@ impl<
         let operation = match &request {
             CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
             CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
+            CredentialRequest::SetDevicePinRequest(_) => unimplemented!(),
         };
         let rp_id = match &request {
             CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
             CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
+            CredentialRequest::SetDevicePinRequest(_) => unimplemented!(),
         };
         let view_request = ViewRequest {
             operation,
@@ -238,6 +240,26 @@ impl<
             );
             todo!("Handle error when context is not set up.")
         }
+    }
+
+    pub fn set_usb_device_pin(
+        &self,
+        pin: String,
+    ) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+        let request = CredentialRequest::SetDevicePinRequest(pin);
+        let stream = self.usb_handler.start(&request);
+        let ctx = self.ctx.clone();
+        Box::pin(UsbStateStream { inner: stream, ctx })
+    }
+
+    pub fn set_nfc_device_pin(
+        &self,
+        pin: String,
+    ) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+        let request = CredentialRequest::SetDevicePinRequest(pin);
+        let stream = self.nfc_handler.start(&request);
+        let ctx = self.ctx.clone();
+        Box::pin(NfcStateStream { inner: stream, ctx })
     }
 }
 

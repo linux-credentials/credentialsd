@@ -6,12 +6,14 @@ use libwebauthn::ops::webauthn::{
 pub enum CredentialRequest {
     CreatePublicKeyCredentialRequest(MakeCredentialRequest),
     GetPublicKeyCredentialRequest(GetAssertionRequest),
+    SetDevicePinRequest(String),
 }
 
 #[derive(Clone, Debug)]
 pub enum CredentialResponse {
     CreatePublicKeyCredentialResponse(Box<MakeCredentialResponseInternal>),
     GetPublicKeyCredentialResponse(Box<GetAssertionResponseInternal>),
+    SetDevicePinSuccessRespone,
 }
 
 impl CredentialResponse {
