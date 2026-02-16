@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="32mm"
+   height="32mm"
+   viewBox="0 0 32 32"
+   version="1.1"
+   id="svg1"
+   inkscape:export-filename="credentialsd-logo"
+   inkscape:export-xdpi="203.2"
+   inkscape:export-ydpi="203.2"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   sodipodi:docname="credentialsd-logo.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="2.8149659"
+     inkscape:cx="-18.117449"
+     inkscape:cy="65.720157"
+     inkscape:window-width="1920"
+     inkscape:window-height="1051"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-79.663099,-105.5317)">
+    <rect
+       style="fill:#1ad6c6;fill-opacity:1;stroke-width:0.210073"
+       id="rect1-3"
+       width="29.191242"
+       height="29.659765"
+       x="81.033966"
+       y="105.5317"
+       ry="2.5238431" />
+    <path
+       d="m 111.68507,108.79525 -32.021971,14.42332 v 14.46995 h 30.045621 c 1.75732,0.0121 1.96527,-0.0367 1.97635,-2.31328 z"
+       style="fill:#000000;fill-opacity:1;stroke-width:0.389799"
+       id="path5"
+       sodipodi:nodetypes="cccccc" />
+    <path
+       d="m 203.43665,126.286 v 33.61914 h -28.30473 v -16.8367 l -13.18628,7.81864 32.42852,39.75262 42.29768,-25.07909 -32.42903,-39.75262 z"
+       style="fill:#00ff00;stroke-width:0.395313"
+       id="path4" />
+    <rect
+       style="fill:#1a1a1a;fill-opacity:1;stroke:none;stroke-width:0.339351"
+       id="rect8"
+       width="4.8095722"
+       height="7.328196"
+       x="86.818855"
+       y="107.8616"
+       ry="1.7360102" />
+  </g>
+</svg>
