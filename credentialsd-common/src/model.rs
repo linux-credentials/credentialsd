@@ -40,6 +40,7 @@ pub struct Device {
 pub enum Operation {
     Create,
     Get,
+    SetDevicePin,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -128,6 +129,14 @@ impl ViewUpdateFailure {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ViewUpdateSuccess {
+    /// Success that requires the window to close
+    CloseWindow,
+    /// Success that requires the window to stay open
+    KeepWindowOpen(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle((String, String)),
@@ -148,7 +157,7 @@ pub enum ViewUpdate {
     HybridConnecting,
     HybridConnected,
 
-    Completed,
+    Completed(ViewUpdateSuccess),
     Cancelled,
     Failed(ViewUpdateFailure),
 }

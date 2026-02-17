@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::model::ViewUpdateFailure;
+use credentialsd_common::model::{ViewUpdateFailure, ViewUpdateSuccess};
 use credentialsd_common::server::WindowHandle;
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
@@ -203,9 +203,14 @@ impl ViewModel {
                                     ));
                                     view_model.set_qr_spinner_visible(false);
                                 }
-                                ViewUpdate::Completed => {
+                                ViewUpdate::Completed(ViewUpdateSuccess::CloseWindow) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_completed(true);
+                                }
+                                ViewUpdate::Completed(ViewUpdateSuccess::KeepWindowOpen(text)) => {
+                                    view_model.set_qr_spinner_visible(false);
+                                    // These are already gettext messages
+                                    view_model.set_prompt(text);
                                 }
                                 ViewUpdate::Failed(error) => {
                                     view_model.set_qr_spinner_visible(false);

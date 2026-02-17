@@ -7,7 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
-use credentialsd_common::model::RequestingApplication;
+use credentialsd_common::model::{RequestingApplication, ViewUpdateSuccess};
 use credentialsd_common::server::ViewRequest;
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Use a passkey for %s1")
             }
+            Operation::SetDevicePin => gettext("Setting Pin on device"),
         }
         .to_string();
         title = title.replace("%s1", &self.rp_id);
@@ -102,6 +103,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                 // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
                 gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
             }
+            Operation::SetDevicePin => gettext("Setting Pin on device"),
         }
         .to_string();
         subtitle = subtitle.replace("%s1", &self.rp_id);
@@ -210,6 +212,7 @@ impl<F: FlowController + Send> ViewModel<F> {
                 Event::View(ViewEvent::SetNewDevicePin(pin)) => {
                     if let Some(device) = &self.selected_device {
                         let mut cred_service = self.flow_controller.lock().await;
+                        self.operation = Operation::SetDevicePin;
                         let resp = match device.transport {
                             Transport::Usb => cred_service.set_usb_device_pin(pin).await,
                             Transport::Nfc => cred_service.set_nfc_device_pin(pin).await,
@@ -276,7 +279,15 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 .unwrap();
                         }
                         UsbState::Completed => {
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                            let t = if matches!(self.operation, Operation::SetDevicePin) {
+                                ViewUpdateSuccess::KeepWindowOpen(gettext(
+                                    "Pin successfully set! Please try registering again.",
+                                ))
+                            } else {
+                                ViewUpdateSuccess::CloseWindow
+                            };
+
+                            self.tx_update.send(ViewUpdate::Completed(t)).await.unwrap();
                         }
                         UsbState::SelectingDevice => {
                             self.tx_update
@@ -347,7 +358,14 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 .unwrap();
                         }
                         NfcState::Completed => {
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                            let t = if matches!(self.operation, Operation::SetDevicePin) {
+                                ViewUpdateSuccess::KeepWindowOpen(gettext(
+                                    "Pin successfully set! Please try registering again.",
+                                ))
+                            } else {
+                                ViewUpdateSuccess::CloseWindow
+                            };
+                            self.tx_update.send(ViewUpdate::Completed(t)).await.unwrap();
                         }
                         NfcState::Idle | NfcState::Waiting => {}
                         NfcState::SelectingCredential { creds } => {
@@ -423,7 +441,10 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         HybridState::Completed => {
                             self.hybrid_qr_code_data = None;
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                            self.tx_update
+                                .send(ViewUpdate::Completed(ViewUpdateSuccess::CloseWindow))
+                                .await
+                                .unwrap();
                         }
                         HybridState::UserCancelled => {
                             self.hybrid_qr_code_data = None;
