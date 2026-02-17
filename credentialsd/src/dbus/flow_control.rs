@@ -326,7 +326,7 @@ where
                         );
                         break;
                     }
-                    UsbState::SelectCredential { cred_tx, .. } => {
+                    UsbState::SelectingCredential { cred_tx, .. } => {
                         // TODO: This is not great. The user potentially already selected a device,
                         //       but we are starting a new request cycle, so they have to select one
                         //       again... But the previous cycle has already ended.
