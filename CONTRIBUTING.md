@@ -47,6 +47,10 @@ And then there is, of course, writing code!
 
 Here is a list of helpful resources you can consult:
 
+## Discussion platform
+
+Join the discussion on Matrix at `#credentials-for-linux:matrix.org`.
+
 ## Documentation
 
 To help you get started, we have provided documentation for various parts of the
