@@ -57,6 +57,12 @@ with `credentialsd` directly without an add-on. You can access a
 
 [firefox-patch-flatpak]: https://download.opensuse.org/repositories/home:/MSirringhaus:/webauthn_devel/openSUSE_Factory_flatpak/
 
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](/CONTRIBUTING.md) for details.
+
+Join the discussion on Matrix at `#credentials-for-linux:matrix.org`.
+
 ## Mockups
 
 Here are some mockups of what this would look like for a user:
