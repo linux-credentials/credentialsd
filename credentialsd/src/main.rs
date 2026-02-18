@@ -3,7 +3,6 @@ mod cose;
 mod credential_service;
 mod dbus;
 mod model;
-mod serde;
 mod webauthn;
 
 use std::{error::Error, sync::Arc};

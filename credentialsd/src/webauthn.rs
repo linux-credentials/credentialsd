@@ -13,12 +13,7 @@ pub use libwebauthn::ops::webauthn::{
 
 #[derive(Debug)]
 pub enum Error {
-    Unknown,
     NotSupported,
-    InvalidState,
-    NotAllowed,
-    Constraint,
-    Internal(String),
 }
 
 pub(crate) fn create_attestation_object(
