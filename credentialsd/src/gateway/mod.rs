@@ -105,9 +105,8 @@ impl GatewayService {
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
                 return Err(WebAuthnError::NotSupportedError);
             }
-            let make_cred_request_for_response = make_cred_request.clone();
             let cred_request =
-                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
+                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
 
             let response = self
                 .request_controller
@@ -117,7 +116,7 @@ impl GatewayService {
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response = create_credential_response_try_from_ctap2(
                     &cred_response,
-                    &make_cred_request_for_response,
+                    &make_cred_request,
                 )
                 .map_err(|err| {
                     tracing::error!(
@@ -164,8 +163,8 @@ impl GatewayService {
                         WebAuthnError::TypeError
                     },
                 )?;
-            let get_cred_request_for_response = get_cred_request.clone();
-            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+            let cred_request =
+                CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
 
             let response = self
                 .request_controller
@@ -175,7 +174,7 @@ impl GatewayService {
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response = get_credential_response_try_from_ctap2(
                     &cred_response,
-                    &get_cred_request_for_response,
+                    &get_cred_request,
                 )
                 .map_err(|err| {
                     tracing::error!(
