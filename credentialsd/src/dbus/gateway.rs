@@ -235,7 +235,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
                 return Err(WebAuthnError::NotAllowedError.into());
             }
-            let (make_cred_request, client_data_json) =
+            let make_cred_request =
                 create_credential_request_try_into_ctap2(&request).map_err(|e| {
                     if let WebAuthnError::TypeError = e {
                         tracing::error!(
@@ -251,7 +251,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             // Find out where this request is coming from (which application is requesting this)
             let requesting_app = query_connection_peer_binary(header, connection).await;
             let cred_request =
-                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
+                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
 
             let response = self
                 .controller
@@ -261,15 +261,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    create_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
+                let public_key_response = create_credential_response_try_from_ctap2(
+                    &cred_response,
+                    &make_cred_request,
+                )
+                .map_err(|err| {
+                    tracing::error!(
+                        "Failed to parse credential response from authenticator: {err}"
+                    );
+                    // Using NotAllowedError as a catch-all error.
+                    WebAuthnError::NotAllowedError
+                })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
@@ -309,12 +311,12 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             // - if RP ID is set, but origin's effective domain doesn't match
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (get_cred_request, client_data_json) =
+            let get_cred_request =
                 get_credential_request_try_into_ctap2(&request).map_err(|e| {
                     tracing::error!("Could not parse passkey assertion request: {e:?}");
                     WebAuthnError::TypeError
                 })?;
-            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
             // Find out where this request is coming from (which application is requesting this)
             let requesting_app = query_connection_peer_binary(header, connection).await;
 
@@ -326,15 +328,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    get_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
+                let public_key_response = get_credential_response_try_from_ctap2(
+                    &cred_response,
+                    &get_cred_request,
+                )
+                .map_err(|err| {
+                    tracing::error!(
+                        "Failed to parse credential response from authenticator: {err}"
+                    );
+                    // Using NotAllowedError as a catch-all error.
+                    WebAuthnError::NotAllowedError
+                })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
