@@ -94,11 +94,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
     make_cred_request.cross_origin = request.is_same_origin.as_ref().map(|same| !same);
 
     // Get the client data JSON from the request for response serialization
-    let client_data_json =
-        String::from_utf8(make_cred_request.client_data_json()).map_err(|_| {
-            tracing::info!("Failed to serialize client data JSON");
-            WebAuthnError::TypeError
-        })?;
+    let client_data_json = make_cred_request.client_data_json();
 
     Ok((make_cred_request, client_data_json))
 }
@@ -218,11 +214,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
     get_assertion_request.cross_origin = request.is_same_origin.as_ref().map(|same| !same);
 
     // Get the client data JSON from the request for response serialization
-    let client_data_json =
-        String::from_utf8(get_assertion_request.client_data_json()).map_err(|_| {
-            tracing::info!("Failed to serialize client data JSON");
-            WebAuthnError::TypeError
-        })?;
+    let client_data_json = get_assertion_request.client_data_json();
 
     Ok((get_assertion_request, client_data_json))
 }
