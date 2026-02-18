@@ -4,7 +4,6 @@ mod credential_service;
 mod dbus;
 mod gateway;
 mod model;
-mod serde;
 mod webauthn;
 
 use std::{error::Error, sync::Arc};
