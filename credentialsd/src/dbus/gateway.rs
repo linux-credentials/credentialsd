@@ -250,9 +250,8 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             }
             // Find out where this request is coming from (which application is requesting this)
             let requesting_app = query_connection_peer_binary(header, connection).await;
-            let make_cred_request_for_response = make_cred_request.clone();
             let cred_request =
-                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
+                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
 
             let response = self
                 .controller
@@ -264,7 +263,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response = create_credential_response_try_from_ctap2(
                     &cred_response,
-                    &make_cred_request_for_response,
+                    &make_cred_request,
                 )
                 .map_err(|err| {
                     tracing::error!(
@@ -317,8 +316,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
                     tracing::error!("Could not parse passkey assertion request: {e:?}");
                     WebAuthnError::TypeError
                 })?;
-            let get_cred_request_for_response = get_cred_request.clone();
-            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
             // Find out where this request is coming from (which application is requesting this)
             let requesting_app = query_connection_peer_binary(header, connection).await;
 
@@ -332,7 +330,7 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response = get_credential_response_try_from_ctap2(
                     &cred_response,
-                    &get_cred_request_for_response,
+                    &get_cred_request,
                 )
                 .map_err(|err| {
                     tracing::error!(

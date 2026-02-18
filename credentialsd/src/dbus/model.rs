@@ -10,10 +10,11 @@ use credentialsd_common::{
     },
 };
 
-use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
-use crate::webauthn::{
+use libwebauthn::ops::webauthn::{
     GetAssertionRequest, MakeCredentialRequest, RelyingPartyId, WebAuthnIDL, WebAuthnIDLResponse,
 };
+
+use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
 
 /// Parses a WebAuthn create credential request from D-Bus into a CTAP2 MakeCredentialRequest.
 ///
