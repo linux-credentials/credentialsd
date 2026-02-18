@@ -71,9 +71,10 @@ pub(super) fn create_credential_request_try_into_ctap2(
         .unwrap_or_else(|| {
             // Default to effective domain from origin
             origin
-                .rsplit_once('/')
-                .map(|(_, d)| d.to_string())
-                .unwrap_or(origin.clone())
+                .strip_prefix("https://")
+                .map(|rest| rest.split_once('/').map(|(d, _)| d).unwrap_or(rest))
+                .unwrap_or(&origin)
+                .to_string()
         });
 
     let rp_id = RelyingPartyId::try_from(rp_id_str.as_str()).map_err(|_| {
@@ -93,11 +94,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
     make_cred_request.cross_origin = request.is_same_origin.as_ref().map(|same| !same);
 
     // Get the client data JSON from the request for response serialization
-    let client_data_json =
-        String::from_utf8(make_cred_request.client_data_json()).map_err(|_| {
-            tracing::info!("Failed to serialize client data JSON");
-            WebAuthnError::TypeError
-        })?;
+    let client_data_json = make_cred_request.client_data_json();
 
     Ok((make_cred_request, client_data_json))
 }
@@ -194,9 +191,10 @@ pub(super) fn get_credential_request_try_into_ctap2(
         .unwrap_or_else(|| {
             // Default to effective domain from origin
             origin
-                .rsplit_once('/')
-                .map(|(_, d)| d.to_string())
-                .unwrap_or(origin.clone())
+                .strip_prefix("https://")
+                .map(|rest| rest.split_once('/').map(|(d, _)| d).unwrap_or(rest))
+                .unwrap_or(&origin)
+                .to_string()
         });
 
     let rp_id = RelyingPartyId::try_from(rp_id_str.as_str()).map_err(|_| {
@@ -216,11 +214,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
     get_assertion_request.cross_origin = request.is_same_origin.as_ref().map(|same| !same);
 
     // Get the client data JSON from the request for response serialization
-    let client_data_json =
-        String::from_utf8(get_assertion_request.client_data_json()).map_err(|_| {
-            tracing::info!("Failed to serialize client data JSON");
-            WebAuthnError::TypeError
-        })?;
+    let client_data_json = get_assertion_request.client_data_json();
 
     Ok((get_assertion_request, client_data_json))
 }
