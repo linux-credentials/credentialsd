@@ -36,8 +36,11 @@ impl InProcessNfcHandler {
         prev_nfc_state: &NfcStateInternal,
     ) -> Result<NfcStateInternal, Error> {
         match libwebauthn::transport::nfc::get_nfc_device().await {
-            Ok(None) => Ok(NfcStateInternal::Waiting),
-            Ok(Some(hid_device)) => Ok(NfcStateInternal::Connected(hid_device)),
+            Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
+            Ok(None) => {
+                let state = NfcStateInternal::Waiting;
+                Ok(state)
+            }
             Err(err) => {
                 *failures += 1;
                 if *failures == 5 {

@@ -10,7 +10,7 @@ async-stream = "0.3.6"
 base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite.workspace = true
-libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn.git", rev="80545bff16c4e89a930221e90d3141a76303b84b", features = ["libnfc","pcsc"] }
+libwebauthn = { git = "https://github.com/linux-credentials/libwebauthn.git", rev="b306a527e5b20bef3126a0ade020ae8269785b4e", features = ["libnfc","pcsc"] }
 # TODO: split nfc and pcsc into separate features
 # Also, 0.6.1 fails to build with non-vendored library.
 # https://github.com/alexrsagen/rs-nfc1/issues/15
