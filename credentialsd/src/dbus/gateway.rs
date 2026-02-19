@@ -602,7 +602,7 @@ impl From<WebAuthnError> for Error {
 mod test {
     use credentialsd_common::model::WebAuthnError;
 
-    use crate::webauthn::{NavigationContext, Origin};
+    use crate::webauthn::{AppId, NavigationContext, Origin};
 
     use super::check_origin_from_privileged_client;
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
@@ -611,7 +611,7 @@ mod test {
     }
 
     #[test]
-    fn test_only_https_origins() {
+    fn test_https_origin_returns_success() {
         assert!(matches!(
             check_same_origin("https://example.com"),
             Ok(NavigationContext::SameOrigin(Origin::Https { host, .. })) if host == "example.com"
@@ -619,10 +619,10 @@ mod test {
     }
 
     #[test]
-    fn test_privileged_client_cannot_set_http_origins() {
+    fn test_throws_security_error_when_passing_app_id_origin() {
         assert!(matches!(
-            check_same_origin("http://example.com"),
+            check_same_origin("app:com.example.App"),
             Err(WebAuthnError::SecurityError)
-        ));
+        ))
     }
 }
