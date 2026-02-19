@@ -257,16 +257,13 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             // - if RP ID is set, but origin's effective domain doesn't match
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (make_cred_request, client_data_json) = create_credential_request_try_into_ctap2(
-                &request,
-                &request_environment,
-            )
-            .map_err(|e| {
-                if let WebAuthnError::TypeError = e {
-                    tracing::error!("Could not parse passkey creation request. Rejecting request.");
-                }
-                e
-            })?;
+            let (make_cred_request, client_data_json) =
+                create_credential_request_try_into_ctap2(&request, &request_environment)
+                    .inspect_err(|_| {
+                        tracing::error!(
+                            "Could not parse passkey creation request. Rejecting request."
+                        );
+                    })?;
             if make_cred_request.algorithms.is_empty() {
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
                 return Err(Error::NotSupportedError);
