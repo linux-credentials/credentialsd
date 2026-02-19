@@ -23,7 +23,7 @@ use crate::{
         GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
         GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
         MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
-        Origin, PublicKeyCredentialParameters, NavigationContext, ResidentKeyRequirement,
+        NavigationContext, Origin, PublicKeyCredentialParameters, ResidentKeyRequirement,
         UserVerificationRequirement,
     },
 };
