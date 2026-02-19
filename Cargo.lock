@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "credentialsd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "base64",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "credentialsd-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures-lite",
  "serde",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "credentialsd-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-std",
  "credentialsd-common",

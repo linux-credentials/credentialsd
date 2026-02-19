@@ -1,5 +1,7 @@
 # [unreleased]
 
+# [0.2.0] - 2025-02-18
+
 ## Breaking Changes
 
 ### Gateway API
