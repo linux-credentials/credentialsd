@@ -686,6 +686,7 @@ pub fn format_client_data_json(
     let op_str = match op {
         Operation::Create => "webauthn.create",
         Operation::Get => "webauthn.get",
+        _ => unreachable!(),
     };
     let mut client_data_json = format!(
         r#"{{"type":"{}","challenge":"{}","origin":"{}""#,

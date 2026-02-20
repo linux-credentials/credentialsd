@@ -22,6 +22,8 @@ pub trait FlowController {
         Output = Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>,
     > + Send;
     fn enter_client_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
+    fn set_usb_device_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
+    fn set_nfc_device_pin(&mut self, pin: String) -> impl Future<Output = Result<(), ()>> + Send;
     fn select_credential(
         &self,
         credential_id: String,

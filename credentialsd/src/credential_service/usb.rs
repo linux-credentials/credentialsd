@@ -5,12 +5,13 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_lite::Stream;
 use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
+    pin::PinManagement,
     proto::CtapError,
     transport::{
         hid::{channel::HidChannelHandle, HidDevice},
         Channel, Device,
     },
-    webauthn::{Error as WebAuthnError, WebAuthn},
+    webauthn::{Error as WebAuthnError, PlatformError, WebAuthn},
     UvUpdate,
 };
 use tokio::sync::broadcast;
@@ -227,6 +228,9 @@ impl InProcessUsbHandler {
                         }
                     }
                 },
+                Ok(UsbUvMessage::SetPinSuccess) => Ok(UsbStateInternal::Completed(
+                    CredentialResponse::SetDevicePinSuccessRespone,
+                )),
                 Err(err) => Err(err),
             },
             None => Err(Error::Internal("USB UV handler channel closed".to_string())),
@@ -319,6 +323,10 @@ async fn handle_events(
                         .map(|response| {
                             UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
                         }),
+                    CredentialRequest::SetDevicePinRequest(new_pin) => channel
+                        .change_pin(new_pin.to_string(), Duration::from_secs(300))
+                        .await
+                        .map(|_| UsbUvMessage::SetPinSuccess),
                 };
                 match response {
                     Ok(response) => {
@@ -343,6 +351,9 @@ async fn handle_events(
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
                 WebAuthnError::Ctap(CtapError::PINNotSet) => Error::PinNotSet,
+                WebAuthnError::Platform(PlatformError::PinTooShort)
+                | WebAuthnError::Platform(PlatformError::PinTooLong)
+                | WebAuthnError::Ctap(CtapError::PINPolicyViolation) => Error::PinPolicyViolation,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,
@@ -624,4 +635,5 @@ enum UsbUvMessage {
     },
     NeedsUserPresence,
     ReceivedCredentials(Box<AuthenticatorResponse>),
+    SetPinSuccess,
 }
