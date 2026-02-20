@@ -881,6 +881,9 @@ This method should be called when a new credential request begins.
 ViewRequest: [a{sv}] {
     id: u,
     operation: Operation,
+    rp_id: s,
+    requesting_app: RequestingApplication,
+    window_handle: s, // Optional
 }
 ```
 
@@ -889,6 +892,15 @@ Operation[s] [
     "CREATE",
     "GET",
 ]
+```
+
+```
+RequestingApplication {
+    name: s, // Optional
+    path_or_app_id: s,
+    pid: u32,
+
+}
 ```
 
 ### Response

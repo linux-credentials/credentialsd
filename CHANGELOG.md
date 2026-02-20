@@ -1,5 +1,11 @@
 # [unreleased]
 
+## Breaking Changes
+
+### UI Controller API
+
+- Reordered parameters in RequestingApplication, and made app name optional.
+
 # [0.2.0] - 2025-02-18
 
 ## Breaking Changes

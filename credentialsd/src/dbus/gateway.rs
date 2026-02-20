@@ -208,8 +208,8 @@ async fn query_connection_peer_binary(
     tracing::debug!("Request is from: {exe_path:?}");
 
     Some(RequestingApplication {
-        name: command_name,
-        path: exe_path.to_string_lossy().to_string(),
+        name: Some(command_name).into(),
+        path_or_app_id: exe_path.to_string_lossy().to_string(),
         pid,
     })
 }
@@ -451,8 +451,8 @@ async fn validate_app_details(
         NavigationContext::SameOrigin(Origin::AppId(app_id))
     };
     let app_details = RequestingApplication {
-        name: display_name,
-        path: claimed_app_id,
+        name: Some(display_name).into(),
+        path_or_app_id: claimed_app_id,
         pid,
     };
     Ok((app_details, request_env))
