@@ -1,125 +1,63 @@
-/*
-On startup, connect to the "credential_shim" app.
-*/
+/**
+ * Background script that bridges content script messages
+ * to the native messaging host.
+ *
+ * Works in both Firefox (background script) and Chromium (service worker).
+ * ArrayBuffer serialization is handled by the MAIN world content script,
+ * so this script simply forwards messages between content and native.
+ */
+
+const browserAPI = globalThis.browser || globalThis.chrome;
+
 let contentPort;
 let nativePort;
 
 function connected(port) {
-  console.log("received connection from content script");
-
-  // initialize content port
+  console.log('[credentialsd] received connection from content script');
   contentPort = port;
-  console.log(contentPort);
 
-  // Initialize native port
-  nativePort = browser.runtime.connectNative("xyz.iinuwa.credentialsd_helper");
-  console.debug(nativePort);
-  if (nativePort.error !== null) {
-    console.error(nativePort.error)
-    throw nativePort.error
+  // Connect to native messaging host
+  nativePort = browserAPI.runtime.connectNative('xyz.iinuwa.credentialsd_helper');
+
+  // Check for connection errors (browser-specific patterns)
+  const connectError = nativePort.error || browserAPI.runtime.lastError;
+  if (connectError) {
+    console.error('[credentialsd] native connect error:', connectError.message || connectError);
+    return;
   }
-  console.log(`connected to native app`)
-  console.log(nativePort)
 
-  // Set up content port listener
-  contentPort.onMessage.addListener(rcvFromContent)
+  console.log('[credentialsd] connected to native app');
 
- // Set up native port listener
- console.log("setting up native port response listener")
- nativePort.onMessage.addListener(rcvFromNative);
+  contentPort.onMessage.addListener(rcvFromContent);
+  nativePort.onMessage.addListener(rcvFromNative);
 
+  nativePort.onDisconnect.addListener(() => {
+    const error = browserAPI.runtime.lastError;
+    if (error) {
+      console.error('[credentialsd] native port disconnected:', error.message);
+    }
+  });
 }
 
 function rcvFromContent(msg) {
   const { requestId, cmd, options } = msg;
-  const origin = contentPort.sender.origin
-  const topOrigin = new URL(contentPort.sender.tab.url).origin
-  // const isCrossOrigin = origin === topOrigin
-  // const isTopLevel = contentPort.sender.frameId === 0;
+  const origin = contentPort.sender.origin;
+  const topOrigin = new URL(contentPort.sender.tab.url).origin;
 
   if (options) {
-    const serializedOptions = serializeRequest(options)
-
-    console.debug(options.publicKey.challenge)
-    console.debug("background script received options, passing onto native app")
-    nativePort.postMessage({ requestId, cmd, options: serializedOptions, origin, topOrigin })
+    console.debug('[credentialsd] forwarding', cmd, 'to native app');
+    nativePort.postMessage({ requestId, cmd, options, origin, topOrigin });
   } else {
-    console.debug("background script received message without arguments, passing onto native app")
-    nativePort.postMessage({ requestId, cmd, origin, topOrigin })
+    console.debug('[credentialsd] forwarding', cmd, '(no options) to native app');
+    nativePort.postMessage({ requestId, cmd, origin, topOrigin });
   }
 }
 
 function rcvFromNative(msg) {
-  console.log("Received (native -> background): " + msg);
-  console.log("forwarding to content script");
-  const { requestId, data, error } = msg;
+  console.log('[credentialsd] received from native, forwarding to content');
   contentPort.postMessage(msg);
 }
 
-function serializeBytes(buffer) {
-  const options = {alphabet: "base64url", omitPadding: true};
-  return new Uint8Array(buffer).toBase64(options)
-}
-
-function deserializeBytes(base64str) {
-  const options = {alphabet: "base64url"}
-  return Uint8Array.fromBase64(base64str, options)
-}
-
-function serializeRequest(options) {
-  // Serialize ArrayBuffers
-  const clone = structuredClone(options)
-  clone.publicKey.challenge = serializeBytes(clone.publicKey.challenge)
-  if (clone.publicKey.user) {
-    clone.publicKey.user.id = serializeBytes(clone.publicKey.user.id)
-  }
-  if (clone.publicKey.excludeCredentials) {
-    for (const cred of clone.publicKey.excludeCredentials) {
-      cred.id = serializeBytes(cred.id)
-    }
-  }
-  if (clone.publicKey.allowCredentials) {
-    for (const cred of clone.publicKey.allowCredentials) {
-      cred.id = serializeBytes(cred.id);
-    }
-  }
-  if (clone.publicKey.extensions && clone.publicKey.extensions.prf) {
-    if (clone.publicKey.extensions.prf.eval) {
-      clone.publicKey.extensions.prf.eval.first = serializeBytes(clone.publicKey.extensions.prf.eval.first);
-      if (clone.publicKey.extensions.prf.eval.second) {
-        clone.publicKey.extensions.prf.eval.second = serializeBytes(clone.publicKey.extensions.prf.eval.second);
-      }
-    }
-    if (clone.publicKey.extensions.prf.evalByCredential) {
-      const evalByCredential = clone.publicKey.extensions.prf.evalByCredential;
-
-      // Iterate over all credentialIDs, serialize the first/second bytebuffer and replace the original evalByCredential map
-      const result = {};
-      for (const credId in evalByCredentialData) {
-        const prfValue = evalByCredentialData[credId];
-
-        if (prfValue && prfValue.first) {
-          const newPrfValue = {
-              first: serializeBytes(prfValue.first)
-          };
-
-          if (prfValue.second) {
-              newPrfValue.second = serializeBytes(prfValue.second);
-          }
-          result[credId] = newPrfValue;
-        };
-      }
-      clone.publicKey.extensions.prf.evalByCredential = result;
-    }
-
-    if (clone.publicKey.extensions && clone.publicKey.extensions.credBlob) {
-      clone.publicKey.extensions.credBlob = serializeBytes(clone.publicKey.extensions.credBlob);
-    }
-  }
-  return clone
-}
-
-
 // Listen for connections from content script
-console.log("Starting up credential_manager_shim background script")
-browser.runtime.onConnect.addListener(connected);
+console.log('[credentialsd] background script starting');
+browserAPI.runtime.onConnect.addListener(connected);

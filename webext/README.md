@@ -1,8 +1,9 @@
 This is a web extension that allows browsers to connect to the D-Bus service
 provided by this project. It can be used for testing.
 
-Currently, this is written only for Firefox; there will be some slight API
-tweaks required to make this work in Chrome.
+Two variants are provided:
+- `add-on/` - Firefox (MV3, requires Firefox 140+)
+- `add-on-edge/` - Edge/Chromium (MV3, requires Chrome 111+ or Edge 111+)
 
 This requires some setup to make it work:
 
@@ -48,11 +49,11 @@ couple of options:
 4. Navigate to [https://webauthn.io]().
 5. Run through the registration and creation process.
 
-## For Development
+## For Development (Firefox)
 
 (Note: Paths are relative to root of this repository)
 
-1. Copy `webext/app/credential_manager_shim.json` to `~/.mozilla/native-messaging-hosts/credential_manager_shim.json`.
+1. Copy `webext/app/credential_manager_shim.json` to `~/.mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.json`.
 2. In `webext/app/credential_manager_shim.py`, point the `DBUS_DOC_FILE`
    variable to the absolute path to
    `doc/xyz.iinuwa.credentialsd.Credentials.xml`.
@@ -64,3 +65,40 @@ couple of options:
    - `./build/credentialsd/target/debug/credentialsd`
 7. Navigate to [https://webauthn.io]().
 8. Run through the registration and creation process.
+
+## For Development (Edge/Chromium)
+
+(Note: Paths are relative to root of this repository)
+
+1. In `webext/app/credential_manager_shim.py`, point the `DBUS_DOC_FILE`
+   variable to the absolute path to
+   `doc/xyz.iinuwa.credentialsd.Credentials.xml`.
+2. Open Edge and go to `edge://extensions` (or `chrome://extensions` for Chrome).
+3. Enable "Developer mode" (toggle in top right).
+4. Click "Load unpacked" and select the `webext/add-on-edge/` directory.
+5. Note the extension ID shown on the extensions page (e.g., `abcdefghijklmnop...`).
+6. Create the native messaging manifest:
+   ```shell
+   # For Edge:
+   mkdir -p ~/.config/microsoft-edge/NativeMessagingHosts
+   # For Chrome:
+   # mkdir -p ~/.config/google-chrome/NativeMessagingHosts
+   # For Chromium:
+   # mkdir -p ~/.config/chromium/NativeMessagingHosts
+
+   cat > ~/.config/microsoft-edge/NativeMessagingHosts/xyz.iinuwa.credentialsd_helper.json << EOF
+   {
+     "name": "xyz.iinuwa.credentialsd_helper",
+     "description": "Helper for integrating browser with credentialsd project",
+     "path": "$(readlink -f webext/app/credential_manager_shim.py)",
+     "type": "stdio",
+     "allowed_origins": [ "chrome-extension://YOUR_EXTENSION_ID/" ]
+   }
+   EOF
+   ```
+   Replace `YOUR_EXTENSION_ID` with the extension ID from step 5.
+7. Build with `ninja -C ./build` and run the D-Bus services:
+   - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
+   - `./build/credentialsd/target/debug/credentialsd`
+8. Navigate to [https://webauthn.io]().
+9. Run through the registration and creation process.
