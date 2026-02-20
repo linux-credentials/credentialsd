@@ -19,9 +19,16 @@
   },
   "content_scripts": [
     {
-        "matches": ["https://webauthn.io/*", "https://demo.yubico.com/*"],
-        "js": ["content.js"],
-        "run_at": "document_start"
+      "matches": ["<all_urls>"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
 

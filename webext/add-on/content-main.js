@@ -2,31 +2,15 @@
  * Content script running in MAIN world (page context).
  * Overrides navigator.credentials.create/get and communicates
  * with the ISOLATED world bridge script via window.postMessage.
+ *
+ * Works in both Firefox and Chromium browsers.
  */
 
 let requestCounter = 0;
 const pendingRequests = {};
 
-// Base64url helpers (Chromium doesn't have Uint8Array.toBase64/fromBase64)
-function arrayBufferToBase64url(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-function base64urlToArrayBuffer(str) {
-  if (!str) return null;
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
+const b64urlEncodeOpts = { alphabet: "base64url", omitPadding: true };
+const b64urlDecodeOpts = { alphabet: "base64url" };
 
 // Listen for responses from the bridge script
 window.addEventListener('message', (event) => {
@@ -54,16 +38,20 @@ function startRequest() {
 }
 
 function serializePublicKeyOptions(options) {
-  const clone = JSON.parse(JSON.stringify(options, (key, value) => {
+  return JSON.parse(JSON.stringify(options, (key, value) => {
     if (value instanceof ArrayBuffer) {
-      return { __b64url__: arrayBufferToBase64url(value) };
+      return new Uint8Array(value).toBase64(b64urlEncodeOpts);
     }
     if (ArrayBuffer.isView(value)) {
-      return { __b64url__: arrayBufferToBase64url(value.buffer) };
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).toBase64(b64urlEncodeOpts);
     }
     return value;
   }));
-  return clone;
+}
+
+function base64urlToArrayBuffer(str) {
+  if (!str) return null;
+  return Uint8Array.fromBase64(str, b64urlDecodeOpts).buffer;
 }
 
 function reconstructCredentialResponse(credential) {
@@ -78,8 +66,7 @@ function reconstructCredentialResponse(credential) {
     response.clientDataJSON = base64urlToArrayBuffer(credential.response.clientDataJSON);
     response.attestationObject = base64urlToArrayBuffer(credential.response.attestationObject);
     response.transports = credential.response.transports ? [...credential.response.transports] : [];
-    const authenticatorData = base64urlToArrayBuffer(credential.response.authenticatorData);
-    response.authenticatorData = authenticatorData;
+    response.authenticatorData = base64urlToArrayBuffer(credential.response.authenticatorData);
     response.getAuthenticatorData = function() { return this.authenticatorData; };
     response.getPublicKeyAlgorithm = function() { return credential.response.publicKeyAlgorithm; };
     if (credential.response.publicKey) {
@@ -231,7 +218,6 @@ if (typeof PublicKeyCredential !== 'undefined') {
     return true;
   };
 
-  const origGetClientCapabilities = PublicKeyCredential.getClientCapabilities;
   PublicKeyCredential.getClientCapabilities = function() {
     console.log('[credentialsd] intercepting PublicKeyCredential.getClientCapabilities');
     const { requestId, promise } = startRequest();
@@ -246,4 +232,4 @@ if (typeof PublicKeyCredential !== 'undefined') {
   };
 }
 
-console.log('[credentialsd] WebAuthn credential override active (Edge/Chromium)');
+console.log('[credentialsd] WebAuthn credential override active');

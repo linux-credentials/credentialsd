@@ -1,10 +1,13 @@
 /**
  * Content script running in ISOLATED world.
  * Bridges window.postMessage from the MAIN world content script
- * to the background service worker via chrome.runtime.connect.
+ * to the background script via runtime.connect.
+ *
+ * Works in both Firefox and Chromium browsers.
  */
 
-const port = chrome.runtime.connect({ name: 'credentialsd-helper' });
+const browserAPI = globalThis.browser || globalThis.chrome;
+const port = browserAPI.runtime.connect({ name: 'credentialsd-helper' });
 
 // Forward responses from background back to page context
 port.onMessage.addListener((msg) => {
@@ -30,4 +33,4 @@ window.addEventListener('message', (event) => {
   port.postMessage({ requestId, cmd, options });
 });
 
-console.log('[credentialsd] content bridge active (Edge/Chromium)');
+console.log('[credentialsd] content bridge active');
