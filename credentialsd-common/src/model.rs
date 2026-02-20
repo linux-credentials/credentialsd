@@ -96,10 +96,17 @@ impl Transport {
     }
 }
 
+/// Details about the calling application to be displayed in the UI.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
 pub struct RequestingApplication {
+    /// The App ID (if called on the portal interface) or path (if called on the
+    /// internal interface).
     pub path_or_app_id: String,
+
+    /// The name of the application.
     pub name: Optional<String>,
+
+    /// The PID of the applicatoin
     pub pid: u32,
 }
 
