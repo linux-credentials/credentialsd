@@ -5,28 +5,27 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
-use credentialsd_common::server::{ViewRequest, WindowHandle};
-use credentialsd_common::{client::FlowController, model::ViewUpdate};
+use credentialsd_common::{
+    model::ViewUpdate,
+    server::{ViewRequest, WindowHandle},
+};
+
+use crate::client::FlowControlClient;
 
 use view_model::ViewEvent;
 
-pub(super) fn start_gui_thread<F: FlowController + Send + Sync + 'static>(
-    rx: Receiver<ViewRequest>,
-    flow_controller: F,
+pub(super) fn start_gui_thread(
+    rx: Receiver<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new().name("gui".into()).spawn(move || {
-        let flow_controller = Arc::new(AsyncMutex::new(flow_controller));
         // D-Bus received a request and needs a window open
-        while let Ok(view_request) = rx.recv_blocking() {
-            run_gui(flow_controller.clone(), view_request);
+        while let Ok((view_request, flow_controller)) = rx.recv_blocking() {
+            run_gui(flow_controller, view_request);
         }
     })
 }
 
-fn run_gui<F: FlowController + Send + Sync + 'static>(
-    flow_controller: Arc<AsyncMutex<F>>,
-    request: ViewRequest,
-) {
+fn run_gui(flow_controller: Arc<AsyncMutex<FlowControlClient>>, request: ViewRequest) {
     let parent_window: Option<WindowHandle> = request.window_handle.as_ref().and_then(|h| {
         h.to_string()
             .try_into()
