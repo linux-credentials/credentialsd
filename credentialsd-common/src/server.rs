@@ -412,7 +412,7 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
     }
 }
 
-#[derive(Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
 
@@ -432,7 +432,7 @@ pub struct ViewRequest {
     pub window_handle: Optional<WindowHandle>,
 }
 
-#[derive(Type, PartialEq, Debug)]
+#[derive(Clone, Debug, PartialEq, Type)]
 #[zvariant(signature = "s")]
 pub enum WindowHandle {
     Wayland(String),
