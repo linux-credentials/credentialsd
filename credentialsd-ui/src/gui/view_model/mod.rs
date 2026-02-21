@@ -13,12 +13,9 @@ use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::{
-    client::FlowController,
-    model::{
-        BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport,
-        UsbState, ViewUpdate,
-    },
+use credentialsd_common::model::{
+    BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport,
+    UsbState, ViewUpdate,
 };
 
 use crate::client::FlowControlClient;
@@ -233,6 +230,10 @@ impl ViewModel {
                     break;
                 }
 
+                // TODO: Add this event
+                // Event::Background(BackgroundEvent::DevicesUpdated(devices)) => {
+                //     self.update_devices(devices).await
+                // }
                 Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
                     match state {
                         UsbState::Connected => {

@@ -2,9 +2,18 @@
 
 use std::error::Error;
 
-use zbus::{fdo, proxy, Connection};
+use zbus::{
+    fdo,
+    object_server::SignalEmitter,
+    proxy,
+    zvariant::{ObjectPath, OwnedObjectPath},
+    Connection,
+};
 
-use credentialsd_common::{model::RequestId, server::ViewRequest};
+use credentialsd_common::{
+    model::{BackgroundEvent, RequestId},
+    server::ViewRequest,
+};
 
 use crate::credential_service::UiController;
 
@@ -17,6 +26,31 @@ use crate::credential_service::UiController;
 trait UiControlService {
     fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
     fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
+}
+
+#[proxy(
+    gen_blocking = false,
+    interface = "org.freedesktop.impl.portal.experimental.Credential",
+    default_service = "org.freedesktop.impl.portal.experimental.Credential",
+    default_path = "/org/freedesktop/portal/desktop"
+)]
+trait UiControlService2 {
+    fn initialize(&self, request: ViewRequest) -> fdo::Result<OwnedObjectPath>;
+}
+
+#[proxy(
+    gen_blocking = false,
+    interface = "org.freedesktop.impl.portal.experimental.Credential.FlowObject",
+    default_service = "xyz.iinuwa.credentialsd.UiControl"
+)]
+trait FlowObject {
+    async fn start(&self) -> fdo::Result<()>;
+    async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()>;
+
+    async fn cancel(&self) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn user_interacted() -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -32,7 +66,23 @@ impl UiControlServiceClient {
     async fn proxy(&self) -> Result<UiControlServiceProxy<'_>, zbus::Error> {
         UiControlServiceProxy::new(&self.conn).await
     }
+
+    async fn proxy2(&self) -> Result<UiControlService2Proxy<'_>, zbus::Error> {
+        UiControlService2Proxy::new(&self.conn).await
+    }
+
+    async fn request_proxy(
+        &self,
+        request_id: RequestId,
+    ) -> Result<FlowObjectProxy<'_>, zbus::Error> {
+        let object_path = ObjectPath::from_string_unchecked(format!(
+            "/org/freedesktop/portal/Credential/{}",
+            request_id
+        ));
+        FlowObjectProxy::new(&self.conn, object_path).await
+    }
 }
+
 impl UiController for UiControlServiceClient {
     async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
         self.proxy()
@@ -41,11 +91,18 @@ impl UiController for UiControlServiceClient {
             .await
             .map_err(|err| err.into())
     }
+
+    async fn initialize(&self, request: ViewRequest) -> Result<OwnedObjectPath, Box<dyn Error>> {
+        let path = self.proxy2().await?.initialize(request).await?;
+        tracing::debug!(?path, "Path initialized");
+        Ok(path)
+    }
 }
 
 #[cfg(test)]
 pub mod test {
     use std::{
+        error::Error,
         fmt::Debug,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -61,6 +118,7 @@ pub mod test {
         mpsc::{self, Receiver, Sender},
         Mutex as AsyncMutex, Notify,
     };
+    use zbus::zvariant::OwnedObjectPath;
 
     use super::UiController;
 
@@ -70,7 +128,7 @@ pub mod test {
     }
 
     impl UiController for DummyUiClient {
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
+        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
             tracing::debug!(
                 target: "DummyUiClient",
                 "Sending launch_ui() request"
@@ -81,6 +139,13 @@ pub mod test {
                 "Finish launch_ui() request"
             );
             Ok(())
+        }
+
+        async fn initialize(
+            &self,
+            request: ViewRequest,
+        ) -> Result<OwnedObjectPath, Box<dyn Error>> {
+            unimplemented!()
         }
     }
 
@@ -211,7 +276,7 @@ pub mod test {
             );
         }
 
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
+        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
             tracing::debug!(
                 target: "DummyUiServer",
                 "Received launch_ui() request"

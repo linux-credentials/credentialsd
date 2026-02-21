@@ -17,15 +17,16 @@ use libwebauthn::{
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
-use tokio::sync::oneshot::Sender;
+use tokio::sync::{mpsc, oneshot};
 
 use credentialsd_common::{
     model::{
-        Device, Error as CredentialServiceError, Operation, RequestId, RequestingApplication,
-        Transport,
+        BackendRequest, Device, Error as CredentialServiceError, Operation, RequestId,
+        RequestingApplication, Transport,
     },
     server::{ViewRequest, WindowHandle},
 };
+use zbus::zvariant::OwnedObjectPath;
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -45,12 +46,22 @@ pub trait UiController {
         &self,
         request: ViewRequest,
     ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
+
+    fn initialize(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<OwnedObjectPath, Box<dyn Error>>> + Send;
+
+    fn start(
+        &self,
+        request_id: RequestId,
+    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
 }
 
 #[derive(Debug)]
 struct RequestContext {
     request: CredentialRequest,
-    response_channel: Sender<Result<CredentialResponse, CredentialServiceError>>,
+    response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
 }
 
@@ -105,7 +116,7 @@ impl<
         request: &CredentialRequest,
         requesting_app: Option<RequestingApplication>,
         window_handle: Option<WindowHandle>,
-        tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
+        tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) {
         let request_id = {
             let mut cred_request = self.ctx.lock().unwrap();
@@ -117,6 +128,23 @@ impl<
                 return;
             } else {
                 let request_id: RequestId = rand::random();
+                // TODO: Spawn a task here that will listen to the signals from ui_control_client.
+                // Move the get_*_credential(), etc. from gateway to here.
+                let (ui_request_tx, ui_request_rx) = mpsc::channel(32);
+                tokio::spawn(async move {
+                    while let Some(ui_request) = ui_request_rx.recv().await {
+                        match ui_request {
+                            BackendRequest::GetHybridCredential => {}
+                            BackendRequest::GetUsbCredential => {
+                                let stream = self.get_hybrid_credential();
+                            }
+                            BackendRequest::GetNfcCredential => todo!(),
+                            BackendRequest::EnterClientPin(_) => todo!(),
+                            BackendRequest::SelectCredential(_) => todo!(),
+                            BackendRequest::CancelRequest(_) => todo!(),
+                        }
+                    }
+                });
                 let ctx = RequestContext {
                     request: request.clone(),
                     response_channel: tx,
@@ -143,23 +171,34 @@ impl<
             id: request_id,
             rp_id,
             initial_devices,
-            requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
+            requesting_app: requesting_app.unwrap_or_default(),
             window_handle: window_handle.into(),
         };
 
+        /*
         let launch_ui_response = self
             .ui_control_client
             .launch_ui(view_request)
             .await
             .map_err(|err| err.to_string());
-        if let Err(err) = launch_ui_response {
-            tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            let err = Err(CredentialServiceError::Internal(err));
-            let ctx = self.ctx.lock().unwrap().take().unwrap();
-            ctx.response_channel
-                .send(err)
-                .expect("Request handler to be listening");
-        }
+        */
+
+        let path = match self.ui_control_client.initialize(view_request).await {
+            Ok(path) => path,
+            //if let Err(err) = launch_ui_response {
+            Err(err) => {
+                tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
+                let err = Err(CredentialServiceError::Internal(err.to_string()));
+                let ctx = self.ctx.lock().unwrap().take().unwrap();
+                ctx.response_channel
+                    .send(err)
+                    .expect("Request handler to be listening");
+                return;
+            }
+        };
+        // Here, subscribe to signals, and forward them to the receiver in the request context.
+        // self.ui_control_client.subscribe().await;
+        self.ui_control_client.start(request_id).await;
         tracing::debug!("Finished setting up request {request_id}");
     }
 
