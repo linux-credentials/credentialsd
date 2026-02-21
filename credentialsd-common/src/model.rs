@@ -255,6 +255,41 @@ pub enum NfcState {
     Failed(Error),
 }
 
+pub enum BackendRequest {
+    /// Start Hybrid discovery
+    GetHybridCredential,
+
+    /// Start USB discovery
+    GetUsbCredential,
+
+    /// Start NFC discovery
+    GetNfcCredential,
+
+    /// Send client PIN
+    EnterClientPin(String),
+
+    /// Select a credential by credential ID
+    SelectCredential(String),
+
+    CancelRequest(RequestId),
+}
+
+impl std::fmt::Debug for BackendRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GetHybridCredential => write!(f, "GetHybridCredential"),
+            Self::GetUsbCredential => write!(f, "GetUsbCredential"),
+            Self::GetNfcCredential => write!(f, "GetNfcCredential"),
+            Self::EnterClientPin(_) => f
+                .debug_tuple("EnterClientPin")
+                .field(&"******".to_string())
+                .finish(),
+            Self::SelectCredential(arg0) => f.debug_tuple("SelectCredential").field(arg0).finish(),
+            Self::CancelRequest(arg0) => f.debug_tuple("CancelRequest").field(arg0).finish(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum BackgroundEvent {
     UsbStateChanged(UsbState),
