@@ -30,25 +30,29 @@ pub enum CredentialType {
     // Password,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct Device {
     pub id: String,
     pub transport: Transport,
 }
 
-#[derive(Debug, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum Operation {
     Create,
     Get,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[zvariant(signature = "s")]
 pub enum Transport {
+    #[serde(rename = "BLE")]
     Ble,
     HybridLinked,
     HybridQr,
     Internal,
+    #[serde(rename = "NFC")]
     Nfc,
+    #[serde(rename = "USB")]
     Usb,
 }
 

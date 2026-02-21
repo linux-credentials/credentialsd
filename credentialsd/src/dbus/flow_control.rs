@@ -5,9 +5,9 @@ use std::future::Future;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use credentialsd_common::model::{
-    BackgroundEvent, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
+    BackgroundEvent, Device, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
 };
-use credentialsd_common::server::{Device, RequestId, WindowHandle};
+use credentialsd_common::server::{RequestId, WindowHandle};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
