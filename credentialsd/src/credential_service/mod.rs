@@ -146,7 +146,6 @@ impl<
             .map_err(|err| err.to_string());
         if let Err(err) = launch_ui_response {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            _ = self.ctx.lock().unwrap().take();
             let err = Err(CredentialServiceError::Internal(err));
             let ctx = self.ctx.lock().unwrap().take().unwrap();
             ctx.response_channel
