@@ -21,7 +21,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // executing the credential flow.
     let client_conn = zbus::connection::Builder::session()?.build().await?;
     let cred_client = DbusCredentialClient::new(client_conn);
-    let _handle = gui::start_gui_thread(request_rx, cred_client)?;
+    let _handle = gui::start_gui_thread(request_rx)?;
     println!(" ✅");
 
     print!("Starting UI Control listener...\t");

@@ -18,12 +18,11 @@ use credentialsd_common::{
     model::{Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate},
 };
 
+use crate::client::FlowControlClient;
+
 #[derive(Debug)]
-pub(crate) struct ViewModel<F>
-where
-    F: FlowController + Send,
-{
-    flow_controller: Arc<AsyncMutex<F>>,
+pub(crate) struct ViewModel {
+    flow_controller: Arc<AsyncMutex<FlowControlClient>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     title: String,
@@ -44,10 +43,10 @@ where
     // hybrid_linked_state: HybridState,
 }
 
-impl<F: FlowController + Send> ViewModel<F> {
+impl ViewModel {
     pub(crate) fn new(
         request: ViewRequest,
-        flow_controller: Arc<AsyncMutex<F>>,
+        flow_controller: Arc<AsyncMutex<FlowControlClient>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
@@ -160,15 +159,15 @@ impl<F: FlowController + Send> ViewModel<F> {
         match device.transport {
             Transport::Usb => {
                 let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_usb_credential().await.unwrap();
+                (*cred_service).discover_usb_authenticators().await.unwrap();
             }
             Transport::Nfc => {
                 let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_nfc_credential().await.unwrap();
+                (*cred_service).discover_nfc_authenticators().await.unwrap();
             }
             Transport::HybridQr => {
-                let mut cred_service = self.flow_controller.lock().await;
-                cred_service.get_hybrid_credential().await.unwrap();
+                let cred_service = self.flow_controller.lock().await;
+                cred_service.discover_hybrid_authenticators().await.unwrap();
             }
             _ => {
                 todo!()
