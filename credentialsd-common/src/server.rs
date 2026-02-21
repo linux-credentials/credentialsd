@@ -584,9 +584,18 @@ where
 #[derive(Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
+
+    /// ID of the request.
     pub id: RequestId,
+
+    /// The RP ID
     pub rp_id: String,
+
+    /// Details about the application requesting credentials.
     pub requesting_app: RequestingApplication,
+
+    /// Initial list of device interfaces that may provide credentials.
+    pub initial_devices: Vec<Device>,
 
     /// Client window handle.
     pub window_handle: Optional<WindowHandle>,
