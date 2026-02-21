@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use async_std::{channel::Sender, stream::StreamExt, sync::Mutex as AsyncMutex};
-use zbus::{Connection, fdo, interface, proxy};
+use zbus::{
+    Connection, ObjectServer, fdo, interface, message::Header, names::OwnedUniqueName,
+    object_server::SignalEmitter, proxy, zvariant::ObjectPath,
+};
 
 use credentialsd_common::{
     client::FlowController,
@@ -103,4 +106,73 @@ impl UiControlService {
             .await
             .map_err(|_| fdo::Error::Failed("UI failed to launch".to_string()))
     }
+}
+
+pub struct CredentialPortalBackend {
+    pub request_tx: Sender<ViewRequest>,
+}
+
+/// These methods are called by the credential service to control the UI.
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
+impl CredentialPortalBackend {
+    async fn initialize(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        request: ViewRequest,
+    ) -> fdo::Result<ObjectPath> {
+        let Some(sender) = header.sender() else {
+            return Err(fdo::Error::BadAddress("Sender not found".to_string()));
+        };
+        let object_path = ObjectPath::from_string_unchecked(format!(
+            "/org/freedesktop/portal/Credential/{}",
+            request.id
+        ));
+        let flow_object = FlowObject {
+            request,
+            request_tx: self.request_tx.clone(),
+            return_address: sender.to_owned().into(),
+        };
+        object_server.at(object_path.clone(), flow_object).await?;
+        tracing::debug!("Received UI launch request");
+        Ok(object_path)
+    }
+}
+
+pub struct FlowObject {
+    request: ViewRequest,
+    pub request_tx: Sender<ViewRequest>,
+    pub return_address: OwnedUniqueName,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.FlowObject")]
+impl FlowObject {
+    /// Start the UI flow with an initial set of available credential interfaces.
+    /// Call this method after subscribing to the signals.
+    async fn start(&self) -> fdo::Result<()> {
+        if let Err(err) = self.request_tx.send(self.request.clone()).await {
+            tracing::error!("Received message to start flow, but GUI thread is not listening.");
+            return Err(fdo::Error::Failed("Failed to start GUI".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()> {
+        todo!()
+    }
+
+    async fn cancel(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        if let Some(path) = header.path() {
+            // TODO: Send clean up task to GUI thread.
+            object_server.remove::<FlowObject, _>(path).await?;
+        }
+        Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn user_interacted(emitter: SignalEmitter<'_>) -> zbus::Result<()>;
 }

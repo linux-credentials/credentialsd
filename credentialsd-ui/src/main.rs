@@ -6,7 +6,7 @@ mod gui;
 
 use std::error::Error;
 
-use crate::{client::DbusCredentialClient, dbus::UiControlService};
+use crate::dbus::UiControlService;
 
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt::init();
@@ -19,8 +19,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let (request_tx, request_rx) = async_std::channel::bounded(2);
     // this allows the D-Bus service to signal to the GUI to draw a window for
     // executing the credential flow.
-    let client_conn = zbus::connection::Builder::session()?.build().await?;
-    let cred_client = DbusCredentialClient::new(client_conn);
     let _handle = gui::start_gui_thread(request_rx)?;
     println!(" ✅");
 

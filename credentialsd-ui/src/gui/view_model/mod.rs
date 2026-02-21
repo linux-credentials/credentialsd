@@ -13,9 +13,8 @@ use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::{
-    client::FlowController,
-    model::{Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate},
+use credentialsd_common::model::{
+    Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate,
 };
 
 use crate::client::FlowControlClient;
@@ -233,9 +232,12 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::UsbConnected) => {
                     info!("Found USB device")
                 }
-
+                // TODO: Add this event
+                // Event::Background(BackgroundEvent::DevicesUpdated(devices)) => {
+                //     self.update_devices(devices).await
+                // }
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
-                    // TODO: UsbNeedsPin just needs to be NeedsPing
+                    // TODO: UsbNeedsPin just needs to be NeedsPin
                     self.tx_update
                         .send(ViewUpdate::UsbNeedsPin { attempts_left })
                         .await
