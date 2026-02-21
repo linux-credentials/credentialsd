@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{Device, Operation, RequestingApplication};
+use crate::model::{Device, Operation, RequestId, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U32, &Signature::Variant],
@@ -411,9 +411,6 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
         }
     }
 }
-
-/// Identifier for a request to be used for cancellation.
-pub type RequestId = u32;
 
 #[derive(Serialize, Deserialize, Type)]
 pub struct ViewRequest {

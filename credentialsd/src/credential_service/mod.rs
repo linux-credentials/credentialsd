@@ -20,8 +20,11 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot::Sender;
 
 use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, Operation, RequestingApplication, Transport},
-    server::{RequestId, ViewRequest, WindowHandle},
+    model::{
+        Device, Error as CredentialServiceError, Operation, RequestId, RequestingApplication,
+        Transport,
+    },
+    server::{ViewRequest, WindowHandle},
 };
 
 use crate::{
