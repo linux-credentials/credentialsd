@@ -4,7 +4,7 @@ use std::error::Error;
 
 use zbus::{fdo, proxy, Connection};
 
-use credentialsd_common::server::{RequestId, ViewRequest};
+use credentialsd_common::{model::RequestId, server::ViewRequest};
 
 use crate::credential_service::UiController;
 

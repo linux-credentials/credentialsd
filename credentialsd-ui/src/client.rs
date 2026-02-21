@@ -1,5 +1,5 @@
 use async_std::stream::Stream;
-use credentialsd_common::{client::FlowController, server::RequestId};
+use credentialsd_common::{client::FlowController, model::RequestId};
 use futures_lite::StreamExt;
 use zbus::Connection;
 

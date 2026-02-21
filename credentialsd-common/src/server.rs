@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Operation, RequestingApplication};
+use crate::model::{BackgroundEvent, Device, Operation, RequestId, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -308,9 +308,6 @@ impl Type for crate::model::HybridState {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
 
-/// Identifier for a request to be used for cancellation.
-pub type RequestId = u32;
-
 impl Type for crate::model::UsbState {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
@@ -590,9 +587,18 @@ where
 #[derive(Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
+
+    /// ID of the request.
     pub id: RequestId,
+
+    /// The RP ID
     pub rp_id: String,
+
+    /// Details about the application requesting credentials.
     pub requesting_app: RequestingApplication,
+
+    /// Initial list of device interfaces that may provide credentials.
+    pub initial_devices: Vec<Device>,
 
     /// Client window handle.
     pub window_handle: Optional<WindowHandle>,

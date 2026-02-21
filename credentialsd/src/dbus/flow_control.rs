@@ -5,9 +5,10 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackgroundEvent, Device, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
+    BackgroundEvent, Device, Error as CredentialServiceError, RequestId, RequestingApplication,
+    WebAuthnError,
 };
-use credentialsd_common::server::{RequestId, WindowHandle};
+use credentialsd_common::server::WindowHandle;
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -403,8 +404,7 @@ pub mod test {
 
     use credentialsd_common::{
         client::FlowController,
-        model::{BackgroundEvent, Device},
-        server::RequestId,
+        model::{BackgroundEvent, Device, RequestId},
     };
     use futures_lite::{Stream, StreamExt};
     use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};

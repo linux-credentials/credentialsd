@@ -20,8 +20,11 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot::Sender;
 
 use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, Operation, RequestingApplication, Transport},
-    server::{RequestId, ViewRequest, WindowHandle},
+    model::{
+        Device, Error as CredentialServiceError, Operation, RequestId, RequestingApplication,
+        Transport,
+    },
+    server::{ViewRequest, WindowHandle},
 };
 
 use crate::{
@@ -131,10 +134,15 @@ impl<
             CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
             CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
         };
+        let initial_devices = self
+            .get_available_public_key_devices()
+            .await
+            .unwrap_or_default();
         let view_request = ViewRequest {
             operation,
             id: request_id,
             rp_id,
+            initial_devices,
             requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
             window_handle: window_handle.into(),
         };

@@ -122,6 +122,9 @@ pub struct RequestingParty {
     pub origin: String,
 }
 
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle((String, String)),
