@@ -13,7 +13,7 @@ two services that implement the three APIs defined by the specification:
 These two services communicate with each other over D-Bus IPC.
 
 The **Gateway** is the entrypoint for clients to interact with. The Flow
-Controler and UI Controller work together to guide the user through the
+Controller and UI Controller work together to guide the user through the
 process of selecting an appropriate credential based on the request received by
 the Gateway.
 
@@ -140,7 +140,7 @@ few tests there; this should be expanded in the future.
 
 Rust types shared between `credentialsd` and `credentials-ui`.
 
-Most of the types live in `src/model.rs`, and some are duplciated in
+Most of the types live in `src/model.rs`, and some are duplicated in
 `src/server.rs`. The duplicates in the `server` module have tweaks that make it
 easier to serialize over D-Bus, but more difficult to work with in Rust. So
 conversion methods are provided between the two modules.
@@ -163,7 +163,7 @@ the fact that it uses async-std, and some frameworks may prefer Tokio or another
 async runtime.) This is intended to aid other GUI developers using other
 frameworks to set up their projects. For a given framework, it may be more
 intuitive not to have this separation or to structure the code differently, but
-the separation fo concerns here makes it clear what the developer needs to do.
+the separation of concerns here makes it clear what the developer needs to do.
 
 ### `credentialsd-ui/src/view_model/gtk/`
 

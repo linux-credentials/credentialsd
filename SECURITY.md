@@ -46,7 +46,7 @@ of this scope, we still want to know about it! We would still like to discuss
 the issue privately, but we may decide to address it beyond the response
 time described above.
 
-## Definitons
+## Definitions
 
 - _privileged client_: A client that is allowed to make requests for credentials
   for any origin.

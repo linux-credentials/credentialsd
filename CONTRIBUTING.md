@@ -149,7 +149,7 @@ use super::MyType;
 
 ### Commit Messages
 
-The commit message should start with the _area_ that is affected by the change, which is usually the name of the folder withouth the `credentialsd-` prefix. The exception is `credentialsd/` itself, which should use `daemon`.
+The commit message should start with the _area_ that is affected by the change, which is usually the name of the folder without the `credentialsd-` prefix. The exception is `credentialsd/` itself, which should use `daemon`.
 
 Write commit messages using the imperative mood, as if completing the sentence:
 "If applied, this commit will \_\_\_." For example, use "Fix some bug" instead

@@ -59,7 +59,7 @@ sequenceDiagram
 1. user is shown a list of credentials, filtered by assertion options and ordered by most relevant based on the origin provided
     - invalid passkeys should not be shown? (because they won't work at all, and for phishing protection), but irrelevant passwords can be shown
     - This may cause issues for some origins if they're not registered properly.
-    - Technically, it's the responsibilty of the RP to validate the origin. If the origin is wrong, that's part of the authenticator data, and the RP can reject it. So even if a third-party phisher initiated the assertion from another site, the attacker couldn't use the credentials, because the RP wouldn't recognize the origin. So it might be OK to allow other passkeys to sign the assertion.
+    - Technically, it's the responsibility of the RP to validate the origin. If the origin is wrong, that's part of the authenticator data, and the RP can reject it. So even if a third-party phisher initiated the assertion from another site, the attacker couldn't use the credentials, because the RP wouldn't recognize the origin. So it might be OK to allow other passkeys to sign the assertion.
 1.  user scrolls and selects the relevant credential
 1. backend sends ID back to frontend, which pulls the corresponding credential and sends back to client
 1. browser receives credentials,

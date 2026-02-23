@@ -7,7 +7,7 @@ There are three main API defined by this specification:
 - [UI Control API](#ui-control-api)
 
 The **Gateway** is the entrypoint for clients to interact with. The Flow
-Controler and UI Controller work together to guide the user through the
+Controller and UI Controller work together to guide the user through the
 process of selecting an appropriate credential based on the request received by
 the Gateway.
 
@@ -70,7 +70,7 @@ sequenceDiagram
 - _credential_: a value that identifies a user to a relying party
 - _gateway_: entrypoint for clients
 - _privileged_ client: a client that is trusted to set any origin for its requests
-- _relying party_: an entity wishing to auhtenticate a user
+- _relying party_: an entity wishing to authenticate a user
 - _unprivileged client_: a client that is constrained to use a predetermined set of origin(s)
 
 # General Notes
@@ -812,7 +812,7 @@ A method to send a client PIN to an authenticator in response to a `UsbState::NE
 
 ### Request
 
-`pin`: Client PIN for the authenticaor.
+`pin`: Client PIN for the authenticator.
 
 This should be sent in response to a `UsbState::NEEDS_PIN` event. If this
 method is sent when the authenticator is not in a state to receive a client
