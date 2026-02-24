@@ -17,10 +17,9 @@ jobs:
     name: Build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - run: rustup show active-toolchain
-      - run: rustup component add rustfmt clippy
 
       - name: Configure Rust cache
         uses: Swatinem/rust-cache@v2
@@ -64,3 +63,11 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all --check
+
+      - name: Audit dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Validate web extension JS syntax
+        run: node --check webext/add-on/*.js
