@@ -78,18 +78,16 @@ impl UiControlService {
             while let Ok(msg) = fc_rx.recv().await {
                 // UI doesn't get an error if these fail...
                 let result = match &msg {
-                    BackendRequest::GetHybridCredential => client.get_hybrid_credential().await,
-                    BackendRequest::GetNfcCredential => client.get_nfc_credential().await,
-                    BackendRequest::GetUsbCredential => client.get_usb_credential().await,
+                    BackendRequest::StartHybridDiscovery => client.get_hybrid_credential().await,
+                    BackendRequest::StartNfcDiscovery => client.get_nfc_credential().await,
+                    BackendRequest::StartUsbDiscovery => client.get_usb_credential().await,
                     BackendRequest::EnterClientPin(pin) => {
                         client.enter_client_pin(pin.to_string()).await
                     }
                     BackendRequest::SelectCredential(cred_id) => {
                         client.select_credential(cred_id.to_string()).await
                     }
-                    BackendRequest::CancelRequest(request_id) => {
-                        client.cancel_request(*request_id).await
-                    }
+                    BackendRequest::CancelRequest => client.cancel_request(request.id).await,
                 };
                 if let Err(err) = result {
                     tracing::error!("Failed to send {msg:?} to frontend: {err:?}");

@@ -2,17 +2,17 @@
 
 use std::error::Error;
 
+use futures_lite::StreamExt;
+use tokio::sync::mpsc::{self, Receiver};
 use zbus::{
-    fdo,
-    object_server::SignalEmitter,
-    proxy,
+    fdo, proxy,
     zvariant::{ObjectPath, OwnedObjectPath},
     Connection,
 };
 
 use credentialsd_common::{
-    model::{BackgroundEvent, RequestId},
-    server::ViewRequest,
+    model::{BackendRequest, RequestId},
+    server::{BackgroundEvent, ViewRequest},
 };
 
 use crate::credential_service::UiController;
@@ -50,7 +50,7 @@ trait FlowObject {
     async fn cancel(&self) -> fdo::Result<()>;
 
     #[zbus(signal)]
-    async fn user_interacted() -> zbus::Result<()>;
+    async fn user_interacted(&self, update: BackendRequest) -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -92,11 +92,36 @@ impl UiController for UiControlServiceClient {
             .map_err(|err| err.into())
     }
 
-    async fn initialize(&self, request: ViewRequest) -> Result<OwnedObjectPath, Box<dyn Error>> {
+    async fn initialize(
+        &self,
+        request: ViewRequest,
+    ) -> Result<Receiver<BackendRequest>, Box<dyn Error>> {
         let path = self.proxy2().await?.initialize(request).await?;
         tracing::debug!(?path, "Path initialized");
-        Ok(path)
+        let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
+        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
+        let ui_event_stream = flow_object.receive_user_interacted().await?;
+        tokio::task::spawn(async move {
+            _ = forward_ui_events(ui_event_stream, from_ui_tx);
+        });
+        // Mark as ready to receive messages.
+        flow_object.start().await?;
+        Ok(from_ui_rx)
     }
+}
+
+async fn forward_ui_events(
+    mut ui_event_stream: UserInteractedStream,
+    tx: mpsc::Sender<BackendRequest>,
+) -> Result<(), Box<dyn Error>> {
+    while let Some(signal) = ui_event_stream.next().await {
+        let event = signal.args()?.update;
+        if let Err(_) = tx.send(event).await {
+            tracing::trace!("credential service event listener stopped listening for UI events. Ending event stream listener");
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -112,6 +137,7 @@ pub mod test {
 
     use credentialsd_common::{
         client::FlowController,
+        model::BackendRequest,
         server::{BackgroundEvent, ViewRequest},
     };
     use futures_lite::StreamExt;
@@ -119,7 +145,6 @@ pub mod test {
         mpsc::{self, Receiver, Sender},
         Mutex as AsyncMutex, Notify,
     };
-    use zbus::zvariant::OwnedObjectPath;
 
     use super::UiController;
 
@@ -144,8 +169,8 @@ pub mod test {
 
         async fn initialize(
             &self,
-            request: ViewRequest,
-        ) -> Result<OwnedObjectPath, Box<dyn Error>> {
+            _request: ViewRequest,
+        ) -> Result<Receiver<BackendRequest>, Box<dyn Error>> {
             unimplemented!()
         }
     }
