@@ -16,6 +16,9 @@ __pycache__
 /.flatpak/
 /vendor
 
+# Web extension (generated for local dev)
+webext/add-on/manifest.json
+
 # IDE
 /.vscode/settings.json
 .idea

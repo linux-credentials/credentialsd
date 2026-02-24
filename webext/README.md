@@ -1,9 +1,10 @@
 This is a web extension that allows browsers to connect to the D-Bus service
 provided by this project. It can be used for testing.
 
-Two variants are provided:
-- `add-on/` - Firefox (MV3, requires Firefox 140+)
-- `add-on-edge/` - Edge/Chromium (MV3, requires Chrome 111+ or Edge 111+)
+Both Firefox and Edge/Chromium are supported from a unified codebase in `add-on/`
+with browser-specific manifests:
+- `manifest.firefox.json` — Firefox (MV3, requires Firefox 140+)
+- `manifest.chromium.json` — Edge/Chromium (MV3, requires Chrome 111+ or Edge 111+)
 
 This requires some setup to make it work:
 
@@ -58,13 +59,17 @@ couple of options:
    variable to the absolute path to
    `doc/xyz.iinuwa.credentialsd.Credentials.xml`.
 3. In the copied file, replace the `path` key with the absolute path to `webext/app/credential_manager_shim.py`
-4. Open Firefox and go to `about:debugging`
-5. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
-6. Build with `ninja -C ./build` and run the following binaries binary to start the D-Bus services.
+4. Copy the Firefox manifest into place:
+   ```shell
+   cp webext/add-on/manifest.firefox.json webext/add-on/manifest.json
+   ```
+5. Open Firefox and go to `about:debugging`
+6. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
+7. Build with `ninja -C ./build` and run the D-Bus services:
    - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
    - `./build/credentialsd/target/debug/credentialsd`
-7. Navigate to [https://webauthn.io]().
-8. Run through the registration and creation process.
+8. Navigate to [https://webauthn.io]().
+9. Run through the registration and creation process.
 
 ## For Development (Edge/Chromium)
 
@@ -73,11 +78,15 @@ couple of options:
 1. In `webext/app/credential_manager_shim.py`, point the `DBUS_DOC_FILE`
    variable to the absolute path to
    `doc/xyz.iinuwa.credentialsd.Credentials.xml`.
-2. Open Edge and go to `edge://extensions` (or `chrome://extensions` for Chrome).
-3. Enable "Developer mode" (toggle in top right).
-4. Click "Load unpacked" and select the `webext/add-on-edge/` directory.
-5. Note the extension ID shown on the extensions page (e.g., `abcdefghijklmnop...`).
-6. Create the native messaging manifest:
+2. Copy the Chromium manifest into place (Edge/Chrome require `manifest.json`):
+   ```shell
+   cp webext/add-on/manifest.chromium.json webext/add-on/manifest.json
+   ```
+3. Open Edge and go to `edge://extensions` (or `chrome://extensions` for Chrome).
+4. Enable "Developer mode" (toggle in top right).
+5. Click "Load unpacked" and select the `webext/add-on/` directory.
+6. Note the extension ID shown on the extensions page (e.g., `abcdefghijklmnop...`).
+7. Create the native messaging manifest:
    ```shell
    # For Edge:
    mkdir -p ~/.config/microsoft-edge/NativeMessagingHosts
@@ -96,9 +105,9 @@ couple of options:
    }
    EOF
    ```
-   Replace `YOUR_EXTENSION_ID` with the extension ID from step 5.
-7. Build with `ninja -C ./build` and run the D-Bus services:
+   Replace `YOUR_EXTENSION_ID` with the extension ID from step 6.
+8. Build with `ninja -C ./build` and run the D-Bus services:
    - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
    - `./build/credentialsd/target/debug/credentialsd`
-8. Navigate to [https://webauthn.io]().
-9. Run through the registration and creation process.
+9. Navigate to [https://webauthn.io]().
+10. Run through the registration and creation process.
