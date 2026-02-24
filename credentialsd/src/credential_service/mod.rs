@@ -26,7 +26,6 @@ use credentialsd_common::{
     },
     server::{ViewRequest, WindowHandle},
 };
-use zbus::zvariant::OwnedObjectPath;
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -50,12 +49,7 @@ pub trait UiController {
     fn initialize(
         &self,
         request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<OwnedObjectPath, Box<dyn Error>>> + Send;
-
-    fn start(
-        &self,
-        request_id: RequestId,
-    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
+    ) -> impl Future<Output = std::result::Result<mpsc::Receiver<BackendRequest>, Box<dyn Error>>> + Send;
 }
 
 #[derive(Debug)]
@@ -76,36 +70,36 @@ impl RequestContext {
 }
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
-    hybrid_handler: H,
-    usb_handler: U,
-    nfc_handler: N,
+    hybrid_handler: Mutex<H>,
+    nfc_handler: Mutex<N>,
+    usb_handler: Mutex<U>,
 
     ui_control_client: Arc<UC>,
 }
 
 impl<
-        H: HybridHandler + Debug,
-        U: UsbHandler + Debug,
+        H: HybridHandler + Debug + Sync,
         N: NfcHandler + Debug,
+        U: UsbHandler + Debug,
         UC: UiController + Debug,
-    > CredentialService<H, U, N, UC>
+    > CredentialService<H, N, U, UC>
 {
     pub fn new(
         hybrid_handler: H,
-        usb_handler: U,
         nfc_handler: N,
+        usb_handler: U,
         ui_control_client: Arc<UC>,
     ) -> Self {
         Self {
             ctx: Arc::new(Mutex::new(None)),
 
-            hybrid_handler,
-            usb_handler,
-            nfc_handler,
+            hybrid_handler: Mutex::new(hybrid_handler),
+            nfc_handler: Mutex::new(nfc_handler),
+            usb_handler: Mutex::new(usb_handler),
 
             ui_control_client,
         }
@@ -130,21 +124,6 @@ impl<
                 let request_id: RequestId = rand::random();
                 // TODO: Spawn a task here that will listen to the signals from ui_control_client.
                 // Move the get_*_credential(), etc. from gateway to here.
-                let (ui_request_tx, ui_request_rx) = mpsc::channel(32);
-                tokio::spawn(async move {
-                    while let Some(ui_request) = ui_request_rx.recv().await {
-                        match ui_request {
-                            BackendRequest::GetHybridCredential => {}
-                            BackendRequest::GetUsbCredential => {
-                                let stream = self.get_hybrid_credential();
-                            }
-                            BackendRequest::GetNfcCredential => todo!(),
-                            BackendRequest::EnterClientPin(_) => todo!(),
-                            BackendRequest::SelectCredential(_) => todo!(),
-                            BackendRequest::CancelRequest(_) => todo!(),
-                        }
-                    }
-                });
                 let ctx = RequestContext {
                     request: request.clone(),
                     response_channel: tx,
@@ -171,7 +150,7 @@ impl<
             id: request_id,
             rp_id,
             initial_devices,
-            requesting_app: requesting_app.unwrap_or_default(),
+            requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
             window_handle: window_handle.into(),
         };
 
@@ -183,8 +162,8 @@ impl<
             .map_err(|err| err.to_string());
         */
 
-        let path = match self.ui_control_client.initialize(view_request).await {
-            Ok(path) => path,
+        let mut ui_request_rx = match self.ui_control_client.initialize(view_request).await {
+            Ok(rx) => rx,
             //if let Err(err) = launch_ui_response {
             Err(err) => {
                 tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
@@ -196,9 +175,24 @@ impl<
                 return;
             }
         };
-        // Here, subscribe to signals, and forward them to the receiver in the request context.
-        // self.ui_control_client.subscribe().await;
-        self.ui_control_client.start(request_id).await;
+        tokio::spawn(async move {
+            while let Some(ui_request) = ui_request_rx.recv().await {
+                match ui_request {
+                    BackendRequest::StartHybridDiscovery => {
+                        let stream = self.get_hybrid_credential().await;
+                    }
+                    BackendRequest::StartNfcDiscovery => {
+                        // let stream = self.get_nfc_credential().await;
+                    }
+                    BackendRequest::StartUsbDiscovery => {
+                        // let stream = self.get_usb_credential().await;
+                    }
+                    BackendRequest::EnterClientPin(_) => todo!(),
+                    BackendRequest::SelectCredential(_) => todo!(),
+                    BackendRequest::CancelRequest => todo!(),
+                }
+            }
+        });
         tracing::debug!("Finished setting up request {request_id}");
     }
 
@@ -242,12 +236,12 @@ impl<
         Ok(devices)
     }
 
-    pub fn get_hybrid_credential(
+    pub async fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.hybrid_handler.start(request);
+            let stream = self.hybrid_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(HybridStateStream { inner: stream, ctx })
         } else {
@@ -258,10 +252,12 @@ impl<
         }
     }
 
-    pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+    pub async fn get_usb_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.usb_handler.start(request);
+            let stream = self.usb_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -272,10 +268,12 @@ impl<
         }
     }
 
-    pub fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+    pub async fn get_nfc_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.nfc_handler.start(request);
+            let stream = self.nfc_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(NfcStateStream { inner: stream, ctx })
         } else {
@@ -473,8 +471,8 @@ mod test {
                 let user = ui_server.clone();
                 let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
                     hybrid_handler,
-                    usb_handler,
                     nfc_handler,
+                    usb_handler,
                     Arc::new(ui_client),
                 )));
                 let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());

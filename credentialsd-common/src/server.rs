@@ -8,14 +8,104 @@ use serde::{
 };
 use zvariant::{
     self, Array, DeserializeDict, DynamicDeserialize, NoneValue, Optional, OwnedValue,
-    SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
+    SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Device, Operation, RequestId, RequestingApplication};
+use crate::model::{
+    BackendRequest, BackgroundEvent, Device, Operation, RequestId, RequestingApplication,
+};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
 });
+
+impl Type for BackendRequest {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
+}
+
+impl From<&BackendRequest> for Structure<'_> {
+    fn from(value: &BackendRequest) -> Self {
+        match value {
+            BackendRequest::StartHybridDiscovery => tag_value_to_struct(0x01, None),
+            BackendRequest::StartNfcDiscovery => tag_value_to_struct(0x02, None),
+            BackendRequest::StartUsbDiscovery => tag_value_to_struct(0x03, None),
+            BackendRequest::EnterClientPin(pin) => {
+                tag_value_to_struct(0x04, Some(Value::Str(pin.into())))
+            }
+            BackendRequest::SelectCredential(credential_id) => {
+                tag_value_to_struct(0x05, Some(Value::Str(credential_id.into())))
+            }
+            BackendRequest::CancelRequest => tag_value_to_struct(0x06, None),
+        }
+    }
+}
+
+impl TryFrom<&Structure<'_>> for BackendRequest {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Structure<'_>) -> Result<Self, Self::Error> {
+        let (tag, value) = parse_tag_value_struct(value)?;
+
+        match tag {
+            0x01 => Ok(BackendRequest::StartHybridDiscovery),
+            0x02 => Ok(BackendRequest::StartNfcDiscovery),
+            0x03 => Ok(BackendRequest::StartUsbDiscovery),
+            0x04 => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(BackendRequest::EnterClientPin(s.as_str().to_string()))
+            }
+            0x05 => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(BackendRequest::SelectCredential(s.as_str().to_string()))
+            }
+            0x06 => Ok(BackendRequest::CancelRequest),
+            _ => Err(zvariant::Error::Message(format!(
+                "Unknown BackendRequest tag : {tag}"
+            ))),
+        }
+    }
+}
+
+impl Serialize for BackendRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BackendRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let d = Structure::deserializer_for_signature(TAG_VALUE_SIGNATURE).map_err(|err| {
+            D::Error::custom(format!(
+                "could not create deserializer for tag-value struct: {err}"
+            ))
+        })?;
+        let structure = d.deserialize(deserializer)?;
+        (&structure).try_into().map_err(|err| {
+            D::Error::custom(format!(
+                "could not deserialize structure into BackendRequest: {err}"
+            ))
+        })
+    }
+}
 
 impl Type for BackgroundEvent {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;

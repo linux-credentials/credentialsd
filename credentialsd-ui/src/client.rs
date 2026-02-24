@@ -134,15 +134,15 @@ pub struct FlowControlClient {
 
 impl FlowControlClient {
     pub async fn discover_hybrid_authenticators(&self) -> Result<(), ()> {
-        self.send(BackendRequest::GetHybridCredential).await
+        self.send(BackendRequest::StartHybridDiscovery).await
     }
 
     pub async fn discover_nfc_authenticators(&mut self) -> Result<(), ()> {
-        self.send(BackendRequest::GetNfcCredential).await
+        self.send(BackendRequest::StartNfcDiscovery).await
     }
 
     pub async fn discover_usb_authenticators(&mut self) -> Result<(), ()> {
-        self.send(BackendRequest::GetUsbCredential).await
+        self.send(BackendRequest::StartUsbDiscovery).await
     }
 
     pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
@@ -154,8 +154,8 @@ impl FlowControlClient {
             .await
     }
 
-    pub async fn cancel_request(&self, request_id: RequestId) -> Result<(), ()> {
-        self.send(BackendRequest::CancelRequest(request_id)).await
+    pub async fn cancel_request(&self) -> Result<(), ()> {
+        self.send(BackendRequest::CancelRequest).await
     }
 
     /// Returns a channel for background events.

@@ -36,8 +36,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let ui_controller = UiControlServiceClient::new(dbus_client_conn);
     let credential_service = CredentialService::new(
         InternalHybridHandler::new(),
-        InProcessUsbHandler {},
         InProcessNfcHandler {},
+        InProcessUsbHandler {},
         Arc::new(ui_controller),
     );
     let (_flow_control_conn, initiator) =

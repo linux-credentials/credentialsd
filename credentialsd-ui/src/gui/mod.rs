@@ -42,11 +42,7 @@ fn run_gui(flow_controller: Arc<AsyncMutex<FlowControlClient>>, request: ViewReq
         vm.start_event_loop().await;
         tracing::debug!("Finishing user request.");
         // If cancellation fails, that's fine.
-        let _ = flow_controller
-            .lock()
-            .await
-            .cancel_request(request_id)
-            .await;
+        let _ = flow_controller.lock().await.cancel_request().await;
     });
 
     view_model::gtk::start_gtk_app(parent_window, tx_event, rx_update);
