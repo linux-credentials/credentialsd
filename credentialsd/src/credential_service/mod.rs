@@ -111,89 +111,24 @@ impl<
         requesting_app: Option<RequestingApplication>,
         window_handle: Option<WindowHandle>,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    ) {
-        let request_id = {
-            let mut cred_request = self.ctx.lock().unwrap();
-            if cred_request.is_some() {
-                tx.send(Err(CredentialServiceError::Internal(
-                    "Already a request in progress.".to_string(),
-                )))
-                .expect("Send to local receiver to succeed");
-                return;
-            } else {
-                let request_id: RequestId = rand::random();
-                // TODO: Spawn a task here that will listen to the signals from ui_control_client.
-                // Move the get_*_credential(), etc. from gateway to here.
-                let ctx = RequestContext {
-                    request: request.clone(),
-                    response_channel: tx,
-                    request_id,
-                };
-                _ = cred_request.insert(ctx);
-                request_id
-            }
-        };
-        let operation = match &request {
-            CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
-            CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
-        };
-        let rp_id = match &request {
-            CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
-            CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
-        };
-        let initial_devices = self
-            .get_available_public_key_devices()
-            .await
-            .unwrap_or_default();
-        let view_request = ViewRequest {
-            operation,
-            id: request_id,
-            rp_id,
-            initial_devices,
-            requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
-            window_handle: window_handle.into(),
-        };
-
-        /*
-        let launch_ui_response = self
-            .ui_control_client
-            .launch_ui(view_request)
-            .await
-            .map_err(|err| err.to_string());
-        */
-
-        let mut ui_request_rx = match self.ui_control_client.initialize(view_request).await {
-            Ok(rx) => rx,
-            //if let Err(err) = launch_ui_response {
-            Err(err) => {
-                tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-                let err = Err(CredentialServiceError::Internal(err.to_string()));
-                let ctx = self.ctx.lock().unwrap().take().unwrap();
-                ctx.response_channel
-                    .send(err)
-                    .expect("Request handler to be listening");
-                return;
-            }
-        };
-        tokio::spawn(async move {
-            while let Some(ui_request) = ui_request_rx.recv().await {
-                match ui_request {
-                    BackendRequest::StartHybridDiscovery => {
-                        let stream = self.get_hybrid_credential().await;
-                    }
-                    BackendRequest::StartNfcDiscovery => {
-                        // let stream = self.get_nfc_credential().await;
-                    }
-                    BackendRequest::StartUsbDiscovery => {
-                        // let stream = self.get_usb_credential().await;
-                    }
-                    BackendRequest::EnterClientPin(_) => todo!(),
-                    BackendRequest::SelectCredential(_) => todo!(),
-                    BackendRequest::CancelRequest => todo!(),
-                }
-            }
-        });
-        tracing::debug!("Finished setting up request {request_id}");
+    ) -> Result<RequestId, CredentialServiceError> {
+        let mut cred_request = self.ctx.lock().unwrap();
+        if cred_request.is_some() {
+            Err(CredentialServiceError::Internal(
+                "Already a request in progress.".to_string(),
+            ))
+        } else {
+            let request_id: RequestId = rand::random();
+            // TODO: Spawn a task here that will listen to the signals from ui_control_client.
+            // Move the get_*_credential(), etc. from gateway to here.
+            let ctx = RequestContext {
+                request: request.clone(),
+                response_channel: tx,
+                request_id,
+            };
+            _ = cred_request.insert(ctx);
+            Ok(request_id)
+        }
     }
 
     pub async fn cancel_request(&self, request_id: RequestId) {
