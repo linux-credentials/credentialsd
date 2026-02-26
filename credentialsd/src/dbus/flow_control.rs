@@ -5,10 +5,10 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackgroundEvent, Device, Error as CredentialServiceError, RequestId, RequestingApplication,
-    WebAuthnError,
+    BackendRequest, BackgroundEvent, Device, Error as CredentialServiceError, RequestId,
+    RequestingApplication, WebAuthnError,
 };
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::server::{ViewRequest, WindowHandle};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -60,7 +60,7 @@ pub async fn start_flow_control_service<
         .name(SERVICE_NAME)?
         .serve_at(
             SERVICE_PATH,
-            FlowControlService {
+            FlowControlDbusService {
                 signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
                 svc,
                 pin_tx: Arc::new(AsyncMutex::new(None)),
@@ -76,16 +76,90 @@ pub async fn start_flow_control_service<
     tokio::spawn(async move {
         let svc = svc2;
         while let Some((msg, requesting_app, window_handle, tx)) = initiator_rx.recv().await {
-            svc.lock()
-                .await
-                .init_request(&msg, requesting_app, window_handle, tx)
-                .await;
+            match handle(svc, msg, requesting_app, window_handle) {
+                Ok(response) => tx.send(response),
+                Err(err) => tx.send(response),
+            }
         }
     });
     Ok((conn, initiator_tx))
 }
 
-struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
+async fn handle<C: CredentialService<_, _, _, _>>(
+    svc: Arc<AsyncMutex<C>>,
+    msg: CredentialRequest,
+    requesting_app: RequestingApplication,
+    window_handle: WindowHandle,
+) -> Result<CredentialResponse, CredentialServiceError> {
+    let request_id = svc
+        .lock()
+        .await
+        .init_request(&msg, requesting_app, window_handle)
+        .await?;
+    let operation = match &request {
+        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
+        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
+    };
+    let rp_id = match &request {
+        CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
+        CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
+    };
+    let initial_devices = svc
+        .get_available_public_key_devices()
+        .await
+        .unwrap_or_default();
+    let view_request = ViewRequest {
+        operation,
+        id: request_id,
+        rp_id,
+        initial_devices,
+        requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
+        window_handle: window_handle.into(),
+    };
+
+    /*
+    let launch_ui_response = self
+        .ui_control_client
+        .launch_ui(view_request)
+        .await
+        .map_err(|err| err.to_string());
+    */
+
+    let mut ui_request_rx = match self.ui_control_client.initialize(view_request).await {
+        Ok(rx) => rx,
+        //if let Err(err) = launch_ui_response {
+        Err(err) => {
+            tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
+            let err = Err(CredentialServiceError::Internal(err.to_string()));
+            let ctx = self.ctx.lock().unwrap().take().unwrap();
+            ctx.response_channel
+                .send(err)
+                .expect("Request handler to be listening");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        while let Some(ui_request) = ui_request_rx.recv().await {
+            match ui_request {
+                BackendRequest::StartHybridDiscovery => {
+                    let stream = self.get_hybrid_credential().await;
+                }
+                BackendRequest::StartNfcDiscovery => {
+                    // let stream = self.get_nfc_credential().await;
+                }
+                BackendRequest::StartUsbDiscovery => {
+                    // let stream = self.get_usb_credential().await;
+                }
+                BackendRequest::EnterClientPin(_) => todo!(),
+                BackendRequest::SelectCredential(_) => todo!(),
+                BackendRequest::CancelRequest => todo!(),
+            }
+        }
+    });
+    tracing::debug!("Finished setting up request {request_id}");
+}
+
+struct FlowControlService {
     signal_state: Arc<AsyncMutex<SignalState>>,
     svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
     pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
@@ -93,6 +167,19 @@ struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: Ui
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+}
+
+struct FlowControlDbusService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
+    svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
+
+    signal_state: Arc<AsyncMutex<SignalState>>,
+
+    cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+
+    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
 /// The following methods are for communication between the [trusted]
@@ -106,7 +193,7 @@ struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: Ui
         default_service = "xyz.iinuwa.credentialsd.FlowControl",
     )
 )]
-impl<H, N, U, UC> FlowControlService<H, N, U, UC>
+impl<H, N, U, UC> FlowControlDbusService<H, N, U, UC>
 where
     H: HybridHandler + Debug + Send + Sync + 'static,
     N: NfcHandler + Debug + Send + Sync + 'static,
@@ -153,7 +240,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -196,7 +283,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -246,7 +333,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
