@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zvariant::{SerializeDict, Type};
+use zvariant::{Optional, SerializeDict, Type};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -96,10 +96,17 @@ impl Transport {
     }
 }
 
+/// Details about the calling application to be displayed in the UI.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
 pub struct RequestingApplication {
-    pub name: String,
-    pub path: String,
+    /// The App ID (if called on the portal interface) or path (if called on the
+    /// internal interface).
+    pub path_or_app_id: String,
+
+    /// The name of the application.
+    pub name: Optional<String>,
+
+    /// The PID of the applicatoin
     pub pid: u32,
 }
 
