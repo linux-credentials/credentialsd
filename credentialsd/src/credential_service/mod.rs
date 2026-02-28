@@ -70,38 +70,25 @@ impl RequestContext {
 }
 
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
     hybrid_handler: Mutex<H>,
     nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
-
-    ui_control_client: Arc<UC>,
 }
 
-impl<
-        H: HybridHandler + Debug + Sync,
-        N: NfcHandler + Debug,
-        U: UsbHandler + Debug,
-        UC: UiController + Debug,
-    > CredentialService<H, N, U, UC>
+impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Debug>
+    CredentialService<H, N, U>
 {
-    pub fn new(
-        hybrid_handler: H,
-        nfc_handler: N,
-        usb_handler: U,
-        ui_control_client: Arc<UC>,
-    ) -> Self {
+    pub fn new(hybrid_handler: H, nfc_handler: N, usb_handler: U) -> Self {
         Self {
             ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler: Mutex::new(hybrid_handler),
             nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
-
-            ui_control_client,
         }
     }
 
