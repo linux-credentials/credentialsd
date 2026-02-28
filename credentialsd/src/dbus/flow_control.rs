@@ -5,7 +5,7 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackendRequest, BackgroundEvent, Device, Error as CredentialServiceError, RequestId,
+    BackendRequest, BackgroundEvent, Device, Error as CredentialServiceError, Operation, RequestId,
     RequestingApplication, WebAuthnError,
 };
 use credentialsd_common::server::{ViewRequest, WindowHandle};
@@ -25,6 +25,7 @@ use zbus::{
     ObjectServer,
 };
 
+use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::{
         hybrid::{HybridHandler, HybridState},
@@ -42,15 +43,14 @@ pub async fn start_flow_control_service<
     H: HybridHandler + Debug + Send + Sync + 'static,
     N: NfcHandler + Debug + Send + Sync + 'static,
     U: UsbHandler + Debug + Send + Sync + 'static,
-    UC: UiController + Debug + Send + Sync + 'static,
 >(
-    credential_service: CredentialService<H, N, U, UC>,
+    credential_service: CredentialService<H, N, U>,
 ) -> zbus::Result<(
     Connection,
     Sender<(
         CredentialRequest,
-        Option<RequestingApplication>, // Application name sending the request
-        Option<WindowHandle>,          // Client window handle
+        RequestingApplication,
+        Option<WindowHandle>, // Client window handle
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
@@ -72,39 +72,51 @@ pub async fn start_flow_control_service<
         )?
         .build()
         .await?;
-    let (initiator_tx, mut initiator_rx) = mpsc::channel(2);
+    let (initiator_tx, mut initiator_rx) = mpsc::channel::<(
+        CredentialRequest,
+        RequestingApplication,
+        Option<WindowHandle>,
+        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+    )>(2);
     tokio::spawn(async move {
         let svc = svc2;
         while let Some((msg, requesting_app, window_handle, tx)) = initiator_rx.recv().await {
-            match handle(svc, msg, requesting_app, window_handle) {
-                Ok(response) => tx.send(response),
-                Err(err) => tx.send(response),
-            }
+            let ui_control_client = UiControlServiceClient::new(conn.clone());
+            tx.send(handle(svc, ui_control_client, msg, requesting_app, window_handle).await);
         }
     });
     Ok((conn, initiator_tx))
 }
 
-async fn handle<C: CredentialService<_, _, _, _>>(
-    svc: Arc<AsyncMutex<C>>,
+async fn handle<
+    H: HybridHandler + Debug + Sync,
+    N: NfcHandler + Debug,
+    U: UsbHandler + Debug,
+    UC: UiController + Debug,
+>(
+    svc: Arc<AsyncMutex<CredentialService<H, N, U>>>,
+    ui_control_client: UC,
     msg: CredentialRequest,
     requesting_app: RequestingApplication,
-    window_handle: WindowHandle,
+    window_handle: Option<WindowHandle>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
+    let (request_tx, request_rx) = oneshot::channel();
     let request_id = svc
         .lock()
         .await
-        .init_request(&msg, requesting_app, window_handle)
+        .init_request(&msg, Some(requesting_app), window_handle, request_tx)
         .await?;
-    let operation = match &request {
+    let operation = match &msg {
         CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
         CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
     };
-    let rp_id = match &request {
+    let rp_id = match &msg {
         CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
         CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
     };
     let initial_devices = svc
+        .lock()
+        .await
         .get_available_public_key_devices()
         .await
         .unwrap_or_default();
@@ -113,7 +125,7 @@ async fn handle<C: CredentialService<_, _, _, _>>(
         id: request_id,
         rp_id,
         initial_devices,
-        requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
+        requesting_app,
         window_handle: window_handle.into(),
     };
 
@@ -125,24 +137,18 @@ async fn handle<C: CredentialService<_, _, _, _>>(
         .map_err(|err| err.to_string());
     */
 
-    let mut ui_request_rx = match self.ui_control_client.initialize(view_request).await {
+    let mut ui_request_rx = match ui_control_client.initialize(view_request).await {
         Ok(rx) => rx,
-        //if let Err(err) = launch_ui_response {
         Err(err) => {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            let err = Err(CredentialServiceError::Internal(err.to_string()));
-            let ctx = self.ctx.lock().unwrap().take().unwrap();
-            ctx.response_channel
-                .send(err)
-                .expect("Request handler to be listening");
-            return;
+            return Err(CredentialServiceError::Internal(err.to_string()));
         }
     };
     tokio::spawn(async move {
         while let Some(ui_request) = ui_request_rx.recv().await {
             match ui_request {
                 BackendRequest::StartHybridDiscovery => {
-                    let stream = self.get_hybrid_credential().await;
+                    let stream = svc.lock().await.get_hybrid_credential().await;
                 }
                 BackendRequest::StartNfcDiscovery => {
                     // let stream = self.get_nfc_credential().await;
@@ -157,16 +163,27 @@ async fn handle<C: CredentialService<_, _, _, _>>(
         }
     });
     tracing::debug!("Finished setting up request {request_id}");
+    let cred_response = request_rx
+        .await
+        .expect("Credential service not to drop request channel before responding.");
+    let f = cred_response.map_err(|err| err.into());
+    f
 }
 
-struct FlowControlService {
-    signal_state: Arc<AsyncMutex<SignalState>>,
+struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
     svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
+    signal_state: Arc<AsyncMutex<SignalState>>,
     pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+}
+
+impl<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController>
+    FlowControlService<H, N, U, UC>
+{
+    fn send_update(&self);
 }
 
 struct FlowControlDbusService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
@@ -177,8 +194,8 @@ struct FlowControlDbusService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC
     cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
 
-    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
+    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
