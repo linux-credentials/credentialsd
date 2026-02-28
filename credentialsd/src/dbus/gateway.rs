@@ -250,58 +250,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             return Err(Error::SecurityError);
         };
         let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            // TODO: assert that RP ID is bound to origin:
-            // - if RP ID is not set, set the RP ID to the origin's effective domain
-            // - if RP ID is set, assert that it matches origin's effective domain
-            // - if RP ID is set, but origin's effective domain doesn't match
-            //    - query for related origins, if supported
-            //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request, &request_environment)
-                    .inspect_err(|_| {
-                        tracing::error!(
-                            "Could not parse passkey creation request. Rejecting request."
-                        );
-                    })?;
-            if make_cred_request.algorithms.is_empty() {
-                tracing::info!("No supported algorithms given in request. Rejecting request.");
-                return Err(Error::NotSupportedError);
-            }
-            // Find out where this request is coming from (which application is requesting this)
-            let requesting_app = query_connection_peer_binary(header, connection).await;
-            let cred_request =
-                CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
-
-            let response = self
-                .controller
-                .lock()
-                .await
-                .request_credential(requesting_app, cred_request, parent_window.into())
-                .await?;
-
-            if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    create_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
-                Ok(public_key_response.into())
-            } else {
-                // TODO: is response safe to log here?
-                // tracing::error!("Expected create public key credential response, received {response:?}");
-                tracing::error!("Did not receive expected create public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError.into())
-            }
-        } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
-            Err(WebAuthnError::TypeError.into())
-        }
+        // Find out where this request is coming from (which application is requesting this)
+        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let response = handle_create_credential(
+            &self.controller,
+            request,
+            request_environment,
+            requesting_app,
+            parent_window.into(),
+        )
+        .await?;
+        Ok(response)
     }
 
     async fn get_credential(
@@ -336,54 +295,18 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
         );
             return Err(Error::SecurityError);
         };
-        let request_env = check_origin_from_privileged_client(origin, top_origin)?;
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
-            // Setup request
-
-            // TODO: assert that RP ID is bound to origin:
-            // - if RP ID is not set, set the RP ID to the origin's effective domain
-            // - if RP ID is set, assert that it matches origin's effective domain
-            // - if RP ID is set, but origin's effective domain doesn't match
-            //    - query for related origins, if supported
-            //    - fail if not supported, or if RP ID doesn't match any related origins.
-            let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request, &request_env).map_err(|e| {
-                    tracing::error!("Could not parse passkey assertion request: {e:?}");
-                    WebAuthnError::TypeError
-                })?;
-            let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
-            // Find out where this request is coming from (which application is requesting this)
-            let requesting_app = query_connection_peer_binary(header, connection).await;
-
-            let response = self
-                .controller
-                .lock()
-                .await
-                .request_credential(requesting_app, cred_request, parent_window.into())
-                .await?;
-
-            if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response =
-                    get_credential_response_try_from_ctap2(&cred_response, client_data_json)
-                        .map_err(|err| {
-                            tracing::error!(
-                                "Failed to parse credential response from authenticator: {err}"
-                            );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
-                        })?;
-                Ok(public_key_response.into())
-            } else {
-                // TODO: is response safe to log here?
-                // tracing::error!("Expected get public key credential response, received {response:?}");
-                tracing::error!("Did not receive expected get public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError.into())
-            }
-        } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
-            Err(WebAuthnError::TypeError.into())
-        }
+        let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
+        // Find out where this request is coming from (which application is requesting this)
+        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let response = handle_get_credential(
+            &self.controller,
+            request,
+            request_environment,
+            requesting_app,
+            parent_window.into(),
+        )
+        .await?;
+        Ok(response)
     }
 
     async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
@@ -398,6 +321,115 @@ impl<C: CredentialRequestController + Send + Sync + 'static> CredentialGateway<C
             signal_current_user_details: false,
             signal_unknown_credential: false,
         })
+    }
+}
+
+async fn handle_create_credential<C: CredentialRequestController>(
+    controller: &AsyncMutex<C>,
+    request: CreateCredentialRequest,
+    request_environment: NavigationContext,
+    requesting_app: Option<RequestingApplication>,
+    parent_window: Option<WindowHandle>,
+) -> Result<CreateCredentialResponse, WebAuthnError> {
+    if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        // TODO: assert that RP ID is bound to origin:
+        // - if RP ID is not set, set the RP ID to the origin's effective domain
+        // - if RP ID is set, assert that it matches origin's effective domain
+        // - if RP ID is set, but origin's effective domain doesn't match
+        //    - query for related origins, if supported
+        //    - fail if not supported, or if RP ID doesn't match any related origins.
+        let (make_cred_request, client_data_json) =
+            create_credential_request_try_into_ctap2(&request, &request_environment).inspect_err(
+                |_| {
+                    tracing::error!("Could not parse passkey creation request. Rejecting request.");
+                },
+            )?;
+        if make_cred_request.algorithms.is_empty() {
+            tracing::info!("No supported algorithms given in request. Rejecting request.");
+            return Err(WebAuthnError::NotSupportedError);
+        }
+        let cred_request = CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request);
+
+        let response = controller
+            .lock()
+            .await
+            .request_credential(requesting_app, cred_request, parent_window.into())
+            .await?;
+
+        if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
+            let public_key_response =
+                create_credential_response_try_from_ctap2(&cred_response, client_data_json)
+                    .map_err(|err| {
+                        tracing::error!(
+                            "Failed to parse credential response from authenticator: {err}"
+                        );
+                        // Using NotAllowedError as a catch-all error.
+                        WebAuthnError::NotAllowedError
+                    })?;
+            Ok(public_key_response.into())
+        } else {
+            // TODO: is response safe to log here?
+            // tracing::error!("Expected create public key credential response, received {response:?}");
+            tracing::error!("Did not receive expected create public key credential response.");
+            // Using NotAllowedError as a catch-all error.
+            Err(WebAuthnError::NotAllowedError.into())
+        }
+    } else {
+        tracing::error!("Unknown credential type request: {}", request.r#type);
+        Err(WebAuthnError::TypeError)
+    }
+}
+
+async fn handle_get_credential<C: CredentialRequestController>(
+    controller: &AsyncMutex<C>,
+    request: GetCredentialRequest,
+    request_environment: NavigationContext,
+    requesting_app: Option<RequestingApplication>,
+    parent_window: Option<WindowHandle>,
+) -> Result<GetCredentialResponse, WebAuthnError> {
+    if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        // Setup request
+
+        // TODO: assert that RP ID is bound to origin:
+        // - if RP ID is not set, set the RP ID to the origin's effective domain
+        // - if RP ID is set, assert that it matches origin's effective domain
+        // - if RP ID is set, but origin's effective domain doesn't match
+        //    - query for related origins, if supported
+        //    - fail if not supported, or if RP ID doesn't match any related origins.
+        let (get_cred_request, client_data_json) =
+            get_credential_request_try_into_ctap2(&request, &request_environment).map_err(|e| {
+                tracing::error!("Could not parse passkey assertion request: {e:?}");
+                WebAuthnError::TypeError
+            })?;
+        let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
+
+        let response = controller
+            .lock()
+            .await
+            .request_credential(requesting_app, cred_request, parent_window.into())
+            .await?;
+
+        if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
+            let public_key_response = get_credential_response_try_from_ctap2(
+                &cred_response,
+                client_data_json,
+            )
+            .map_err(|err| {
+                tracing::error!("Failed to parse credential response from authenticator: {err}");
+                // Using NotAllowedError as a catch-all error.
+                WebAuthnError::NotAllowedError
+            })?;
+            Ok(public_key_response.into())
+        } else {
+            // TODO: is response safe to log here?
+            // tracing::error!("Expected get public key credential response, received {response:?}");
+            tracing::error!("Did not receive expected get public key credential response.");
+            // Using NotAllowedError as a catch-all error.
+            Err(WebAuthnError::NotAllowedError.into())
+        }
+    } else {
+        tracing::error!("Unknown credential type request: {}", request.r#type);
+        Err(WebAuthnError::TypeError.into())
     }
 }
 
