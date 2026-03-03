@@ -24,15 +24,13 @@ impl FlowController for DbusCredentialClient {
     async fn get_available_public_key_devices(
         &self,
     ) -> std::result::Result<Vec<credentialsd_common::model::Device>, ()> {
-        let dbus_devices = self
-            .proxy()
+        self.proxy()
             .await?
             .get_available_public_key_devices()
             .await
             .map_err(|err| {
                 tracing::error!("Failed to retrieve available devices/transports: {err}")
-            })?;
-        dbus_devices.into_iter().map(|d| d.try_into()).collect()
+            })
     }
 
     async fn get_hybrid_credential(&mut self) -> std::result::Result<(), ()> {

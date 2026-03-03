@@ -7,11 +7,11 @@ use serde::{
     de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, LE, NoneValue, Optional, OwnedValue,
+    self, Array, DeserializeDict, DynamicDeserialize, NoneValue, Optional, OwnedValue,
     SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Operation, RequestingApplication};
+use crate::model::{BackgroundEvent, Device, Operation, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -172,43 +172,6 @@ impl From<&crate::model::Credential> for Credential {
 impl From<crate::model::Credential> for Credential {
     fn from(value: crate::model::Credential) -> Self {
         Self::from(&value)
-    }
-}
-
-#[derive(SerializeDict, DeserializeDict, Type)]
-#[zvariant(signature = "a{sv}")]
-pub struct Device {
-    pub id: String,
-    pub transport: String,
-}
-
-impl TryFrom<Value<'_>> for Device {
-    type Error = zvariant::Error;
-    fn try_from(value: Value<'_>) -> std::result::Result<Self, Self::Error> {
-        let ctx = zvariant::serialized::Context::new_dbus(LE, 0);
-        let encoded = zvariant::to_bytes(ctx, &value)?;
-        let device: Device = encoded.deserialize()?.0;
-        Ok(device)
-    }
-}
-
-impl From<crate::model::Device> for Device {
-    fn from(value: crate::model::Device) -> Self {
-        Device {
-            id: value.id,
-            transport: value.transport.as_str().to_owned(),
-        }
-    }
-}
-
-impl TryFrom<Device> for crate::model::Device {
-    type Error = ();
-    fn try_from(value: Device) -> std::result::Result<Self, Self::Error> {
-        let transport = value.transport.try_into().map_err(|_| ())?;
-        Ok(Self {
-            id: value.id,
-            transport,
-        })
     }
 }
 
