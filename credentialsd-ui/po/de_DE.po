@@ -3,7 +3,7 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2026-02-03 10:40+0100\n"
+"POT-Creation-Date: 2026-02-12 14:18+0100\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: de_DE\n"
@@ -14,7 +14,7 @@ msgstr ""
 
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
-#: src/gui/view_model/gtk/mod.rs:385
+#: src/gui/view_model/gtk/mod.rs:401
 msgid "Credential Manager"
 msgstr "Zugangsdatenmanager"
 
@@ -93,18 +93,43 @@ msgid "Choose credential"
 msgstr "Wählen Sie Zugangsdaten aus"
 
 #: data/resources/ui/window.ui:214
+msgid "Set a PIN"
+msgstr "Neue PIN festlegen"
+
+#: data/resources/ui/window.ui:221
+msgid "Please choose a new PIN for your device."
+msgstr "Bitte geben Sie eine neue PIN für das Gerät ein"
+
+#: data/resources/ui/window.ui:228
+msgid "New PIN"
+msgstr "Neue PIN"
+
+#: data/resources/ui/window.ui:235
+msgid "Confirm PIN"
+msgstr "Neue PIN bestätigen"
+
+#: data/resources/ui/window.ui:246 data/resources/ui/window.ui:320
+msgid "Close"
+msgstr "Schließen"
+
+#: data/resources/ui/window.ui:252
+msgid "Continue"
+msgstr " Weiter"
+
+#: data/resources/ui/window.ui:274
 msgid "Complete"
 msgstr "Abgeschlossen"
 
-#: data/resources/ui/window.ui:220
+#: data/resources/ui/window.ui:280
 msgid "Done!"
 msgstr "Fertig!"
 
-#: data/resources/ui/window.ui:231
+#: data/resources/ui/window.ui:291
 msgid "Something went wrong."
 msgstr "Etwas ist schief gegangen."
 
-#: data/resources/ui/window.ui:244 src/gui/view_model/mod.rs:290
+#: data/resources/ui/window.ui:304 src/gui/view_model/mod.rs:315
+#: src/gui/view_model/mod.rs:380
 msgid ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
@@ -112,37 +137,41 @@ msgstr ""
 "Beim Abrufen Ihrer Zugangsdaten ist ein Fehler aufgetreten. Versuchen Sie es "
 "später wieder, oder verwenden Sie einen anderen Security-Token."
 
-#: src/gui/view_model/gtk/mod.rs:147
+#: data/resources/ui/window.ui:326
+msgid "Set PIN on device"
+msgstr "Geräte-PIN festlegen"
+
+#: src/gui/view_model/gtk/mod.rs:154
 #, fuzzy
 msgid "Enter your PIN. One attempt remaining."
 msgid_plural "Enter your PIN. %d attempts remaining."
 msgstr[0] "Geben Sie Ihren PIN ein. Sie haben nur noch einen Versuch."
 msgstr[1] "Geben Sie Ihren PIN ein. Sie haben noch %d Versuche."
 
-#: src/gui/view_model/gtk/mod.rs:153
+#: src/gui/view_model/gtk/mod.rs:160
 msgid "Enter your PIN."
 msgstr "Geben Sie Ihren PIN ein."
 
-#: src/gui/view_model/gtk/mod.rs:163
+#: src/gui/view_model/gtk/mod.rs:170
 msgid "Touch your device again. One attempt remaining."
 msgid_plural "Touch your device again. %d attempts remaining."
 msgstr[0] "Berühren Sie Ihr Gerät. Sie haben nur noch einen Versuch."
 msgstr[1] "Berühren Sie nochmal Ihr Gerät. Sie haben nur noch %d Versuche."
 
-#: src/gui/view_model/gtk/mod.rs:169
+#: src/gui/view_model/gtk/mod.rs:176
 msgid "Touch your device."
 msgstr "Berühren Sie Ihr Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:174
+#: src/gui/view_model/gtk/mod.rs:181
 msgid "Touch your device"
 msgstr "Berühren Sie Ihr Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:177
+#: src/gui/view_model/gtk/mod.rs:184
 msgid "Scan the QR code with your device to begin authentication."
 msgstr ""
 "Scannen Sie den QR code mit ihrem Gerät um die Authentifizierung zu beginnen."
 
-#: src/gui/view_model/gtk/mod.rs:187
+#: src/gui/view_model/gtk/mod.rs:194
 msgid ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
@@ -150,15 +179,15 @@ msgstr ""
 "Verbindung zu Ihrem Gerät wird aufgebaut. Stellen Sie sicher, dass beide "
 "Geräte nah beieinander sind und Bluetooth aktiviert haben."
 
-#: src/gui/view_model/gtk/mod.rs:195
+#: src/gui/view_model/gtk/mod.rs:202
 msgid "Device connected. Follow the instructions on your device"
 msgstr "Verbindung hergestellt. Folgen Sie den Anweisungen auf Ihrem Gerät."
 
-#: src/gui/view_model/gtk/mod.rs:321
+#: src/gui/view_model/gtk/mod.rs:333
 msgid "Insert your security key."
 msgstr "Stecken Sie Ihren Security-Token ein."
 
-#: src/gui/view_model/gtk/mod.rs:340
+#: src/gui/view_model/gtk/mod.rs:352
 msgid "Multiple devices found. Please select with which to proceed."
 msgstr "Mehrere Geräte gefunden. Bitte wählen Sie einen aus, um fortzufahren."
 
@@ -226,15 +255,15 @@ msgstr ""
 "abrufen, um Sie bei \"%s1\" anzumelden. Fahren Sie nur fort, wenn Sie diesem "
 "Prozess vertrauen."
 
-#: src/gui/view_model/mod.rs:227
+#: src/gui/view_model/mod.rs:244
 msgid "Failed to select credential from device."
 msgstr "Zugangsdaten vom Gerät konnten nicht ausgewählt werden."
 
-#: src/gui/view_model/mod.rs:281
+#: src/gui/view_model/mod.rs:298 src/gui/view_model/mod.rs:363
 msgid "No matching credentials found on this authenticator."
 msgstr "Keine passenden Zugangsdaten auf diesem Gerät gefunden."
 
-#: src/gui/view_model/mod.rs:284
+#: src/gui/view_model/mod.rs:302 src/gui/view_model/mod.rs:367
 msgid ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
@@ -242,19 +271,28 @@ msgstr ""
 "Keine weiteren PIN-Eingaben erlaubt. Versuchen Sie ihr Gerät aus- und wieder "
 "einzustecken."
 
-#: src/gui/view_model/mod.rs:287
+#: src/gui/view_model/mod.rs:306 src/gui/view_model/mod.rs:371
 msgid ""
 "This server requires your device to have additional protection like a PIN, "
 "which is not set. Please set a PIN for this device and try again."
 msgstr ""
-"Für diesen Server benötigt ihr Gerät eine zusätzliche Absicherung, z.B. einen PIN. "
-"Bitte setzen Sie einen PIN für ihr Gerät und versuchen Sie es erneut."
+"Für diesen Server benötigt ihr Gerät eine zusätzliche Absicherung, z.B. "
+"einen PIN. Bitte setzen Sie einen PIN für ihr Gerät und versuchen Sie es "
+"erneut."
 
-#: src/gui/view_model/mod.rs:293
+#: src/gui/view_model/mod.rs:310 src/gui/view_model/mod.rs:375
+msgid ""
+"The entered PIN violates the PIN-policy of this device (likely too short). "
+"Please try again."
+msgstr ""
+"Der eingegebene PIN entspricht nicht den PIN-Bestimmungen des Geräts (z.B. "
+"zu kurz). Bitte versuchen Sie es erneut."
+
+#: src/gui/view_model/mod.rs:320 src/gui/view_model/mod.rs:385
 msgid "This credential is already registered on this authenticator."
 msgstr "Diese Zugangsdaten sind bereits auf diesem Gerät registriert."
 
-#: src/gui/view_model/mod.rs:395
+#: src/gui/view_model/mod.rs:434
 msgid "Something went wrong. Try again later or use a different authenticator."
 msgstr ""
 "Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später noch einmal, "

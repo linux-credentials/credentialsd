@@ -35,6 +35,15 @@ mod imp {
         pub usb_nfc_pin_entry: TemplateChild<gtk::PasswordEntry>,
 
         #[template_child]
+        pub new_pin_primary_entry: TemplateChild<gtk::PasswordEntry>,
+
+        #[template_child]
+        pub new_pin_confirm_entry: TemplateChild<gtk::PasswordEntry>,
+
+        #[template_child]
+        pub new_pin_btn_continue: TemplateChild<gtk::Button>,
+
+        #[template_child]
         pub qr_code_pic: TemplateChild<Picture>,
     }
 
@@ -53,6 +62,42 @@ mod imp {
                 }
             ));
         }
+
+        #[template_callback]
+        fn handle_start_setting_new_pin(&self) {
+            let view_model = &self.view_model.borrow();
+            let view_model = view_model.as_ref().unwrap();
+            // This triggers visibility of the new pin stackpage
+            view_model.set_pin_fields_match(false);
+        }
+
+        #[template_callback]
+        fn handle_setting_pin_change(&self) {
+            let pin1 = self.new_pin_primary_entry.text();
+            let pin2 = self.new_pin_confirm_entry.text();
+            let is_valid = !pin1.is_empty() && pin1 == pin2;
+            // Unlock Button if both entries match (and are non-empty)
+            self.new_pin_btn_continue.set_sensitive(is_valid);
+        }
+
+        #[template_callback]
+        fn handle_close_window(&self) {
+            self.close_request();
+        }
+
+        #[template_callback]
+        fn handle_commit_new_pin(&self) {
+            let view_model = &self.view_model.borrow();
+            let view_model = view_model.as_ref().unwrap();
+            let pin = self.new_pin_primary_entry.text().to_string();
+            glib::spawn_future_local(clone!(
+                #[weak]
+                view_model,
+                async move {
+                    view_model.send_set_new_device_pin(pin).await;
+                }
+            ));
+        }
     }
 
     impl Default for CredentialsUiWindow {
@@ -64,6 +109,9 @@ mod imp {
                 stack: TemplateChild::default(),
                 usb_nfc_pin_entry: TemplateChild::default(),
                 qr_code_pic: TemplateChild::default(),
+                new_pin_primary_entry: TemplateChild::default(),
+                new_pin_confirm_entry: TemplateChild::default(),
+                new_pin_btn_continue: TemplateChild::default(),
             }
         }
     }
@@ -202,6 +250,14 @@ impl CredentialsUiWindow {
             stack,
             move |_vm| {
                 stack.set_visible_child_name("choose_credential");
+            }
+        ));
+
+        view_model.connect_pin_fields_match_notify(clone!(
+            #[weak]
+            stack,
+            move |_vm| {
+                stack.set_visible_child_name("set_new_pin");
             }
         ));
     }

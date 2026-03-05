@@ -183,6 +183,7 @@ impl TryFrom<&Value<'_>> for crate::model::Error {
         let err = match err_code {
             "AuthenticatorError" => crate::model::Error::AuthenticatorError,
             "PinNotSet" => crate::model::Error::PinNotSet,
+            "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
             "NoCredentials" => crate::model::Error::NoCredentials,
             "CredentialExcluded" => crate::model::Error::CredentialExcluded,
             "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
@@ -401,6 +402,7 @@ impl TryFrom<&Structure<'_>> for crate::model::UsbState {
                 let err = match err_code {
                     "AuthenticatorError" => crate::model::Error::AuthenticatorError,
                     "PinNotSet" => crate::model::Error::PinNotSet,
+                    "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
                     "NoCredentials" => crate::model::Error::NoCredentials,
                     "CredentialExcluded" => crate::model::Error::CredentialExcluded,
                     "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
@@ -524,6 +526,7 @@ impl TryFrom<&Structure<'_>> for crate::model::NfcState {
                 let err = match err_code {
                     "AuthenticatorError" => crate::model::Error::AuthenticatorError,
                     "PinNotSet" => crate::model::Error::PinNotSet,
+                    "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
                     "NoCredentials" => crate::model::Error::NoCredentials,
                     "CredentialExcluded" => crate::model::Error::CredentialExcluded,
                     "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,

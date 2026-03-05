@@ -292,6 +292,116 @@ where
         Ok(())
     }
 
+    async fn set_usb_device_pin(
+        &self,
+        pin: String,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let mut stream = self.svc.lock().await.set_usb_device_pin(pin);
+        let usb_cred_tx = self.cred_tx.clone();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, N, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                let event =
+                    credentialsd_common::model::BackgroundEvent::UsbStateChanged((&state).into());
+                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
+                    tracing::error!("Failed to send state update to UI: {err}");
+                    break;
+                };
+                match state {
+                    UsbState::NeedsPin { .. } => {
+                        tracing::error!(
+                            "We are setting a PIN, but the device asks us for one. Aborting"
+                        );
+                        break;
+                    }
+                    UsbState::SelectingCredential { cred_tx, .. } => {
+                        // TODO: This is not great. The user potentially already selected a device,
+                        //       but we are starting a new request cycle, so they have to select one
+                        //       again... But the previous cycle has already ended.
+                        let mut usb_cred_tx = usb_cred_tx.lock().await;
+                        let _ = usb_cred_tx.insert(cred_tx);
+                    }
+                    UsbState::Completed | UsbState::Failed(_) => {
+                        break;
+                    }
+                    _ => {}
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self.usb_event_forwarder_task.lock().await.replace(task) {
+            prev_task.abort();
+        }
+        Ok(())
+    }
+
+    async fn set_nfc_device_pin(
+        &self,
+        pin: String,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let mut stream = self.svc.lock().await.set_nfc_device_pin(pin);
+        let usb_cred_tx = self.cred_tx.clone();
+        let signal_state = self.signal_state.clone();
+        let object_server = object_server.clone();
+        let task = tokio::spawn(async move {
+            let interface: zbus::Result<InterfaceRef<FlowControlService<H, U, N, UC>>> =
+                object_server.interface(SERVICE_PATH).await;
+
+            let emitter = match interface {
+                Ok(ref i) => i.signal_emitter(),
+                Err(err) => {
+                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
+                    return;
+                }
+            };
+            while let Some(state) = stream.next().await {
+                let event =
+                    credentialsd_common::model::BackgroundEvent::NfcStateChanged((&state).into());
+                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
+                    tracing::error!("Failed to send state update to UI: {err}");
+                    break;
+                };
+                match state {
+                    NfcState::NeedsPin { .. } => {
+                        tracing::error!(
+                            "We are setting a PIN, but the device asks us for one. Aborting"
+                        );
+                        break;
+                    }
+                    NfcState::SelectCredential { cred_tx, .. } => {
+                        // TODO: This is not great. The user already selected a device,
+                        //       but we are starting a new request cycle, so they have
+                        //       to select one again...
+                        let mut usb_cred_tx = usb_cred_tx.lock().await;
+                        let _ = usb_cred_tx.insert(cred_tx);
+                    }
+                    NfcState::Completed | NfcState::Failed(_) => {
+                        break;
+                    }
+                    _ => {}
+                };
+            }
+        })
+        .abort_handle();
+        if let Some(prev_task) = self.nfc_event_forwarder_task.lock().await.replace(task) {
+            prev_task.abort();
+        }
+        Ok(())
+    }
+
     async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
         if let Some(cred_tx) = self.cred_tx.lock().await.take() {
             cred_tx.send(credential_id).await.unwrap();
@@ -415,6 +525,8 @@ pub mod test {
     #[allow(clippy::enum_variant_names)]
     #[derive(Debug)]
     pub enum DummyFlowRequest {
+        SetUsbDevicePin(String),
+        SetNfcDevicePin(String),
         EnterClientPin(String),
         GetDevices,
         GetHybridCredential,
@@ -427,6 +539,7 @@ pub mod test {
     // intentional for now.
     #[allow(clippy::enum_variant_names)]
     pub enum DummyFlowResponse {
+        SetNewDevicePin(Result<(), ()>),
         EnterClientPin(Result<(), ()>),
         GetDevices(Vec<Device>),
         GetHybridCredential,
@@ -438,6 +551,9 @@ pub mod test {
     impl Debug for DummyFlowResponse {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
+                Self::SetNewDevicePin(arg0) => {
+                    f.debug_tuple("SetNewDevicePin").field(arg0).finish()
+                }
                 Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
                 Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
                 Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
@@ -530,6 +646,26 @@ pub mod test {
             }
         }
 
+        async fn set_usb_device_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::SetNewDevicePin(Ok(()))) =
+                self.send(DummyFlowRequest::SetUsbDevicePin(pin)).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        async fn set_nfc_device_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::SetNewDevicePin(Ok(()))) =
+                self.send(DummyFlowRequest::SetNfcDevicePin(pin)).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
         async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
             todo!();
         }
@@ -607,6 +743,14 @@ pub mod test {
                     DummyFlowRequest::EnterClientPin(pin) => {
                         let rsp = self.enter_client_pin(pin).await;
                         DummyFlowResponse::EnterClientPin(rsp)
+                    }
+                    DummyFlowRequest::SetUsbDevicePin(pin) => {
+                        let rsp = self.set_usb_device_pin(pin).await;
+                        DummyFlowResponse::SetNewDevicePin(rsp)
+                    }
+                    DummyFlowRequest::SetNfcDevicePin(pin) => {
+                        let rsp = self.set_nfc_device_pin(pin).await;
+                        DummyFlowResponse::SetNewDevicePin(rsp)
                     }
                     DummyFlowRequest::GetDevices => {
                         let rsp = self.get_available_public_key_devices().await.unwrap();
@@ -787,6 +931,14 @@ pub mod test {
                 pin_tx.send(pin).await.unwrap();
             }
             Ok(())
+        }
+
+        async fn set_usb_device_pin(&self, _pin: String) -> Result<(), ()> {
+            todo!();
+        }
+
+        async fn set_nfc_device_pin(&self, _pin: String) -> Result<(), ()> {
+            todo!();
         }
 
         async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {

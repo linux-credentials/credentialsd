@@ -4,6 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
+use credentialsd_common::model::{ViewUpdateFailure, ViewUpdateSuccess};
 use credentialsd_common::server::WindowHandle;
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
@@ -77,6 +78,12 @@ mod imp {
 
         #[property(get, set)]
         pub qr_spinner_visible: RefCell<bool>,
+
+        #[property(get, set)]
+        pub start_setting_new_pin_visible: RefCell<bool>,
+
+        #[property(get, set)]
+        pub pin_fields_match: RefCell<bool>,
     }
 
     // The central trait for subclassing a GObject
@@ -196,15 +203,25 @@ impl ViewModel {
                                     ));
                                     view_model.set_qr_spinner_visible(false);
                                 }
-                                ViewUpdate::Completed => {
+                                ViewUpdate::Completed(ViewUpdateSuccess::CloseWindow) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_completed(true);
                                 }
-                                ViewUpdate::Failed(error_msg) => {
+                                ViewUpdate::Completed(ViewUpdateSuccess::KeepWindowOpen(text)) => {
+                                    view_model.set_qr_spinner_visible(false);
+                                    // These are already gettext messages
+                                    view_model.set_prompt(text);
+                                }
+                                ViewUpdate::Failed(error) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_failed(true);
+                                    view_model.set_start_setting_new_pin_visible(matches!(
+                                        &error,
+                                        ViewUpdateFailure::PinNotSet(_)
+                                            | ViewUpdateFailure::PinPolicyViolation(_)
+                                    ));
                                     // These are already gettext messages
-                                    view_model.set_prompt(error_msg);
+                                    view_model.set_prompt(error.into_string());
                                 }
                                 ViewUpdate::Cancelled => {
                                     view_model.set_state(ModelState::Cancelled)
@@ -343,6 +360,10 @@ impl ViewModel {
 
     pub async fn send_usb_nfc_device_pin(&self, pin: String) {
         self.send_event(ViewEvent::PinEntered(pin)).await;
+    }
+
+    pub async fn send_set_new_device_pin(&self, pin: String) {
+        self.send_event(ViewEvent::SetNewDevicePin(pin)).await;
     }
 
     fn draw_qr_code(&self, qr_data: &str) -> Texture {
