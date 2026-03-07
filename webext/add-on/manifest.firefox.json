@@ -1,0 +1,40 @@
+{
+  "description": "Helper to integrate credentialsd with the browser",
+  "manifest_version": 3,
+  "name": "credentialsd-helper",
+  "version": "0.1.0",
+  "icons": {
+    "48": "icons/logo.svg"
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "credentialsd-helper@iinuwa.xyz",
+      "strict_min_version": "140.0"
+    }
+  },
+
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+
+  "action": {
+    "default_icon": "icons/logo.svg"
+  },
+
+  "permissions": ["nativeMessaging"]
+}

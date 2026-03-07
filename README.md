@@ -36,16 +36,26 @@ Alternatively, you can build the project yourself using the instructions in
 
 ## How to use
 
-Right now, there are two ways to use this service.
+Right now, there are three ways to use this service.
 
-### Experimental Firefox Add-On
+### Experimental Browser Extension
 
-There is an add-on that you can install in Firefox 140+ that allows you to test
-`credentialsd` without a custom Firefox build. You can get the XPI from the
-[releases page][release-page] for the corresponding version of
-`credentialsd-webextension` package that you installed.
+There is a browser extension that allows you to test `credentialsd` without a
+custom browser build. It overrides `navigator.credentials.create()` and
+`navigator.credentials.get()` to route WebAuthn requests through the
+credentialsd D-Bus service.
 
-Currently, this add-on only works for https://webauthn.io and
+Two browsers are supported from a single unified codebase:
+
+- **Firefox 140+** — Install the XPI from the [releases page][release-page] for
+  the corresponding version of `credentialsd-webextension` package that you
+  installed.
+- **Edge/Chromium (Chrome 111+, Edge 111+)** — Load as an unpacked extension
+  from `webext/add-on/` using the Chromium manifest. See
+  [`webext/README.md`](/webext/README.md#for-development-edgechromium) for
+  setup instructions.
+
+Currently, the extension only works for https://webauthn.io and
 https://demo.yubico.com, but can be used to test various WebAuthn options and
 hardware.
 
