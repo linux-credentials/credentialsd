@@ -183,8 +183,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
             .filter_map(|e| e.ok())
             .collect()
     });
-    let client_data_json =
-        webauthn::format_client_data_json(Operation::Create, &challenge, &origin);
+    let client_data_json = webauthn::format_client_data_json(Operation::Create, &challenge, origin);
     let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
     Ok((
         MakeCredentialRequest {
@@ -284,7 +283,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
     }
 
     let client_data_json =
-        webauthn::format_client_data_json(Operation::Get, &options.challenge, &request_env);
+        webauthn::format_client_data_json(Operation::Get, &options.challenge, request_env);
     let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
     // TODO: actually calculate correct effective domain, and use fallback to related origin requests to fill this in. For now, just default to origin.
     let user_verification = match options

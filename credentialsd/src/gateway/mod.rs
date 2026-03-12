@@ -65,7 +65,7 @@ async fn handle_create_credential<C: CredentialRequestController>(
         let response = controller
             .lock()
             .await
-            .request_credential(requesting_app, cred_request, parent_window.into())
+            .request_credential(requesting_app, cred_request, parent_window)
             .await?;
 
         if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -84,7 +84,7 @@ async fn handle_create_credential<C: CredentialRequestController>(
             // tracing::error!("Expected create public key credential response, received {response:?}");
             tracing::error!("Did not receive expected create public key credential response.");
             // Using NotAllowedError as a catch-all error.
-            Err(WebAuthnError::NotAllowedError.into())
+            Err(WebAuthnError::NotAllowedError)
         }
     } else {
         tracing::error!("Unknown credential type request: {}", request.r#type);
@@ -118,7 +118,7 @@ async fn handle_get_credential<C: CredentialRequestController>(
         let response = controller
             .lock()
             .await
-            .request_credential(requesting_app, cred_request, parent_window.into())
+            .request_credential(requesting_app, cred_request, parent_window)
             .await?;
 
         if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
@@ -137,11 +137,11 @@ async fn handle_get_credential<C: CredentialRequestController>(
             // tracing::error!("Expected get public key credential response, received {response:?}");
             tracing::error!("Did not receive expected get public key credential response.");
             // Using NotAllowedError as a catch-all error.
-            Err(WebAuthnError::NotAllowedError.into())
+            Err(WebAuthnError::NotAllowedError)
         }
     } else {
         tracing::error!("Unknown credential type request: {}", request.r#type);
-        Err(WebAuthnError::TypeError.into())
+        Err(WebAuthnError::TypeError)
     }
 }
 
@@ -237,10 +237,10 @@ async fn should_trust_app_id(pid: u32) -> bool {
     } else {
         vec!["/usr/bin/xdg-desktop-portal".to_string()]
     };
-    return trusted_callers.as_slice().contains(&exe_path.to_string());
+    trusted_callers.as_slice().contains(&exe_path.to_string())
 }
 
-fn check_origin_from_app<'a>(
+fn check_origin_from_app(
     app_id: &AppId,
     origin: Origin,
     top_origin: Option<Origin>,
@@ -272,7 +272,7 @@ fn check_origin_from_privileged_client(
         }
         _ => {
             tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
-            return Err(WebAuthnError::SecurityError);
+            Err(WebAuthnError::SecurityError)
         }
     }
 }
