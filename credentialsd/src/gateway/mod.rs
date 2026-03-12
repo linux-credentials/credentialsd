@@ -311,11 +311,21 @@ fn check_origin_from_app(
     origin: Origin,
     top_origin: Option<Origin>,
 ) -> Result<NavigationContext, WebAuthnError> {
-    let trusted_clients = [
-        "org.mozilla.firefox",
-        "xyz.iinuwa.credentialsd.DemoCredentialsUi",
-    ];
-    let is_privileged_client = trusted_clients.contains(&app_id.as_ref());
+    let is_privileged_client = {
+        let trusted_clients = [
+            "org.mozilla.firefox",
+            "xyz.iinuwa.credentialsd.DemoCredentialsUi",
+        ];
+        let mut privileged = trusted_clients.contains(&app_id.as_ref());
+        if cfg!(debug_assertions) && !privileged {
+            let trusted_clients_env = std::env::var("CREDSD_TRUSTED_APP_IDS").unwrap_or_default();
+            privileged = trusted_clients_env
+                .split(',')
+                .map(String::from)
+                .any(|c| app_id.as_ref() == c);
+        }
+        privileged
+    };
     if is_privileged_client {
         check_origin_from_privileged_client(&origin, top_origin.as_ref())
     } else {
