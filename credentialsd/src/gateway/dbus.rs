@@ -1,11 +1,12 @@
-use std::{os::fd::AsRawFd, sync::Arc};
+use std::{collections::HashMap, os::fd::AsRawFd, sync::Arc};
 
+use serde::{ser::SerializeTuple, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     fdo, interface,
     message::Header,
     names::{BusName, UniqueName},
-    zvariant::Optional,
+    zvariant::{ObjectPath, Optional, OwnedValue, Type, Value},
     Connection, DBusError,
 };
 
@@ -17,7 +18,7 @@ use credentialsd_common::{
     },
 };
 
-use crate::webauthn::{AppId, NavigationContext, Origin};
+use crate::webauthn::{AppId, Origin};
 
 use super::{
     check_origin_from_app, get_app_info_from_pid, GatewayService, RequestContext, RequestKind,
@@ -25,6 +26,7 @@ use super::{
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
+pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
 pub(super) async fn start_dbus_gateway(
     svc: Arc<AsyncMutex<GatewayService>>,
@@ -40,11 +42,17 @@ pub(super) async fn start_dbus_gateway(
                 gateway_service: svc.clone(),
             },
         )?
+        .serve_at(
+            PORTAL_SERVICE_PATH,
+            CredentialPortalGateway {
+                gateway_service: svc,
+            },
+        )?
         .build()
         .await
 }
 
-/// Struct to hold state for the D-Bus interface.
+/// Struct to hold state for the privileged D-Bus interface.
 struct CredentialGateway {
     /// Service responsible for processing credential requests.
     gateway_service: Arc<AsyncMutex<GatewayService>>,
@@ -169,6 +177,123 @@ async fn extract_client_details(
     })
 }
 
+/// Struct to hold state for the portal D-Bus interface.
+struct CredentialPortalGateway {
+    /// Service responsible for processing credential requests.
+    gateway_service: Arc<AsyncMutex<GatewayService>>,
+}
+
+/// These are public methods that can be called by arbitrary clients to begin a
+/// credential flow.
+///
+/// The D-Bus interface is responsible for authorizing the client and collecting
+/// the contextual information about the client to pass onto the GatewayService
+/// for evaluation.
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
+impl CredentialPortalGateway {
+    #[zbus(out_args("response", "results"))]
+    async fn create_credential(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
+        claimed_app_id: String,
+        claimed_app_display_name: Optional<String>,
+        parent_window: Optional<WindowHandle>,
+        claimed_origin: String,
+        claimed_top_origin: Optional<String>,
+        request: CreateCredentialRequest,
+        _options: HashMap<String, OwnedValue>,
+    ) -> PortalResult<CreateCredentialResponse, Error> {
+        let app_validation_result = validate_app_details(
+            connection,
+            &header,
+            claimed_app_id,
+            claimed_app_display_name.into(),
+            claimed_origin,
+            claimed_top_origin.into(),
+        )
+        .await;
+        let context = match app_validation_result {
+            Ok(context) => context,
+            Err(err) => return Err(err).into(),
+        };
+
+        tracing::debug!(
+            ?context,
+            ?request,
+            ?parent_window,
+            ?portal_request_handle,
+            "Received request for creating credential"
+        );
+
+        let response = self
+            .gateway_service
+            .lock()
+            .await
+            .handle_create_credential(request, context, parent_window.into())
+            .await
+            .map_err(Error::from);
+
+        response.into()
+    }
+
+    #[zbus(out_args("response", "results"))]
+    async fn get_credential(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+        portal_request_handle: ObjectPath<'_>,
+        parent_window: Optional<WindowHandle>,
+        claimed_app_id: String,
+        claimed_app_display_name: Optional<String>,
+        claimed_origin: String,
+        claimed_top_origin: Optional<String>,
+        request: GetCredentialRequest,
+        _options: HashMap<String, OwnedValue>,
+    ) -> PortalResult<GetCredentialResponse, Error> {
+        let app_validation_result = validate_app_details(
+            connection,
+            &header,
+            claimed_app_id,
+            claimed_app_display_name.into(),
+            claimed_origin,
+            claimed_top_origin.into(),
+        )
+        .await;
+        let context = match app_validation_result {
+            Ok(context) => context,
+            Err(err) => return Err(err).into(),
+        };
+
+        tracing::debug!(
+            ?context,
+            ?request,
+            ?parent_window,
+            ?portal_request_handle,
+            "Received request for retrieving credential"
+        );
+
+        let response = self
+            .gateway_service
+            .lock()
+            .await
+            .handle_get_credential(request, context, parent_window.into())
+            .await
+            .map_err(Error::from);
+        response.into()
+    }
+
+    async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
+        let capabilities = self
+            .gateway_service
+            .lock()
+            .await
+            .handle_get_client_capabilities();
+        Ok(capabilities)
+    }
+}
+
 #[allow(clippy::enum_variant_names)]
 #[derive(DBusError, Debug)]
 #[zbus(prefix = "xyz.iinuwa.credentialsd")]
@@ -226,14 +351,63 @@ impl From<WebAuthnError> for Error {
     }
 }
 
+#[repr(u32)]
+#[derive(Serialize)]
+enum PortalResponse {
+    Success = 0,
+    Cancelled = 1,
+    Other = 2,
+}
+
+#[derive(Type)]
+#[zvariant(signature = "ua{sv}")]
+struct PortalResult<T, E> {
+    inner: Result<T, E>,
+}
+
+impl<T, E> Serialize for PortalResult<T, E>
+where
+    T: Serialize + Type,
+    E: std::error::Error,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_tuple(2)?;
+        match &self.inner {
+            Err(err) => {
+                map.serialize_element(&(PortalResponse::Other as u32))?;
+                map.serialize_element(&HashMap::<&str, Value<'_>>::from([(
+                    "error",
+                    Value::Str(err.to_string().into()),
+                )]))?;
+            }
+            Ok(response) => {
+                map.serialize_element(&(PortalResponse::Success as u32))?;
+                map.serialize_element(&response)?;
+                map.serialize_element(&(PortalResponse::Success as u32))?;
+                map.serialize_element(&response)?;
+            }
+        };
+        map.end()
+    }
+}
+
+impl<T, E> From<Result<T, E>> for PortalResult<T, E> {
+    fn from(value: Result<T, E>) -> Self {
+        PortalResult { inner: value }
+    }
+}
+
 async fn validate_app_details(
     connection: &Connection,
     header: &Header<'_>,
     claimed_app_id: String,
     claimed_app_display_name: Option<String>,
-    claimed_origin: Option<String>,
+    claimed_origin: String,
     claimed_top_origin: Option<String>,
-) -> Result<(RequestingApplication, NavigationContext), Error> {
+) -> Result<RequestContext, Error> {
     let Some(unique_name) = header.sender() else {
         return Err(Error::SecurityError);
     };
@@ -254,7 +428,11 @@ async fn validate_app_details(
     let display_name = claimed_app_display_name.unwrap_or_default();
 
     // Verify that the origin is valid for the given app ID.
-    let claimed_origin = claimed_origin
+    let claimed_origin = claimed_origin.parse().map_err(|err| {
+        tracing::warn!(%err, "Invalid origin passed: {claimed_origin}");
+        Error::SecurityError
+    })?;
+    let claimed_top_origin = claimed_top_origin
         .map(|o| {
             o.parse().map_err(|_| {
                 tracing::warn!("Invalid origin passed: {o}");
@@ -262,25 +440,14 @@ async fn validate_app_details(
             })
         })
         .transpose()?;
-    let request_env = if let Some(claimed_origin) = claimed_origin {
-        let claimed_top_origin = claimed_top_origin
-            .map(|o| {
-                o.parse().map_err(|_| {
-                    tracing::warn!("Invalid origin passed: {o}");
-                    Error::SecurityError
-                })
-            })
-            .transpose()?;
-        check_origin_from_app(&app_id, claimed_origin, claimed_top_origin)?
-    } else {
-        NavigationContext::SameOrigin(Origin::AppId(app_id))
-    };
-    let app_details = RequestingApplication {
-        name: Some(display_name).into(),
-        path_or_app_id: claimed_app_id,
+    let request_kind = check_origin_from_app(&app_id, claimed_origin, claimed_top_origin)?;
+
+    Ok(RequestContext {
+        app_id,
+        app_name: display_name,
         pid,
-    };
-    Ok((app_details, request_env))
+        request_kind,
+    })
 }
 
 async fn query_peer_pid_via_fdinfo(

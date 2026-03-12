@@ -36,6 +36,7 @@ pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'stati
 }
 
 /// Type denoting a request's privilege level and origin.
+#[derive(Debug)]
 enum RequestKind {
     /// Only privileged clients are trusted to set both the origin and top origin.
     Privileged {
@@ -48,6 +49,7 @@ enum RequestKind {
 }
 
 /// Details about the credential request and the client making it.
+#[derive(Debug)]
 struct RequestContext {
     app_id: AppId,
     app_name: String,
@@ -310,7 +312,7 @@ fn check_origin_from_app(
     app_id: &AppId,
     origin: Origin,
     top_origin: Option<Origin>,
-) -> Result<NavigationContext, WebAuthnError> {
+) -> Result<RequestKind, WebAuthnError> {
     let is_privileged_client = {
         let trusted_clients = [
             "org.mozilla.firefox",
@@ -327,9 +329,14 @@ fn check_origin_from_app(
         privileged
     };
     if is_privileged_client {
-        check_origin_from_privileged_client(&origin, top_origin.as_ref())
+        let (origin, top_origin) =
+            match check_origin_from_privileged_client(&origin, top_origin.as_ref())? {
+                NavigationContext::SameOrigin(origin) => (origin, None),
+                NavigationContext::CrossOrigin((origin, top_origin)) => (origin, Some(top_origin)),
+            };
+        Ok(RequestKind::Privileged { origin, top_origin })
     } else {
-        Ok(NavigationContext::SameOrigin(Origin::AppId(app_id.clone())))
+        Ok(RequestKind::Unprivileged(Origin::AppId(app_id.clone())))
     }
 }
 

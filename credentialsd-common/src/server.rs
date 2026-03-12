@@ -1,6 +1,6 @@
 //! Types for serializing across D-Bus instances
 
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::{
     Deserialize, Serialize,
@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Device, Operation, RequestingApplication};
+use crate::model::{BackgroundEvent, Operation, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -111,6 +111,14 @@ pub struct CreateCredentialResponse {
     #[zvariant(rename = "type")]
     r#type: String,
     public_key: Option<CreatePublicKeyCredentialResponse>,
+}
+
+impl NoneValue for CreateCredentialResponse {
+    type NoneType = HashMap<String, OwnedValue>;
+
+    fn null_value() -> Self::NoneType {
+        HashMap::new()
+    }
 }
 
 #[derive(Clone, Debug, DeserializeDict, Type)]
