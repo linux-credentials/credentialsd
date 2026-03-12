@@ -247,18 +247,14 @@ impl TryFrom<&CredentialDescriptor> for Ctap2PublicKeyCredentialDescriptor {
         let transports = value.transports.as_ref().filter(|t| !t.is_empty());
         let transports = match transports {
             Some(transports) => {
-                let mut transport_list = transports.iter().map(|t| match t.as_ref() {
+                let transport_list = transports.iter().map(|t| match t.as_ref() {
                     "ble" => Some(Ctap2Transport::Ble),
+                    "hybrid" => Some(Ctap2Transport::Hybrid),
+                    "internal" => Some(Ctap2Transport::Internal),
                     "nfc" => Some(Ctap2Transport::Nfc),
                     "usb" => Some(Ctap2Transport::Usb),
-                    "internal" => Some(Ctap2Transport::Internal),
                     _ => None,
                 });
-                if transport_list.any(|t| t.is_none()) {
-                    return Err(Error::Internal(
-                        "Invalid transport type specified".to_owned(),
-                    ));
-                }
                 transport_list.collect()
             }
             None => None,

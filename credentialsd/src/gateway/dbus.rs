@@ -17,40 +17,36 @@ use credentialsd_common::{
     },
 };
 
-use crate::{
-    dbus::CredentialRequestController,
-    webauthn::{AppId, NavigationContext, Origin},
-};
+use crate::webauthn::{AppId, NavigationContext, Origin};
 
 use super::{
     check_origin_from_app, check_origin_from_privileged_client, get_app_info_from_pid,
-    handle_create_credential, handle_get_client_capabilities, handle_get_credential,
-    CredentialGateway,
+    GatewayService,
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
 
-pub(super) async fn start_dbus_gateway<C: CredentialRequestController + Send + Sync + 'static>(
-    controller: C,
+pub(super) async fn start_dbus_gateway(
+    svc: Arc<AsyncMutex<GatewayService>>,
 ) -> Result<Connection, zbus::Error> {
     zbus::connection::Builder::session()
         .inspect_err(|err| {
             tracing::error!("Failed to connect to D-Bus session: {err}");
         })?
         .name(SERVICE_NAME)?
-        .serve_at(
-            SERVICE_PATH,
-            CredentialGateway {
-                controller: Arc::new(AsyncMutex::new(controller)),
-            },
-        )?
+        .serve_at(SERVICE_PATH, CredentialGateway { svc: svc.clone() })?
         .build()
         .await
 }
+
+struct CredentialGateway {
+    svc: Arc<AsyncMutex<GatewayService>>,
+}
+
 /// These are public methods that can be called by arbitrary clients to begin a credential flow.
 #[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
-impl<C: CredentialRequestController + Send + Sync + 'static> super::CredentialGateway<C> {
+impl CredentialGateway {
     async fn create_credential(
         &self,
         #[zbus(header)] header: Header<'_>,
@@ -86,14 +82,17 @@ impl<C: CredentialRequestController + Send + Sync + 'static> super::CredentialGa
         let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
         // Find out where this request is coming from (which application is requesting this)
         let requesting_app = query_connection_peer_binary(header, connection).await;
-        let response = handle_create_credential(
-            &self.controller,
-            request,
-            request_environment,
-            requesting_app,
-            parent_window.into(),
-        )
-        .await?;
+        let response = self
+            .svc
+            .lock()
+            .await
+            .handle_create_credential(
+                request,
+                request_environment,
+                requesting_app,
+                parent_window.into(),
+            )
+            .await?;
         Ok(response)
     }
 
@@ -132,19 +131,22 @@ impl<C: CredentialRequestController + Send + Sync + 'static> super::CredentialGa
         let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
         // Find out where this request is coming from (which application is requesting this)
         let requesting_app = query_connection_peer_binary(header, connection).await;
-        let response = handle_get_credential(
-            &self.controller,
-            request,
-            request_environment,
-            requesting_app,
-            parent_window.into(),
-        )
-        .await?;
+        let response = self
+            .svc
+            .lock()
+            .await
+            .handle_get_credential(
+                request,
+                request_environment,
+                requesting_app,
+                parent_window.into(),
+            )
+            .await?;
         Ok(response)
     }
 
     async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
-        let capabilities = handle_get_client_capabilities();
+        let capabilities = self.svc.lock().await.handle_get_client_capabilities();
         Ok(capabilities)
     }
 }
