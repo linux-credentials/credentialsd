@@ -1,6 +1,8 @@
 //! Implements the service that public clients can connect to. Responsible for
 //! authorizing clients for origins and validating request parameters.
 
+mod util;
+
 use std::{os::fd::AsRawFd, sync::Arc};
 
 use credentialsd_common::{
@@ -20,13 +22,13 @@ use zbus::{
 };
 
 use crate::{
-    dbus::{
-        create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
-        get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
-        CredentialRequestController,
-    },
+    dbus::CredentialRequestController,
     model::{CredentialRequest, CredentialResponse},
     webauthn::{AppId, NavigationContext, Origin},
+};
+use util::{
+    create_credential_request_try_into_ctap2, create_credential_response_try_from_ctap2,
+    get_credential_request_try_into_ctap2, get_credential_response_try_from_ctap2,
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";

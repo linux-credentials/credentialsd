@@ -2,6 +2,7 @@ mod cbor;
 mod cose;
 mod credential_service;
 mod dbus;
+mod gateway;
 mod model;
 mod serde;
 mod webauthn;
@@ -45,7 +46,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     print!("Starting D-Bus public client service...");
     let initiator = CredentialRequestControllerClient { initiator };
-    let _gateway_conn = dbus::start_gateway(initiator).await?;
+    let _gateway_conn = gateway::start_gateway(initiator).await?;
     println!(" ✅");
 
     println!("Waiting for messages...");
