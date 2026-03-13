@@ -341,6 +341,8 @@ enum SignalState {
     Active,
 }
 
+/// Coordinates between user and various devices connected to the machine to
+/// fulfill credential requests.
 #[async_trait]
 pub trait CredentialRequestController {
     async fn request_credential(

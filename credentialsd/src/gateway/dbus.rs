@@ -35,16 +35,28 @@ pub(super) async fn start_dbus_gateway(
             tracing::error!("Failed to connect to D-Bus session: {err}");
         })?
         .name(SERVICE_NAME)?
-        .serve_at(SERVICE_PATH, CredentialGateway { svc: svc.clone() })?
+        .serve_at(
+            SERVICE_PATH,
+            CredentialGateway {
+                gateway_service: svc.clone(),
+            },
+        )?
         .build()
         .await
 }
 
+/// Struct to hold state for the D-Bus interface.
 struct CredentialGateway {
-    svc: Arc<AsyncMutex<GatewayService>>,
+    /// Service responsible for processing credential requests.
+    gateway_service: Arc<AsyncMutex<GatewayService>>,
 }
 
-/// These are public methods that can be called by arbitrary clients to begin a credential flow.
+/// These are public methods that can be called by arbitrary clients to begin a
+/// credential flow.
+///
+/// The D-Bus interface is responsible for authorizing the client and collecting
+/// the contextual information about the client to pass onto the GatewayService
+/// for evaluation.
 #[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
 impl CredentialGateway {
     async fn create_credential(
@@ -83,7 +95,7 @@ impl CredentialGateway {
         // Find out where this request is coming from (which application is requesting this)
         let requesting_app = query_connection_peer_binary(header, connection).await;
         let response = self
-            .svc
+            .gateway_service
             .lock()
             .await
             .handle_create_credential(
@@ -132,7 +144,7 @@ impl CredentialGateway {
         // Find out where this request is coming from (which application is requesting this)
         let requesting_app = query_connection_peer_binary(header, connection).await;
         let response = self
-            .svc
+            .gateway_service
             .lock()
             .await
             .handle_get_credential(
@@ -146,7 +158,11 @@ impl CredentialGateway {
     }
 
     async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
-        let capabilities = self.svc.lock().await.handle_get_client_capabilities();
+        let capabilities = self
+            .gateway_service
+            .lock()
+            .await
+            .handle_get_client_capabilities();
         Ok(capabilities)
     }
 }

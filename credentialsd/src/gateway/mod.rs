@@ -35,7 +35,11 @@ pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'stati
     dbus::start_dbus_gateway(svc).await
 }
 
+/// Service responsible for processing credential requests received from various
+/// client interfaces.
 struct GatewayService {
+    /// Coordinates between user and various devices connected to the machine to
+    /// fulfill credential requests.
     request_controller: Box<dyn CredentialRequestController + Send + Sync>,
 }
 
