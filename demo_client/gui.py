@@ -460,7 +460,7 @@ def connect_to_bus():
         introspection,
     )
     INTERFACE = proxy_object.get_interface(
-        "org.freedesktop.impl.portal.experimental.Credential"
+        "org.freedesktop.handler.portal.experimental.Credential"
     )
 
 

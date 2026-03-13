@@ -189,7 +189,7 @@ struct CredentialPortalGateway {
 /// The D-Bus interface is responsible for authorizing the client and collecting
 /// the contextual information about the client to pass onto the GatewayService
 /// for evaluation.
-#[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
+#[interface(name = "org.freedesktop.handler.portal.experimental.Credential")]
 impl CredentialPortalGateway {
     #[zbus(out_args("response", "results"))]
     async fn create_credential(
