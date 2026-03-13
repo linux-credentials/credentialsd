@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from dbus_next.constants import ErrorType
 from contextlib import closing
 import functools
 import json
@@ -14,6 +15,7 @@ from typing import Optional
 import uuid
 
 from dbus_next.glib import MessageBus, ProxyInterface
+from dbus_next.proxy_object import BaseProxyInterface
 from dbus_next import DBusError, Message, MessageType, Variant
 
 import gi
@@ -21,7 +23,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkWayland", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402,F401
+from gi.repository import GdkWayland, Gio, GObject, Gtk, Adw  # noqa: E402,F401  # ty: ignore[unresolved-import]
 
 import webauthn  # noqa: E402
 import util  # noqa: E402
@@ -32,11 +34,32 @@ def dbus_error_from_message(msg: Message):
     return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
 
 
-DBusError._from_message = dbus_error_from_message
+DBusError._from_message = dbus_error_from_message  # ty: ignore[invalid-assignment]
 
-INTERFACE = None
-DB = None
-KEY = None
+
+@staticmethod
+def dbus_proxy_object_check_method_return(msg, signature=None):
+    if msg.message_type == MessageType.ERROR:
+        raise DBusError._from_message(msg)
+    elif msg.message_type != MessageType.METHOD_RETURN:
+        raise DBusError(
+            ErrorType.CLIENT_ERROR, "method call didnt return a method return", msg
+        )
+    elif signature is not None and msg.signature != signature:
+        raise DBusError(
+            ErrorType.CLIENT_ERROR,
+            f'method call returned unexpected signature: "{msg.signature}", expected {signature}',
+            msg,
+        )
+
+
+BaseProxyInterface._check_method_return = dbus_proxy_object_check_method_return
+
+APP_ID = "xyz.iinuwa.credentialsd.DemoCredentialsUi"
+APP_NAME = "Demo UI"  # TODO: This should be looked up from .desktop file.
+
+INTERFACE: ProxyInterface = None  # ty: ignore[invalid-assignment]
+DB: sqlite3.Connection = None  # ty: ignore[invalid-assignment]
 
 RESOURCE_FILE = Gio.Resource.load(
     f"{os.path.dirname(os.path.realpath(__file__))}/resources.gresource"
@@ -109,7 +132,7 @@ class MainWindow(Gtk.ApplicationWindow):
             params = {
                 "user_handle": user_handle,
                 "cred_id": auth_data.cred_id,
-                "aaguid": str(uuid.UUID(bytes=bytes(auth_data.aaguid))),
+                "aaguid": str(uuid.UUID(bytes=auth_data.aaguid)),
                 "sign_count": None
                 if auth_data.sign_count == 0
                 else auth_data.sign_count,
@@ -224,6 +247,7 @@ class MainWindow(Gtk.ApplicationWindow):
         def cb(toplevel, window_handle):
             print(f"received window handle: {window_handle}")
             window_handle = f"wayland:{window_handle}"
+            print(window_handle)
 
             auth_data = get_passkey(
                 INTERFACE,
@@ -331,17 +355,31 @@ def create_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_create_credential_sync([window_handle, req])
+    unique_name = interface.bus.unique_name[1:].replace(".", "_")
+    object_path = f"/org/freedesktop/portal/request/{unique_name}/CREATE_REQUEST"
+    rsp = interface.call_create_credential_sync(
+        object_path, window_handle, APP_ID, APP_NAME, origin, top_origin, req, {}
+    )
 
-    # print("Received response")
+    print("Received response")
     # pprint(rsp)
-    if rsp["type"].value != "public-key":
+    [code, value] = rsp
+    if code == 0:
+        result = value
+    elif code == 1:
+        raise Exception("Portal request cancelled")
+    elif code == 2 and "error" in value:
+        raise Exception(f"Portal returned an error: {value['error'].value}")
+    else:
+        raise Exception("Portal returned an unknown error")
+
+    if result["type"].value != "public-key":
         raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
+            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
         )
 
     response_json = json.loads(
-        rsp["public_key"].value["registration_response_json"].value
+        result["public_key"].value["registration_response_json"].value
     )
     return webauthn.verify_create_response(response_json, options, origin)
 
@@ -372,16 +410,32 @@ def get_passkey(
         "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
     }
 
-    rsp = interface.call_get_credential_sync([window_handle, req])
-    # print("Received response")
+    unique_name = interface.bus.unique_name[1:].replace(".", "_")
+    object_path = f"/org/freedesktop/portal/request/{unique_name}/GET_REQUEST"
+    print(window_handle)
+    rsp = interface.call_get_credential_sync(
+        object_path, window_handle, APP_ID, APP_NAME, origin, top_origin, req, {}
+    )
+    print("Received response")
     # pprint(rsp)
-    if rsp["type"].value != "public-key":
+
+    [code, value] = rsp
+    if code == 0:
+        result = value
+    elif code == 1:
+        raise Exception("Portal request cancelled")
+    elif code == 2 and "error" in value:
+        raise Exception(f"Portal returned an error: {value['error'].value}")
+    else:
+        raise Exception("Portal returned an unknown error")
+
+    if result["type"].value != "public-key":
         raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
+            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
         )
 
     response_json = json.loads(
-        rsp["public_key"].value["authentication_response_json"].value
+        result["public_key"].value["authentication_response_json"].value
     )
     response_json["rawId"] = util.b64_decode(response_json["rawId"])
     if user_handle := response_json["response"].get("userHandle"):
@@ -402,10 +456,12 @@ def connect_to_bus():
 
     proxy_object = bus.get_proxy_object(
         "xyz.iinuwa.credentialsd.Credentials",
-        "/xyz/iinuwa/credentialsd/Credentials",
+        "/org/freedesktop/portal/desktop",
         introspection,
     )
-    INTERFACE = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
+    INTERFACE = proxy_object.get_interface(
+        "org.freedesktop.impl.portal.experimental.Credential"
+    )
 
 
 def setup_db():
@@ -455,7 +511,7 @@ def main():
     connect_to_bus()
     setup_db()
 
-    app = MyApp(application_id="xyz.iinuwa.credentialsd.DemoCredentialsUi")
+    app = MyApp(application_id=APP_ID)
     app.run(sys.argv)
     DB.close()
 
