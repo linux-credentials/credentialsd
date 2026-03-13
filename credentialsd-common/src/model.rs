@@ -110,7 +110,7 @@ pub struct RequestingApplication {
     /// The name of the application.
     pub name: Optional<String>,
 
-    /// The PID of the applicatoin
+    /// The PID of the application
     pub pid: u32,
 }
 

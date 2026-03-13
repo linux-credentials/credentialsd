@@ -20,8 +20,7 @@ use credentialsd_common::{
 use crate::webauthn::{AppId, NavigationContext, Origin};
 
 use super::{
-    check_origin_from_app, check_origin_from_privileged_client, get_app_info_from_pid,
-    GatewayService,
+    check_origin_from_app, get_app_info_from_pid, GatewayService, RequestContext, RequestKind,
 };
 
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
@@ -66,44 +65,19 @@ impl CredentialGateway {
         parent_window: Optional<WindowHandle>,
         request: CreateCredentialRequest,
     ) -> Result<CreateCredentialResponse, Error> {
-        // TODO: Add authorization check for privileged client.
-        let top_origin = if request.is_same_origin.unwrap_or_default() {
-            None
-        } else {
-            // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
-            // We should still reject cross-origin requests for conditionally-mediated requests.
-            tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-            return Err(WebAuthnError::NotAllowedError.into());
-        };
-        let Some(origin) = request
-            .origin
-            .as_ref()
-            .map(|o| {
-                o.parse::<Origin>().map_err(|_| {
-                    tracing::warn!("Invalid origin specified: {:?}", request.origin);
-                    Error::SecurityError
-                })
-            })
-            .transpose()?
-        else {
-            tracing::warn!(
-            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
-        );
-            return Err(Error::SecurityError);
-        };
-        let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
-        // Find out where this request is coming from (which application is requesting this)
-        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let context = extract_client_details(
+            header,
+            connection,
+            request.origin.as_ref().cloned(),
+            request.is_same_origin.unwrap_or_default(),
+        )
+        .await?;
+
         let response = self
             .gateway_service
             .lock()
             .await
-            .handle_create_credential(
-                request,
-                request_environment,
-                requesting_app,
-                parent_window.into(),
-            )
+            .handle_create_credential(request, context, parent_window.into())
             .await?;
         Ok(response)
     }
@@ -115,44 +89,19 @@ impl CredentialGateway {
         parent_window: Optional<WindowHandle>,
         request: GetCredentialRequest,
     ) -> Result<GetCredentialResponse, Error> {
-        // TODO: Add authorization check for privileged client.
-        let top_origin = if request.is_same_origin.unwrap_or_default() {
-            None
-        } else {
-            // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
-            // We should still reject cross-origin requests for conditionally-mediated requests.
-            tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-            return Err(WebAuthnError::NotAllowedError.into());
-        };
-        let Some(origin) = request
-            .origin
-            .as_ref()
-            .map(|o| {
-                o.parse::<Origin>().map_err(|_| {
-                    tracing::warn!("Invalid origin specified: {:?}", request.origin);
-                    Error::SecurityError
-                })
-            })
-            .transpose()?
-        else {
-            tracing::warn!(
-            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
-        );
-            return Err(Error::SecurityError);
-        };
-        let request_environment = check_origin_from_privileged_client(origin, top_origin)?;
-        // Find out where this request is coming from (which application is requesting this)
-        let requesting_app = query_connection_peer_binary(header, connection).await;
+        let context = extract_client_details(
+            header,
+            connection,
+            request.origin.as_ref().cloned(),
+            request.is_same_origin.unwrap_or_default(),
+        )
+        .await?;
+
         let response = self
             .gateway_service
             .lock()
             .await
-            .handle_get_credential(
-                request,
-                request_environment,
-                requesting_app,
-                parent_window.into(),
-            )
+            .handle_get_credential(request, context, parent_window.into())
             .await?;
         Ok(response)
     }
@@ -165,6 +114,59 @@ impl CredentialGateway {
             .handle_get_client_capabilities();
         Ok(capabilities)
     }
+}
+
+/// Returns contextual details about the client and the request needed for
+/// authorization.
+async fn extract_client_details(
+    header: Header<'_>,
+    connection: &Connection,
+    origin: Option<String>,
+    is_same_origin: bool,
+) -> Result<RequestContext, Error> {
+    let top_origin = if is_same_origin {
+        None
+    } else {
+        // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
+        // We should still reject cross-origin requests for conditionally-mediated requests.
+        tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
+        return Err(WebAuthnError::NotAllowedError.into());
+    };
+    /*
+    let top_origin =
+        top_origin.as_ref()
+        .map(|o| o.parse::<Origin>())
+        .transpose()
+        .map_err(|err| {
+            tracing::warn!(%err, "Invalid top origin specified: {:?}", client_details.top_origin);
+            WebAuthnError::SecurityError
+        })?;
+    */
+
+    let Some(origin) = origin.as_ref().cloned() else {
+        tracing::warn!(
+            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
+        );
+        return Err(Error::SecurityError);
+    };
+    let origin = origin.parse::<Origin>().map_err(|err| {
+        tracing::warn!(%err, "Invalid origin specified: {:?}", origin);
+        WebAuthnError::SecurityError
+    })?;
+
+    // Find out where this request is coming from (which application is requesting this)
+    let requesting_app = query_connection_peer_binary(header, connection)
+        .await
+        .ok_or_else(|| {
+            tracing::error!("Could not retrieve client details from D-Bus connection");
+            Error::SecurityError
+        })?;
+    Ok(RequestContext {
+        app_id: "xyz.iinuwa.credentialsd.CredentialGateway".parse().unwrap(), // hardcoding this for now; this will be obsolete soon
+        app_name: requesting_app.name.as_ref().unwrap().clone(),
+        pid: requesting_app.pid,
+        request_kind: RequestKind::Privileged { origin, top_origin },
+    })
 }
 
 #[allow(clippy::enum_variant_names)]
