@@ -191,7 +191,7 @@ struct CredentialPortalGateway {
 /// for evaluation.
 #[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
 impl CredentialPortalGateway {
-    // #[zbus(out_args("response", "results"))]
+    #[zbus(out_args("response", "results"))]
     async fn create_credential(
         &self,
         #[zbus(connection)] connection: &Connection,
@@ -204,7 +204,7 @@ impl CredentialPortalGateway {
         claimed_top_origin: Optional<String>,
         request: CreateCredentialRequest,
         _options: HashMap<String, OwnedValue>,
-    ) -> (PortalResult<CreateCredentialResponse, Error>,) {
+    ) -> PortalResult<CreateCredentialResponse, Error> {
         let app_validation_result = validate_app_details(
             connection,
             &header,
@@ -216,7 +216,7 @@ impl CredentialPortalGateway {
         .await;
         let context = match app_validation_result {
             Ok(context) => context,
-            Err(err) => return (Err(err).into(),),
+            Err(err) => return Err(err).into(),
         };
 
         tracing::debug!(
@@ -235,10 +235,10 @@ impl CredentialPortalGateway {
             .await
             .map_err(Error::from);
 
-        (response.into(),)
+        response.into()
     }
 
-    //#[zbus(out_args("response", "results"))]
+    #[zbus(out_args("response", "results"))]
     async fn get_credential(
         &self,
         #[zbus(connection)] connection: &Connection,
@@ -251,7 +251,7 @@ impl CredentialPortalGateway {
         claimed_top_origin: Optional<String>,
         request: GetCredentialRequest,
         _options: HashMap<String, OwnedValue>,
-    ) -> (PortalResult<GetCredentialResponse, Error>,) {
+    ) -> PortalResult<GetCredentialResponse, Error> {
         let app_validation_result = validate_app_details(
             connection,
             &header,
@@ -263,7 +263,7 @@ impl CredentialPortalGateway {
         .await;
         let context = match app_validation_result {
             Ok(context) => context,
-            Err(err) => return (Err(err).into(),),
+            Err(err) => return Err(err).into(),
         };
 
         tracing::debug!(
@@ -281,7 +281,7 @@ impl CredentialPortalGateway {
             .handle_get_credential(request, context, parent_window.into())
             .await
             .map_err(Error::from);
-        (response.into(),)
+        response.into()
     }
 
     async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
