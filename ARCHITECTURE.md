@@ -103,11 +103,15 @@ Actual interaction I/O is performed in the [libwebauthn][libwebauthn] library.
 
 [libwebauthn]: https://github.com/linux-credentials/libwebauthn
 
+### `credentialsd/src/gateway/`
+
+The Gateway service is defined here, along with its D-Bus interface.
+
 ### `credentialsd/src/dbus/`
 
 D-Bus clients and services.
 
-The Gateway and Flow Controller services are defined here, as well as a client
+The Flow Controller services are defined here, as well as a client
 for the UI Controller.
 
 The `model` module contains some methods to convert from D-Bus types to internal
