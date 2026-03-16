@@ -1,9 +1,9 @@
 //! This module implements the service to allow the user to control the flow of
 //! the credential request through the trusted UI.
 
-use std::future::Future;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
+use async_trait::async_trait;
 use credentialsd_common::model::{
     BackgroundEvent, Device, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
 };
@@ -341,13 +341,16 @@ enum SignalState {
     Active,
 }
 
+/// Coordinates between user and various devices connected to the machine to
+/// fulfill credential requests.
+#[async_trait]
 pub trait CredentialRequestController {
-    fn request_credential(
+    async fn request_credential(
         &self,
         requesting_app: Option<RequestingApplication>,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
-    ) -> impl Future<Output = Result<CredentialResponse, WebAuthnError>> + Send;
+    ) -> Result<CredentialResponse, WebAuthnError>;
 }
 
 pub struct CredentialRequestControllerClient {
@@ -359,6 +362,7 @@ pub struct CredentialRequestControllerClient {
     )>,
 }
 
+#[async_trait]
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
