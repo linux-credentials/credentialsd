@@ -253,6 +253,17 @@ impl CredentialsUiWindow {
             }
         ));
 
+        view_model.connect_usb_nfc_pin_entry_visible_notify(clone!(
+            #[weak]
+            stack,
+            move |vm| {
+                // If the entry becomes visible, we definitely need to be on the PIN page
+                if vm.usb_nfc_pin_entry_visible() {
+                    stack.set_visible_child_name("usb_or_nfc");
+                }
+            }
+        ));
+
         view_model.connect_pin_fields_match_notify(clone!(
             #[weak]
             stack,

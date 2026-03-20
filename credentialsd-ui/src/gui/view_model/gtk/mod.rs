@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::model::{ViewUpdateFailure, ViewUpdateSuccess};
+use credentialsd_common::model::PinNotSetError;
 use credentialsd_common::server::WindowHandle;
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
@@ -132,6 +132,8 @@ impl ViewModel {
                         Ok(update) => {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_nfc_pin_entry_visible(false);
+                            view_model.set_start_setting_new_pin_visible(false);
+                            view_model.set_failed(false);
                             match update {
                                 ViewUpdate::SetTitle((title, subtitle)) => {
                                     view_model.set_title(title);
@@ -180,6 +182,25 @@ impl ViewModel {
                                 ViewUpdate::UsbNeedsUserPresence => {
                                     view_model.set_prompt(gettext("Touch your device"));
                                 }
+                                ViewUpdate::UsbPinNotSet { error }
+                                | ViewUpdate::NfcPinNotSet { error } => {
+                                    view_model.set_failed(true);
+                                    view_model.set_start_setting_new_pin_visible(true);
+                                    let text = match error {
+                                        None => gettext(
+                                            "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
+                                        ),
+                                        Some(PinNotSetError::PinTooShort)
+                                        | Some(PinNotSetError::PinPolicyViolation) => gettext(
+                                            "The entered PIN violates the PIN-policy of this device (likely too short). Please try again.",
+                                        ),
+                                        Some(PinNotSetError::PinTooLong) => gettext(
+                                            "The entered PIN violates the PIN-policy of this device (PIN too long). Please try again.",
+                                        ),
+                                    };
+                                    // These are already gettext messages
+                                    view_model.set_prompt(text);
+                                }
                                 ViewUpdate::HybridNeedsQrCode(qr_code) => {
                                     view_model.set_prompt(gettext("Scan the QR code with your device to begin authentication."));
                                     let texture = view_model.draw_qr_code(&qr_code);
@@ -203,25 +224,15 @@ impl ViewModel {
                                     ));
                                     view_model.set_qr_spinner_visible(false);
                                 }
-                                ViewUpdate::Completed(ViewUpdateSuccess::CloseWindow) => {
+                                ViewUpdate::Completed => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_completed(true);
-                                }
-                                ViewUpdate::Completed(ViewUpdateSuccess::KeepWindowOpen(text)) => {
-                                    view_model.set_qr_spinner_visible(false);
-                                    // These are already gettext messages
-                                    view_model.set_prompt(text);
                                 }
                                 ViewUpdate::Failed(error) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_failed(true);
-                                    view_model.set_start_setting_new_pin_visible(matches!(
-                                        &error,
-                                        ViewUpdateFailure::PinNotSet(_)
-                                            | ViewUpdateFailure::PinPolicyViolation(_)
-                                    ));
                                     // These are already gettext messages
-                                    view_model.set_prompt(error.into_string());
+                                    view_model.set_prompt(error);
                                 }
                                 ViewUpdate::Cancelled => {
                                     view_model.set_state(ModelState::Cancelled)

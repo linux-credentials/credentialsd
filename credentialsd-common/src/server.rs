@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Device, Operation, RequestingApplication};
+use crate::model::{BackgroundEvent, Operation, PinNotSetError, RequestingApplication};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
@@ -182,8 +182,6 @@ impl TryFrom<&Value<'_>> for crate::model::Error {
         let err_code: &str = value.downcast_ref()?;
         let err = match err_code {
             "AuthenticatorError" => crate::model::Error::AuthenticatorError,
-            "PinNotSet" => crate::model::Error::PinNotSet,
-            "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
             "NoCredentials" => crate::model::Error::NoCredentials,
             "CredentialExcluded" => crate::model::Error::CredentialExcluded,
             "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
@@ -347,6 +345,21 @@ impl From<&crate::model::UsbState> for Structure<'_> {
                 let value = Value::<'_>::from(error.to_string());
                 (0x0A, Some(value))
             }
+            crate::model::UsbState::PinNotSet { error } => {
+                let value = error.as_ref().map(|x| {
+                    Value::<'_>::from({
+                        let this = &x;
+                        match this {
+                            PinNotSetError::PinTooShort => String::from("Pin too short"),
+                            PinNotSetError::PinTooLong => String::from("Pin too long"),
+                            PinNotSetError::PinPolicyViolation => {
+                                String::from("Pin policy violation")
+                            }
+                        }
+                    })
+                });
+                (0x0B, value)
+            }
         };
         tag_value_to_struct(tag, value)
     }
@@ -401,14 +414,19 @@ impl TryFrom<&Structure<'_>> for crate::model::UsbState {
                 let err_code: &str = value.downcast_ref()?;
                 let err = match err_code {
                     "AuthenticatorError" => crate::model::Error::AuthenticatorError,
-                    "PinNotSet" => crate::model::Error::PinNotSet,
-                    "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
                     "NoCredentials" => crate::model::Error::NoCredentials,
                     "CredentialExcluded" => crate::model::Error::CredentialExcluded,
                     "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
                     s => crate::model::Error::Internal(String::from(s)),
                 };
                 Ok(Self::Failed(err))
+            }
+            0x0B => {
+                let error = value
+                    .downcast_ref::<&str>()
+                    .ok()
+                    .and_then(PinNotSetError::from_string);
+                Ok(Self::PinNotSet { error })
             }
             _ => Err(zvariant::Error::IncorrectType),
         }
@@ -473,6 +491,21 @@ impl From<&crate::model::NfcState> for Structure<'_> {
                 let value = Value::<'_>::from(error.to_string());
                 (0x0A, Some(value))
             }
+            crate::model::NfcState::PinNotSet { error } => {
+                let value = error.as_ref().map(|x| {
+                    Value::<'_>::from({
+                        let this = &x;
+                        match this {
+                            PinNotSetError::PinTooShort => String::from("Pin too short"),
+                            PinNotSetError::PinTooLong => String::from("Pin too long"),
+                            PinNotSetError::PinPolicyViolation => {
+                                String::from("Pin policy violation")
+                            }
+                        }
+                    })
+                });
+                (0x0B, value)
+            }
         };
         tag_value_to_struct(tag, value)
     }
@@ -525,14 +558,19 @@ impl TryFrom<&Structure<'_>> for crate::model::NfcState {
                 let err_code: &str = value.downcast_ref()?;
                 let err = match err_code {
                     "AuthenticatorError" => crate::model::Error::AuthenticatorError,
-                    "PinNotSet" => crate::model::Error::PinNotSet,
-                    "PinPolicyViolation" => crate::model::Error::PinPolicyViolation,
                     "NoCredentials" => crate::model::Error::NoCredentials,
                     "CredentialExcluded" => crate::model::Error::CredentialExcluded,
                     "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
                     s => crate::model::Error::Internal(String::from(s)),
                 };
                 Ok(Self::Failed(err))
+            }
+            0x0B => {
+                let error = value
+                    .downcast_ref::<&str>()
+                    .ok()
+                    .and_then(PinNotSetError::from_string);
+                Ok(Self::PinNotSet { error })
             }
             _ => Err(zvariant::Error::IncorrectType),
         }

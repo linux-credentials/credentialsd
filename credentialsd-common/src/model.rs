@@ -40,7 +40,6 @@ pub struct Device {
 pub enum Operation {
     Create,
     Get,
-    SetDevicePin,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
@@ -122,33 +121,6 @@ pub struct RequestingParty {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ViewUpdateFailure {
-    GeneralFailure(String),
-    /// Request required UV, but it was not set on the device yet
-    PinNotSet(String),
-    /// User tried to set PIN, but it was too short
-    PinPolicyViolation(String),
-}
-
-impl ViewUpdateFailure {
-    pub fn into_string(self) -> String {
-        match self {
-            ViewUpdateFailure::GeneralFailure(msg)
-            | ViewUpdateFailure::PinNotSet(msg)
-            | ViewUpdateFailure::PinPolicyViolation(msg) => msg,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ViewUpdateSuccess {
-    /// Success that requires the window to close
-    CloseWindow,
-    /// Success that requires the window to stay open
-    KeepWindowOpen(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle((String, String)),
     SetDevices(Vec<Device>),
@@ -160,17 +132,48 @@ pub enum ViewUpdate {
     UsbNeedsPin { attempts_left: Option<u32> },
     UsbNeedsUserVerification { attempts_left: Option<u32> },
     UsbNeedsUserPresence,
+    UsbPinNotSet { error: Option<PinNotSetError> },
 
     NfcNeedsPin { attempts_left: Option<u32> },
     NfcNeedsUserVerification { attempts_left: Option<u32> },
+    NfcPinNotSet { error: Option<PinNotSetError> },
 
     HybridNeedsQrCode(String),
     HybridConnecting,
     HybridConnected,
 
-    Completed(ViewUpdateSuccess),
+    Completed,
     Cancelled,
-    Failed(ViewUpdateFailure),
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PinNotSetError {
+    /// PIN too short
+    PinTooShort,
+    /// PIN too long
+    PinTooLong,
+    /// PIN violates PinPolicy
+    PinPolicyViolation,
+}
+
+impl PinNotSetError {
+    pub fn to_string(&self) -> String {
+        match self {
+            PinNotSetError::PinTooShort => String::from("Pin too short"),
+            PinNotSetError::PinTooLong => String::from("Pin too long"),
+            PinNotSetError::PinPolicyViolation => String::from("Pin policy violation"),
+        }
+    }
+
+    pub fn from_string(error: &str) -> Option<PinNotSetError> {
+        match error {
+            "Pin too short" => Some(PinNotSetError::PinTooShort),
+            "Pin too long" => Some(PinNotSetError::PinTooLong),
+            "Pin policy violation" => Some(PinNotSetError::PinPolicyViolation),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -220,6 +223,11 @@ pub enum UsbState {
         attempts_left: Option<u32>,
     },
 
+    /// The device needs the PIN to be entered.
+    PinNotSet {
+        error: Option<PinNotSetError>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification {
         attempts_left: Option<u32>,
@@ -258,6 +266,9 @@ pub enum NfcState {
 
     /// The device needs the PIN to be entered.
     NeedsPin { attempts_left: Option<u32> },
+
+    /// The device needs the PIN to be entered.
+    PinNotSet { error: Option<PinNotSetError> },
 
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
@@ -299,10 +310,6 @@ pub enum Error {
     /// Note that this is different than exhausting the PIN count that fully
     /// locks out the device.
     PinAttemptsExhausted,
-    /// The RP requires user verification, but the device has no PIN/Biometrics set.
-    PinNotSet,
-    /// The device declined the entered PIN, as it violates the PIN policy (e.g. PIN too short)
-    PinPolicyViolation,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -314,8 +321,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
-            Self::PinNotSet => f.write_str("PinNotSet"),
-            Self::PinPolicyViolation => f.write_str("PinPolicyViolation"),
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),

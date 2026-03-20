@@ -49,7 +49,6 @@ impl HybridHandler for InternalHybridHandler {
                 CredentialRequest::GetPublicKeyCredentialRequest(_) => {
                     QrCodeOperationHint::GetAssertionRequest
                 }
-                CredentialRequest::SetDevicePinRequest(_) => unimplemented!(),
             };
             let mut device = CableQrCodeDevice::new_transient(hint);
             let qr_code = device.qr_code.to_string();
@@ -124,7 +123,6 @@ impl HybridHandler for InternalHybridHandler {
                                 }
                             };
                         }
-                        CredentialRequest::SetDevicePinRequest(_) => unimplemented!(),
                     }
                 };
                 let terminal_state = match response {

@@ -5,17 +5,17 @@ use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_lite::Stream;
 use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
-    pin::PinManagement,
+    pin::PinNotSetReason,
     proto::CtapError,
     transport::{nfc::device::NfcDevice, Channel, Device},
-    webauthn::{Error as WebAuthnError, PlatformError, WebAuthn},
+    webauthn::{Error as WebAuthnError, WebAuthn},
     UvUpdate,
 };
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, Error};
+use credentialsd_common::model::{Credential, Error, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -115,6 +115,9 @@ impl InProcessNfcHandler {
                     attempts_left,
                     pin_tx,
                 }),
+                Ok(NfcUvMessage::PinNotSet { reason, pin_tx }) => {
+                    Ok(NfcStateInternal::PinNotSet { reason, pin_tx })
+                }
                 Ok(NfcUvMessage::NeedsUserVerification { attempts_left }) => {
                     Ok(NfcStateInternal::NeedsUserVerification { attempts_left })
                 }
@@ -142,9 +145,6 @@ impl InProcessNfcHandler {
                         }
                     }
                 },
-                Ok(NfcUvMessage::SetPinSuccess) => Ok(NfcStateInternal::Completed(
-                    CredentialResponse::SetDevicePinSuccessRespone,
-                )),
                 Err(err) => Err(err),
             },
             None => Err(Error::Internal("NFC UV handler channel closed".to_string())),
@@ -178,6 +178,7 @@ impl InProcessNfcHandler {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
                 NfcStateInternal::NeedsPin { .. }
+                | NfcStateInternal::PinNotSet { .. }
                 | NfcStateInternal::NeedsUserVerification { .. } => {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
@@ -227,10 +228,6 @@ async fn handle_events(
                                 NfcUvMessage::ReceivedCredentials(Box::new(response.into()))
                             })
                     }
-                    CredentialRequest::SetDevicePinRequest(new_pin) => channel
-                        .change_pin(new_pin.to_string(), Duration::from_secs(300))
-                        .await
-                        .map(|_| NfcUvMessage::SetPinSuccess),
                     CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
                         .webauthn_get_assertion(get_cred_request)
                         .await
@@ -260,10 +257,6 @@ async fn handle_events(
             }
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                WebAuthnError::Ctap(CtapError::PINNotSet) => Error::PinNotSet,
-                WebAuthnError::Platform(PlatformError::PinTooShort)
-                | WebAuthnError::Platform(PlatformError::PinTooLong)
-                | WebAuthnError::Ctap(CtapError::PINPolicyViolation) => Error::PinPolicyViolation,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,
@@ -322,6 +315,12 @@ pub(super) enum NfcStateInternal {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be set.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
 
@@ -360,6 +359,12 @@ pub enum NfcState {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be set.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
     // TODO: implement cancellation
@@ -393,6 +398,9 @@ impl From<NfcStateInternal> for NfcState {
                 attempts_left,
                 pin_tx,
             },
+            NfcStateInternal::PinNotSet { reason, pin_tx } => {
+                NfcState::PinNotSet { reason, pin_tx }
+            }
             NfcStateInternal::NeedsUserVerification { attempts_left } => {
                 NfcState::NeedsUserVerification { attempts_left }
             }
@@ -451,6 +459,15 @@ impl From<&NfcState> for credentialsd_common::model::NfcState {
                     attempts_left: *attempts_left,
                 }
             }
+            NfcState::PinNotSet { reason, .. } => {
+                let error = match reason {
+                    PinNotSetReason::PinNotSet => None,
+                    PinNotSetReason::PinTooShort => Some(PinNotSetError::PinTooShort),
+                    PinNotSetReason::PinTooLong => Some(PinNotSetError::PinTooLong),
+                    PinNotSetReason::PinPolicyViolation => Some(PinNotSetError::PinPolicyViolation),
+                };
+                credentialsd_common::model::NfcState::PinNotSet { error }
+            }
             NfcState::NeedsUserVerification { attempts_left } => {
                 credentialsd_common::model::NfcState::NeedsUserVerification {
                     attempts_left: *attempts_left,
@@ -504,6 +521,25 @@ async fn handle_nfc_updates(
                     None => tracing::debug!("Pin channel closed before receiving pin from client."),
                 }
             }
+            UvUpdate::PinNotSet(pin_update) => {
+                let (pin_tx, mut pin_rx) = mpsc::channel(1);
+                if let Err(err) = signal_tx
+                    .send(Ok(NfcUvMessage::PinNotSet {
+                        pin_tx,
+                        reason: pin_update.reason,
+                    }))
+                    .await
+                {
+                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                }
+                match pin_rx.recv().await {
+                    Some(pin) => match pin_update.set_pin(&pin) {
+                        Ok(()) => {}
+                        Err(err) => tracing::error!("Error sending pin to device: {:?}", err),
+                    },
+                    None => tracing::debug!("Pin channel closed before receiving pin from client."),
+                }
+            }
             UvUpdate::PresenceRequired => {
                 tracing::debug!("Authenticator requested user presence, but that makes no sense for NFC. Skipping");
             }
@@ -518,9 +554,12 @@ enum NfcUvMessage {
         attempts_left: Option<u32>,
         pin_tx: mpsc::Sender<String>,
     },
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
     NeedsUserVerification {
         attempts_left: Option<u32>,
     },
     ReceivedCredentials(Box<AuthenticatorResponse>),
-    SetPinSuccess,
 }
