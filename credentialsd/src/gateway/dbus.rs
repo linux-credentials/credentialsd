@@ -196,7 +196,6 @@ impl CredentialPortalGateway {
         &self,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
-        portal_request_handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
@@ -223,7 +222,6 @@ impl CredentialPortalGateway {
             ?context,
             ?request,
             ?parent_window,
-            ?portal_request_handle,
             "Received request for creating credential"
         );
 
@@ -243,7 +241,6 @@ impl CredentialPortalGateway {
         &self,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
-        portal_request_handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
@@ -270,7 +267,6 @@ impl CredentialPortalGateway {
             ?context,
             ?request,
             ?parent_window,
-            ?portal_request_handle,
             "Received request for retrieving credential"
         );
 
