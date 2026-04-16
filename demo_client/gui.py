@@ -356,7 +356,16 @@ def create_passkey(
     }
 
     unique_name = interface.bus.unique_name[1:].replace(".", "_")
-    object_path = f"/org/freedesktop/portal/request/{unique_name}/CREATE_REQUEST"
+    token = secrets.token_hex(16)
+    object_path = f"/org/freedesktop/portal/request/{unique_name}/{token}"
+    def message_handler(msg: Message) -> bool:
+        if msg.path != object_path:
+            return False
+
+        print(msg.message_type, msg.body, msg.error_name)
+        return True
+    interface.bus.add_message_handler(message_handler)
+
     rsp = interface.call_create_credential_sync(
         object_path, window_handle, APP_ID, APP_NAME, origin, top_origin, req, {}
     )
@@ -412,6 +421,18 @@ def get_passkey(
 
     unique_name = interface.bus.unique_name[1:].replace(".", "_")
     object_path = f"/org/freedesktop/portal/request/{unique_name}/GET_REQUEST"
+    def message_handler(msg: Message) -> bool:
+        conn_name = bus.unique_name[1:].replace(".", "_")
+        expected = f"/org/freedesktop/portal/desktop/request/{conn_name}/{token}"
+        if msg.path != expected:
+            return False
+
+        print(msg.message_type, msg.body, msg.error_name)
+        bus.disconnect()
+        return True
+
+    bus.add_message_handler(message_handler)
+
     print(window_handle)
     rsp = interface.call_get_credential_sync(
         object_path, window_handle, APP_ID, APP_NAME, origin, top_origin, req, {}
@@ -455,12 +476,13 @@ def connect_to_bus():
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(
-        "xyz.iinuwa.credentialsd.Credentials",
+        "org.freedesktop.portal.Desktop",
         "/org/freedesktop/portal/desktop",
         introspection,
     )
+    bus.
     INTERFACE = proxy_object.get_interface(
-        "org.freedesktop.handler.portal.experimental.Credential"
+        "org.freedesktop.portal.desktop.CredentialsX"
     )
 
 
