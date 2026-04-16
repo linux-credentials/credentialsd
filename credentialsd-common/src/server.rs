@@ -205,8 +205,6 @@ impl TryFrom<&Value<'_>> for crate::model::Error {
 pub struct GetCredentialRequest {
     pub origin: Option<String>,
     pub is_same_origin: Option<bool>,
-    #[zvariant(rename = "type")]
-    pub r#type: String,
     #[zvariant(rename = "publicKey")]
     pub public_key: Option<GetPublicKeyCredentialRequest>,
 }

@@ -142,7 +142,7 @@ impl GatewayService {
     ) -> Result<GetCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        if request.public_key.is_some() {
             // Setup request
 
             // TODO: assert that RP ID is bound to origin:
@@ -184,7 +184,7 @@ impl GatewayService {
                 Err(WebAuthnError::NotAllowedError)
             }
         } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
+            tracing::error!("Request did not match any known credential types. Supported types: [`public_key`].");
             Err(WebAuthnError::TypeError)
         }
     }
