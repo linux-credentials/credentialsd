@@ -280,7 +280,7 @@ async fn should_trust_app_id(pid: u32) -> bool {
         return false;
     };
     tracing::debug!(
-        "mount namespace:\n  ours:\t{:?}\n  theirs:\t{:?}",
+        "mount namespace:\n  ours:   {:?}\n  theirs: {:?}",
         my_mnt_ns,
         peer_mnt_ns
     );
@@ -336,7 +336,7 @@ fn check_origin_from_app(
             };
         Ok(RequestKind::Privileged { origin, top_origin })
     } else {
-        Ok(RequestKind::Unprivileged(Origin::AppId(app_id.clone())))
+        Ok(RequestKind::Unprivileged(origin))
     }
 }
 
