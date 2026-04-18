@@ -536,7 +536,7 @@ async def connect_to_bus():
 
     service_name = "org.freedesktop.portal.Desktop"
     path = "/org/freedesktop/portal/desktop"
-    interface = "org.freedesktop.portal.CredentialsX"
+    interface = "org.freedesktop.portal.experimental.Credential"
     proxy_object = bus.get_proxy_object(
         service_name,
         path,
