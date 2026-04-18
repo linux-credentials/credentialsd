@@ -194,7 +194,7 @@ impl GatewayService {
             conditional_create: false,
             conditional_get: false,
             hybrid_transport: true,
-            passkey_platform_authenticator: false,
+            passkey_platform_authenticator: true,
             user_verifying_platform_authenticator: false,
             related_origins: false,
             signal_all_accepted_credentials: false,

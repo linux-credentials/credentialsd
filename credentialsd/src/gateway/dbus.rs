@@ -6,7 +6,7 @@ use zbus::{
     fdo, interface,
     message::Header,
     names::{BusName, UniqueName},
-    zvariant::{ObjectPath, Optional, OwnedValue, Type, Value},
+    zvariant::{Optional, OwnedValue, Type, Value},
     Connection, DBusError,
 };
 
@@ -278,15 +278,6 @@ impl CredentialPortalGateway {
             .await
             .map_err(Error::from);
         response.into()
-    }
-
-    async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
-        let capabilities = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_get_client_capabilities();
-        Ok(capabilities)
     }
 }
 
