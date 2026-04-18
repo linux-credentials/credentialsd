@@ -447,39 +447,26 @@ async def create_passkey(
     # pprint(options)
     print()
 
-    req_json = json.dumps(options)
-    req = {
-        "type": Variant("s", "publicKey"),
-        "origin": Variant("s", origin),
-        "is_same_origin": Variant("b", is_same_origin),
-        "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
-    }
-
     request_event = create_portal_request_message_handler(interface.bus)
 
+    # Construct request
+    cred_type = "publicKey"
+    req_json = json.dumps(options)
+    req = {
+        "handle_token": Variant("s", request_event.token),
+        "origin": Variant("s", origin),
+        "public_key": Variant("s", req_json),
+    }
+    if top_origin != origin:
+        req["top_origin"] = Variant("s", top_origin)
+
     print("Calling D-Bus")
-    rsp = await interface.call_create_credential(
-        window_handle,
-        origin,
-        top_origin,
-        req,
-        {"handle_token": Variant("s", request_event.token)},
-    )
+    rsp = await interface.call_create_credential(window_handle, cred_type, req)
     print(rsp)
     print("waiting for response")
     result = await request_event.wait()
 
     print("Received response")
-    # pprint(rsp)
-    # [code, value] = rsp
-    # if code == 0:
-    #     result = value
-    # elif code == 1:
-    #     raise Exception("Portal request cancelled")
-    # elif code == 2 and "error" in value:
-    #     raise Exception(f"Portal returned an error: {value['error'].value}")
-    # else:
-    #     raise Exception("Portal returned an unknown error")
 
     if result["type"].value != "public-key":
         raise Exception(
@@ -510,23 +497,19 @@ async def get_passkey(
     # pprint(options)
     print()
 
-    req_json = json.dumps(options)
-    req = {
-        "type": Variant("s", "publicKey"),
-        "origin": Variant("s", origin),
-        "is_same_origin": Variant("b", is_same_origin),
-        "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
-    }
-
     request_event = create_portal_request_message_handler(interface.bus)
 
-    _ = await interface.call_get_credential(
-        window_handle,
-        origin,
-        top_origin,
-        req,
-        {"handle_token": Variant("s", request_event.token)},
-    )
+    # Construct request
+    req_json = json.dumps(options)
+    req = {
+        "handle_token": Variant("s", request_event.token),
+        "origin": Variant("s", origin),
+        "public_key": Variant("s", req_json),
+    }
+    if top_origin != origin:
+        req["top_origin"] = Variant("s", top_origin)
+
+    _ = await interface.call_get_credential(window_handle, req)
     result = await request_event.wait()
     print("Received response")
     # pprint(rsp)

@@ -1,20 +1,20 @@
-use std::{collections::HashMap, os::fd::AsRawFd, sync::Arc};
+use std::{collections::HashMap, fmt::Display, os::fd::AsRawFd, sync::Arc};
 
-use serde::{ser::SerializeTuple, Serialize};
+use serde::{ser::SerializeTuple, Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     fdo, interface,
     message::Header,
     names::{BusName, UniqueName},
-    zvariant::{Optional, OwnedValue, Type, Value},
+    zvariant::{DeserializeDict, Optional, Type, Value},
     Connection, DBusError,
 };
 
 use credentialsd_common::{
     model::{GetClientCapabilitiesResponse, RequestingApplication, WebAuthnError},
     server::{
-        CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
-        GetCredentialResponse, WindowHandle,
+        CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
+        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WindowHandle,
     },
 };
 
@@ -199,18 +199,21 @@ impl CredentialPortalGateway {
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
-        claimed_origin: String,
-        claimed_top_origin: Optional<String>,
-        request: CreateCredentialRequest,
-        _options: HashMap<String, OwnedValue>,
+        cred_type: CredentialType,
+        options: CreateCredentialPortalOptions,
     ) -> PortalResult<CreateCredentialResponse, Error> {
+        let CreateCredentialPortalOptions {
+            origin,
+            top_origin,
+            public_key: request_json,
+        } = options;
         let app_validation_result = validate_app_details(
             connection,
             &header,
             claimed_app_id,
             claimed_app_display_name.into(),
-            claimed_origin,
-            claimed_top_origin.into(),
+            origin.clone(),
+            top_origin.clone().into(),
         )
         .await;
         let context = match app_validation_result {
@@ -220,10 +223,17 @@ impl CredentialPortalGateway {
 
         tracing::debug!(
             ?context,
-            ?request,
+            ?request_json,
             ?parent_window,
             "Received request for creating credential"
         );
+
+        let request = CreateCredentialRequest {
+            origin: Some(origin.clone()),
+            is_same_origin: Some(top_origin.is_none()),
+            r#type: cred_type.to_string(),
+            public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
+        };
 
         let response = self
             .gateway_service
@@ -244,18 +254,20 @@ impl CredentialPortalGateway {
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
-        claimed_origin: String,
-        claimed_top_origin: Optional<String>,
-        request: GetCredentialRequest,
-        _options: HashMap<String, OwnedValue>,
+        options: GetCredentialPortalOptions,
     ) -> PortalResult<GetCredentialResponse, Error> {
+        let GetCredentialPortalOptions {
+            origin,
+            top_origin,
+            public_key: request_json,
+        } = options;
         let app_validation_result = validate_app_details(
             connection,
             &header,
             claimed_app_id,
             claimed_app_display_name.into(),
-            claimed_origin,
-            claimed_top_origin.into(),
+            origin.clone(),
+            top_origin.clone().into(),
         )
         .await;
         let context = match app_validation_result {
@@ -265,10 +277,16 @@ impl CredentialPortalGateway {
 
         tracing::debug!(
             ?context,
-            ?request,
+            %request_json,
             ?parent_window,
             "Received request for retrieving credential"
         );
+
+        let request = GetCredentialRequest {
+            origin: Some(origin),
+            is_same_origin: Some(top_origin.is_none()),
+            public_key: Some(GetPublicKeyCredentialRequest { request_json }),
+        };
 
         let response = self
             .gateway_service
@@ -279,6 +297,53 @@ impl CredentialPortalGateway {
             .map_err(Error::from);
         response.into()
     }
+}
+
+#[derive(Debug, Deserialize, Type)]
+#[zvariant(signature = "s")]
+enum CredentialType {
+    #[serde(rename = "publicKey")]
+    PublicKey,
+}
+
+impl Display for CredentialType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CredentialType::PublicKey => f.write_str("publicKey"),
+        }
+    }
+}
+
+#[derive(Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+struct CreateCredentialPortalOptions {
+    /// The origin of the request. Must be a valid HTTPS origin.
+    origin: String,
+
+    /// The top-level origin of the client window for cross-origin requests.
+    /// If omitted, denotes a same-origin request.
+    top_origin: Option<String>,
+
+    /// A string of JSON that corresponds to the WebAuthn
+    /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
+    /// type.
+    public_key: String,
+}
+
+#[derive(Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+struct GetCredentialPortalOptions {
+    /// The origin of the request. Must be a valid HTTPS origin.
+    origin: String,
+
+    /// The top-level origin of the client window for cross-origin requests.
+    /// If omitted, denotes a same-origin request.
+    top_origin: Option<String>,
+
+    /// A string of JSON that corresponds to the WebAuthn
+    /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
+    /// type.
+    public_key: String,
 }
 
 #[allow(clippy::enum_variant_names)]
