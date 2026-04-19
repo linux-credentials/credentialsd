@@ -404,31 +404,6 @@ denoted by `type: "publicKey"`:
 - `TypeError`: An invalid request is made.
 - `NotAllowedError`: catch-all error.
 
-## `GetClientCapabilities() -> GetClientCapabilitiesResponse`
-
-Analogous to WebAuthn Level 3's [`getClientCapabilities()`][def-getClientCapabilities] method.
-
-### Response
-
-`GetClientCapabilitiesResponse` is a set of boolean flags indicating what features this client supports.
-
-    GetClientCapabilitiesResponse[a{sb}] {
-        conditional_create: bool,
-        conditional_get: bool,
-        hybrid_transport: bool,
-        passkey_platform_authenticator: bool,
-        user_verifying_platform_authenticator: bool,
-        related_origins: bool,
-        signal_all_accepted_credentials: bool,
-        signal_current_user_details: bool,
-        signal_unknown_credential: bool,
-    }
-
-See the WebAuthn spec for meanings of the [client capability keys][def-client-capabilitities].
-
-[def-client-capabilities]: https://www.w3.org/TR/webauthn-3/#enumdef-clientcapability
-[def-getClientCapabilities]: https://w3c.github.io/webauthn/#sctn-getClientCapabilities
-
 # Flow Control API
 
 The Flow Control API is used by the UI to pass user interactions through the
