@@ -199,14 +199,23 @@ impl CredentialPortalGateway {
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
+        origin: String,
         cred_type: CredentialType,
         options: CreateCredentialPortalOptions,
     ) -> PortalResult<CreateCredentialResponse, Error> {
         let CreateCredentialPortalOptions {
-            origin,
             top_origin,
-            public_key: request_json,
+            public_key,
         } = options;
+
+        let request_json = match (&cred_type, public_key) {
+            (CredentialType::PublicKey, Some(json)) => json,
+            (CredentialType::PublicKey, None) => {
+                tracing::warn!("Client did not send `public_key` request with type `publicKey`");
+                return Err(Error::TypeError).into();
+            }
+        };
+
         let app_validation_result = validate_app_details(
             connection,
             &header,
@@ -254,12 +263,12 @@ impl CredentialPortalGateway {
         parent_window: Optional<WindowHandle>,
         claimed_app_id: String,
         claimed_app_display_name: Optional<String>,
+        origin: String,
         options: GetCredentialPortalOptions,
     ) -> PortalResult<GetCredentialResponse, Error> {
         let GetCredentialPortalOptions {
-            origin,
             top_origin,
-            public_key: request_json,
+            public_key,
         } = options;
         let app_validation_result = validate_app_details(
             connection,
@@ -270,6 +279,12 @@ impl CredentialPortalGateway {
             top_origin.clone().into(),
         )
         .await;
+
+        let Some(request_json) = public_key else {
+            tracing::warn!("Client did not send parameters for any valid credential type.");
+            return Err(Error::TypeError).into();
+        };
+
         let context = match app_validation_result {
             Ok(context) => context,
             Err(err) => return Err(err).into(),
@@ -317,9 +332,6 @@ impl Display for CredentialType {
 #[derive(Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 struct CreateCredentialPortalOptions {
-    /// The origin of the request. Must be a valid HTTPS origin.
-    origin: String,
-
     /// The top-level origin of the client window for cross-origin requests.
     /// If omitted, denotes a same-origin request.
     top_origin: Option<String>,
@@ -327,15 +339,12 @@ struct CreateCredentialPortalOptions {
     /// A string of JSON that corresponds to the WebAuthn
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
-    public_key: String,
+    public_key: Option<String>,
 }
 
 #[derive(Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 struct GetCredentialPortalOptions {
-    /// The origin of the request. Must be a valid HTTPS origin.
-    origin: String,
-
     /// The top-level origin of the client window for cross-origin requests.
     /// If omitted, denotes a same-origin request.
     top_origin: Option<String>,
@@ -343,7 +352,7 @@ struct GetCredentialPortalOptions {
     /// A string of JSON that corresponds to the WebAuthn
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
-    public_key: String,
+    public_key: Option<String>,
 }
 
 #[allow(clippy::enum_variant_names)]

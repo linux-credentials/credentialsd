@@ -454,14 +454,13 @@ async def create_passkey(
     req_json = json.dumps(options)
     req = {
         "handle_token": Variant("s", request_event.token),
-        "origin": Variant("s", origin),
         "public_key": Variant("s", req_json),
     }
     if top_origin != origin:
         req["top_origin"] = Variant("s", top_origin)
 
     print("Calling D-Bus")
-    rsp = await interface.call_create_credential(window_handle, cred_type, req)
+    rsp = await interface.call_create_credential(window_handle, origin, cred_type, req)
     print(rsp)
     print("waiting for response")
     result = await request_event.wait()
@@ -499,17 +498,17 @@ async def get_passkey(
 
     request_event = create_portal_request_message_handler(interface.bus)
 
+    print(request_event.token)
     # Construct request
     req_json = json.dumps(options)
-    req = {
+    portal_options = {
         "handle_token": Variant("s", request_event.token),
-        "origin": Variant("s", origin),
         "public_key": Variant("s", req_json),
     }
     if top_origin != origin:
-        req["top_origin"] = Variant("s", top_origin)
+        portal_options["top_origin"] = Variant("s", top_origin)
 
-    _ = await interface.call_get_credential(window_handle, req)
+    _ = await interface.call_get_credential(window_handle, origin, portal_options)
     result = await request_event.wait()
     print("Received response")
     # pprint(rsp)
