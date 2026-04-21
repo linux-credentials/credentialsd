@@ -109,7 +109,7 @@ this API takes:
 ```
 [a{sv}] {
     IN origin s = "https://example.com",
-    IN type = "password"
+    IN type = "password",
     options a{sv} = {
         top_origin: Variant("https://example.com"), // topOrigin is changed to top_origin
         password: Variant(true),
@@ -199,15 +199,15 @@ for what kind of credential the client would like to create.
 ```
 CreateCredentialRequest(
     IN parent_window s,
-    IN app_id s,
-    IN app_display_name s,
     IN origin s,
     IN type CredentialType,
     IN options a{sv} {
         handle_token: s
         top_origin: s
         <type_specific_fields>
-    }
+    },
+    IN app_id s,
+    IN app_display_name s
 )
 ```
 
@@ -253,15 +253,15 @@ WebAuthn
 type.
 
     CreatePublicKeyCredentialRequest: CreateCredentialRequest (
-        IN parent_window s
-        IN app_id s,
-        IN app_display_name s,
-        IN origin s
-        IN type s = "publicKey"
+        IN parent_window s,
+        IN origin s,
+        IN type s = "publicKey",
         options a{sv} {
             <other optional fields>,
             public_key: s  // WebAuthn credential attestation JSON
-        }
+        },
+        IN app_id s,
+        IN app_display_name s
     )
 
 ### Response
@@ -319,15 +319,15 @@ credentials the client will accept.
 
 ```
 GetCredentialRequest (
-    IN parent_window s
-    IN app_id s,
-    IN app_display_name s,
-    IN origin s
+    IN parent_window s,
+    IN origin s,
     IN options a{sv} {
         top_origin: s
         <type_specific_fields>
         public_key: s
-    }
+    },
+    IN app_id s,
+    IN app_display_name s
 )
 ```
 

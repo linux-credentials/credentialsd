@@ -197,11 +197,11 @@ impl CredentialPortalGateway {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         parent_window: Optional<WindowHandle>,
-        claimed_app_id: String,
-        claimed_app_display_name: Optional<String>,
         origin: String,
         cred_type: CredentialType,
         options: CreateCredentialPortalOptions,
+        claimed_app_id: String,
+        claimed_app_display_name: Optional<String>,
     ) -> PortalResult<CreateCredentialResponse, Error> {
         let CreateCredentialPortalOptions {
             top_origin,
@@ -261,10 +261,10 @@ impl CredentialPortalGateway {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         parent_window: Optional<WindowHandle>,
-        claimed_app_id: String,
-        claimed_app_display_name: Optional<String>,
         origin: String,
         options: GetCredentialPortalOptions,
+        claimed_app_id: String,
+        claimed_app_display_name: Optional<String>,
     ) -> PortalResult<GetCredentialResponse, Error> {
         let GetCredentialPortalOptions {
             top_origin,
