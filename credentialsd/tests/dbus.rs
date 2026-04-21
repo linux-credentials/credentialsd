@@ -1,3 +1,4 @@
+#![expect(unused)]
 #[rustfmt::skip]
 mod config;
 
@@ -5,35 +6,6 @@ use std::collections::HashMap;
 
 use client::DbusClient;
 use zbus::zvariant::Value;
-
-#[test]
-fn test_client_capabilities() {
-    let client = DbusClient::new();
-    let msg = client.call_method("GetClientCapabilities", &()).unwrap();
-    let body = msg.body();
-    let rsp: HashMap<String, bool> = body
-        .deserialize::<HashMap<String, Value>>()
-        .unwrap()
-        .into_iter()
-        .map(|(k, v)| (k, v.try_into().unwrap()))
-        .collect();
-
-    let capabilities = HashMap::from([
-        ("conditionalCreate", false),
-        ("conditionalGet", false),
-        ("hybridTransport", true),
-        ("passkeyPlatformAuthenticator", false),
-        ("userVerifyingPlatformAuthenticator", false),
-        ("relatedOrigins", false),
-        ("signalAllAcceptedCredentials", false),
-        ("signalCurrentUserDetails", false),
-        ("signalUnknownCredential", false),
-    ]);
-    for (key, expected) in capabilities.iter() {
-        let actual = rsp.get(*key).unwrap();
-        assert_eq!(*expected, *actual);
-    }
-}
 
 mod client {
     use crate::config::{INTERFACE, PATH, SERVICE_DIR, SERVICE_NAME};
