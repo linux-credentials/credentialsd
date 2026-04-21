@@ -202,7 +202,7 @@ CreateCredentialRequest(
     IN origin s,
     IN type CredentialType,
     IN options a{sv} {
-        handle_token: s
+        activation_token: s
         top_origin: s
         <type_specific_fields>
     },
@@ -322,6 +322,7 @@ GetCredentialRequest (
     IN parent_window s,
     IN origin s,
     IN options a{sv} {
+        activation_token: s
         top_origin: s
         <type_specific_fields>
         public_key: s

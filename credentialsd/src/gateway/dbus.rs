@@ -204,6 +204,7 @@ impl CredentialPortalGateway {
         claimed_app_display_name: Optional<String>,
     ) -> PortalResult<CreateCredentialResponse, Error> {
         let CreateCredentialPortalOptions {
+            activation_token: _,
             top_origin,
             public_key,
         } = options;
@@ -267,6 +268,7 @@ impl CredentialPortalGateway {
         claimed_app_display_name: Optional<String>,
     ) -> PortalResult<GetCredentialResponse, Error> {
         let GetCredentialPortalOptions {
+            activation_token: _,
             top_origin,
             public_key,
         } = options;
@@ -332,6 +334,9 @@ impl Display for CredentialType {
 #[derive(Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 struct CreateCredentialPortalOptions {
+    /// A token that can be used to activate the UI window.
+    activation_token: Option<String>,
+
     /// The top-level origin of the client window for cross-origin requests.
     /// If omitted, denotes a same-origin request.
     top_origin: Option<String>,
@@ -345,6 +350,9 @@ struct CreateCredentialPortalOptions {
 #[derive(Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 struct GetCredentialPortalOptions {
+    /// A token that can be used to activate the UI window.
+    activation_token: Option<String>,
+
     /// The top-level origin of the client window for cross-origin requests.
     /// If omitted, denotes a same-origin request.
     top_origin: Option<String>,
