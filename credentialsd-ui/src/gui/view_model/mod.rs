@@ -61,6 +61,7 @@ impl<F: FlowController + Send> ViewModel<F> {
         } = request.requesting_app;
 
         let app_name: Option<String> = app_name.into();
+        let devices = request.initial_devices;
         Self {
             flow_controller,
             rx_event,
@@ -72,7 +73,7 @@ impl<F: FlowController + Send> ViewModel<F> {
             app_pid: pid,
             title: String::default(),
             subtitle: String::default(),
-            devices: Vec::new(),
+            devices,
             selected_device: None,
             hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
@@ -125,14 +126,7 @@ impl<F: FlowController + Send> ViewModel<F> {
             .unwrap();
     }
 
-    async fn update_devices(&mut self) {
-        let devices = self
-            .flow_controller
-            .lock()
-            .await
-            .get_available_public_key_devices()
-            .await
-            .unwrap();
+    async fn update_devices(&mut self, devices: Vec<Device>) {
         self.devices = devices;
         self.tx_update
             .send(ViewUpdate::SetDevices(self.devices.to_owned()))
@@ -201,7 +195,7 @@ impl<F: FlowController + Send> ViewModel<F> {
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
-                    self.update_devices().await;
+                    self.update_devices(self.devices.clone()).await;
                 }
                 Event::View(ViewEvent::DeviceSelected(id)) => {
                     self.select_device(&id).await;
