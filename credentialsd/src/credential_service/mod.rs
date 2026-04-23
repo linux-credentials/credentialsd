@@ -3,9 +3,7 @@ pub mod nfc;
 pub mod usb;
 
 use std::{
-    error::Error,
     fmt::Debug,
-    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
@@ -20,13 +18,7 @@ use libwebauthn::{
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 
-use credentialsd_common::{
-    model::{
-        BackendRequest, Device, Error as CredentialServiceError, Operation, RequestId,
-        RequestingApplication, Transport,
-    },
-    server::{ViewRequest, WindowHandle},
-};
+use credentialsd_common::model::{Device, Error as CredentialServiceError, RequestId, Transport};
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -39,19 +31,6 @@ use self::{
 };
 
 pub use usb::UsbState;
-
-/// Used by the credential service to control the UI.
-pub trait UiController {
-    fn launch_ui(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
-
-    fn initialize(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<mpsc::Receiver<BackendRequest>, Box<dyn Error>>> + Send;
-}
 
 #[derive(Debug)]
 struct RequestContext {
@@ -404,7 +383,7 @@ mod test {
                 ]);
                 let usb_handler = InProcessUsbHandler {};
                 let nfc_handler = InProcessNfcHandler {};
-                let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
+                let (ui_server, _ui_client) = DummyUiServer::new(Vec::new());
                 let ui_server = Arc::new(ui_server);
                 let user = ui_server.clone();
                 let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
@@ -417,11 +396,12 @@ mod test {
 
                 tokio::spawn(async move { ui_server.run().await });
                 tokio::spawn(async move { flow_server.run().await });
-                cred_service
+                _ = cred_service
                     .lock()
                     .await
                     .init_request(&request, request_tx)
-                    .await;
+                    .await
+                    .unwrap();
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)
                     .await
