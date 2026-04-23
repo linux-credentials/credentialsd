@@ -290,12 +290,14 @@ async fn should_trust_app_id(pid: u32) -> bool {
     }
 
     let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{pid}/exe")).await else {
+        tracing::warn!("Cannot read executable name from procfs");
         return false;
     };
 
     // The target binaries are hard-coded to valid UTF-8, so it's acceptable to
     // lose some data here.
     let Some(exe_path) = exe_path.to_str() else {
+        tracing::warn!("Could not read executable path from procfs");
         return false;
     };
     tracing::debug!(?exe_path, %pid, "Found executable path:");
@@ -305,7 +307,13 @@ async fn should_trust_app_id(pid: u32) -> bool {
     } else {
         vec!["/usr/bin/xdg-desktop-portal".to_string()]
     };
-    trusted_callers.as_slice().contains(&exe_path.to_string())
+    tracing::debug!(?trusted_callers, %exe_path, "Testing whether request is from trusted caller");
+    if !trusted_callers.as_slice().contains(&exe_path.to_string()) {
+        tracing::warn!(%exe_path, "Request received from untrusted caller");
+        return false;
+    } else {
+        return true;
+    }
 }
 
 fn check_origin_from_app(
