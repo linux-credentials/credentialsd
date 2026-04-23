@@ -416,7 +416,7 @@ mod test {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
         let origin = NavigationContext::SameOrigin("https://webauthn.io".parse().unwrap());
         let client_data_json =
-            webauthn::format_client_data_json(Operation::Create, challenge, &origin);
+            webauthn::format_client_data_json(Operation::PublicKeyCreate, challenge, &origin);
         let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
         let make_request = MakeCredentialRequest {
             hash: client_data_hash,

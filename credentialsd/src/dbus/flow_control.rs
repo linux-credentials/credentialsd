@@ -6,8 +6,8 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackendRequest, BackgroundEvent, Device, Error as CredentialServiceError, Operation, RequestId,
-    RequestingApplication, WebAuthnError,
+    BackendRequest, BackgroundEvent, Device, Error as CredentialServiceError, Operation,
+    PortalBackendOptions, RequestId, RequestingApplication, WebAuthnError,
 };
 use credentialsd_common::server::{ViewRequest, WindowHandle};
 use futures_lite::{Stream, StreamExt};
@@ -100,12 +100,26 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     let (request_tx, request_rx) = oneshot::channel();
     let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
     let operation = match &msg {
-        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
-        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
+        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::PublicKeyCreate,
+        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::PublicKeyGet,
     };
     let rp_id = match &msg {
         CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
         CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
+    };
+
+    // TODO: pass origin to this method so we can do this correctly.
+    let origin = match &msg {
+        CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.origin.clone(),
+        CredentialRequest::GetPublicKeyCredentialRequest(r) => {
+            format!("https://{}", r.relying_party_id.clone())
+        }
+    };
+
+    // TODO: pass top_origin to this method so we can do this correctly.
+    let top_origin = match &msg {
+        CredentialRequest::CreatePublicKeyCredentialRequest(r) => None,
+        CredentialRequest::GetPublicKeyCredentialRequest(r) => None,
     };
     let initial_devices = svc
         .lock()
@@ -113,24 +127,32 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .get_available_public_key_devices()
         .await
         .unwrap_or_default();
-    let view_request = ViewRequest {
-        operation,
-        id: request_id,
-        rp_id,
-        initial_devices,
-        requesting_app,
-        window_handle: window_handle.into(),
-    };
 
-    /*
-    let launch_ui_response = self
-        .ui_control_client
-        .launch_ui(view_request)
+    let RequestingApplication {
+        path_or_app_id,
+        name: app_name,
+        pid: app_pid,
+    } = requesting_app;
+    let app_name = Option::from(app_name).unwrap_or_else(|| "TODO: Require app name".to_string());
+    let flow = match ui_control_client
+        .initialize(
+            window_handle,
+            origin,
+            operation,
+            request_id,
+            initial_devices,
+            path_or_app_id.clone(),
+            app_name,
+            app_pid,
+            // TODO: Make path and app ID separate.
+            path_or_app_id,
+            PortalBackendOptions {
+                top_origin: top_origin.into(),
+                rp_id: Some(rp_id).into(),
+            },
+        )
         .await
-        .map_err(|err| err.to_string());
-    */
-
-    let flow = match ui_control_client.initialize(view_request).await {
+    {
         Ok(rx) => rx,
         Err(err) => {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");

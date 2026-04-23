@@ -78,11 +78,11 @@ impl ViewModel {
 
     async fn update_title(&mut self) {
         let mut title = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Create a passkey for %s1")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Use a passkey for %s1")
             }
@@ -91,14 +91,14 @@ impl ViewModel {
         title = title.replace("%s1", &self.rp_id);
 
         let mut subtitle = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application
                 // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
                 gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application

@@ -40,8 +40,17 @@ pub struct Device {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum Operation {
-    Create,
-    Get,
+    PublicKeyCreate,
+    PublicKeyGet,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct PortalBackendOptions {
+    /// Top-level origin of the request if different from the origin.
+    pub top_origin: Optional<String>,
+
+    /// RP ID of the request. Required for WebAuthn/PublicKey requests.
+    pub rp_id: Optional<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]

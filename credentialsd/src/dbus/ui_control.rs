@@ -9,13 +9,13 @@ use tokio::sync::{
 };
 use zbus::{
     fdo, proxy,
-    zvariant::{ObjectPath, OwnedObjectPath},
+    zvariant::{ObjectPath, Optional, OwnedObjectPath},
     Connection,
 };
 
 use credentialsd_common::{
-    model::{BackendRequest, BackgroundEvent, RequestId},
-    server::ViewRequest,
+    model::{BackendRequest, BackgroundEvent, Device, Operation, PortalBackendOptions, RequestId},
+    server::{ViewRequest, WindowHandle},
 };
 
 /// Used by the credential service to control the UI.
@@ -27,7 +27,16 @@ pub trait UiController {
 
     fn initialize(
         &self,
-        request: ViewRequest,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
     ) -> impl Future<Output = std::result::Result<Flow, Box<dyn Error>>> + Send;
 }
 
@@ -49,7 +58,19 @@ trait UiControlService {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait UiControlService2 {
-    fn initialize(&self, request: ViewRequest) -> fdo::Result<OwnedObjectPath>;
+    fn initialize(
+        &self,
+        parent_window: Optional<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
+    ) -> fdo::Result<OwnedObjectPath>;
 }
 
 #[derive(Clone, Debug)]
@@ -130,8 +151,35 @@ impl UiController for UiControlServiceClient {
             .map_err(|err| err.into())
     }
 
-    async fn initialize(&self, request: ViewRequest) -> Result<Flow, Box<dyn Error>> {
-        let path = self.proxy2().await?.initialize(request).await?;
+    async fn initialize(
+        &self,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
+    ) -> Result<Flow, Box<dyn Error>> {
+        let path = self
+            .proxy2()
+            .await?
+            .initialize(
+                parent_window.into(),
+                origin,
+                r#type,
+                request_id,
+                devices,
+                app_id,
+                app_display_name,
+                app_pid,
+                app_path,
+                options,
+            )
+            .await?;
         tracing::debug!(?path, "Path initialized");
         let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
@@ -177,7 +225,9 @@ pub mod test {
     };
 
     use credentialsd_common::{
-        client::FlowController, model::BackgroundEvent, server::ViewRequest,
+        client::FlowController,
+        model::{BackgroundEvent, Device, Operation, PortalBackendOptions, RequestId},
+        server::{ViewRequest, WindowHandle},
     };
     use futures_lite::StreamExt;
     use tokio::sync::{
@@ -208,7 +258,19 @@ pub mod test {
             Ok(())
         }
 
-        async fn initialize(&self, _request: ViewRequest) -> Result<Flow, Box<dyn Error>> {
+        async fn initialize(
+            &self,
+            _parent_window: Option<WindowHandle>,
+            _origin: String,
+            _type: Operation,
+            _request_id: RequestId,
+            _devices: Vec<Device>,
+            _app_id: String,
+            _app_display_name: String,
+            _app_pid: u32,
+            _app_path: String,
+            _options: PortalBackendOptions,
+        ) -> Result<Flow, Box<dyn Error>> {
             unimplemented!()
         }
     }

@@ -17,8 +17,11 @@ use zbus::{
 
 use credentialsd_common::{
     client::FlowController,
-    model::{BackendRequest, BackgroundEvent, Device, RequestId},
-    server::ViewRequest,
+    model::{
+        BackendRequest, BackgroundEvent, Device, Operation, PortalBackendOptions, RequestId,
+        RequestingApplication,
+    },
+    server::{ViewRequest, WindowHandle},
 };
 
 use crate::client::{DbusCredentialClient, FlowControlClient};
@@ -119,6 +122,20 @@ pub struct CredentialPortalBackend {
     pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct UiContext {
+    parent_window: WindowHandle,
+    origin: String,
+    r#type: Operation,
+    request_id: RequestId,
+    devices: Vec<Device>,
+    app_id: String,
+    app_display_name: String,
+    app_pid: u32,
+    app_path: String,
+    options: PortalBackendOptions,
+}
+
 /// These methods are called by the credential service to control the UI.
 #[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
 impl CredentialPortalBackend {
@@ -126,17 +143,38 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
-        request: ViewRequest,
+        parent_window: WindowHandle,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
     ) -> fdo::Result<ObjectPath<'_>> {
         let Some(sender) = header.sender() else {
             return Err(fdo::Error::BadAddress("Sender not found".to_string()));
         };
         let object_path = ObjectPath::from_string_unchecked(format!(
             "/org/freedesktop/portal/Credential/{}",
-            request.id
+            request_id
         ));
+        let ui_context = UiContext {
+            parent_window,
+            origin,
+            r#type,
+            request_id,
+            devices,
+            app_id,
+            app_display_name,
+            app_pid,
+            app_path,
+            options,
+        };
         let flow_object = FlowObject {
-            request,
+            ui_context,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
             ui_events_forwarder_task: None,
@@ -149,7 +187,7 @@ impl CredentialPortalBackend {
 }
 
 pub struct FlowObject {
-    request: ViewRequest,
+    ui_context: UiContext,
     pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
     pub return_address: OwnedUniqueName,
     ui_events_forwarder_task: Option<JoinHandle<()>>,
@@ -203,7 +241,18 @@ impl FlowObject {
             })?
             .to_string();
         let req = (
-            self.request.clone(),
+            ViewRequest {
+                operation: self.ui_context.r#type.clone(),
+                id: self.ui_context.request_id,
+                rp_id,
+                requesting_app: RequestingApplication {
+                    path_or_app_id: self.ui_context.app_id.clone(),
+                    name: Some(self.ui_context.app_display_name.clone()).into(),
+                    pid: self.ui_context.app_pid,
+                },
+                initial_devices: self.ui_context.devices.clone(),
+                window_handle: Some(self.ui_context.parent_window.clone()).into(),
+            },
             Arc::new(AsyncMutex::new(flow_control_client)),
         );
         if self.request_tx.send(req).await.is_err() {
