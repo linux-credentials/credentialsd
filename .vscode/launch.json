@@ -12,7 +12,7 @@
             "args": [],
             "env": {
                 "RUST_LOG": "credentialsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug",
-                "CREDSD_TRUSTED_CALLERS": "/usr/bin/python3.14",
+                "CREDSD_TRUSTED_CALLERS": "/usr/bin/python3.14,/home/isaiah/Development/portal/xdg-desktop-portal/build/src/xdg-desktop-portal",
                 "CREDSD_TRUSTED_APP_IDS": "app:xyz.iinuwa.credentialsd.DemoCredentialsUi",
             },
             "sourceLanguages": [
