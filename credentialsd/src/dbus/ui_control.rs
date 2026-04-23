@@ -45,7 +45,7 @@ trait UiControlService {
 #[proxy(
     gen_blocking = false,
     interface = "org.freedesktop.impl.portal.experimental.Credential",
-    default_service = "org.freedesktop.impl.portal.experimental.Credential",
+    default_service = "xyz.iinuwa.credentialsd.UiControl",
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait UiControlService2 {
