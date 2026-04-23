@@ -118,7 +118,7 @@ impl CredentialPortalBackend {
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
         request: ViewRequest,
-    ) -> fdo::Result<ObjectPath> {
+    ) -> fdo::Result<ObjectPath<'_>> {
         let Some(sender) = header.sender() else {
             return Err(fdo::Error::BadAddress("Sender not found".to_string()));
         };

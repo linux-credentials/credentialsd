@@ -1,9 +1,12 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::{error::Error, future::Future};
+use std::{error::Error, future::Future, sync::Arc};
 
 use futures_lite::StreamExt;
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::{
+    mpsc::{self, Receiver},
+    Mutex as AsyncMutex,
+};
 use zbus::{
     fdo, proxy,
     zvariant::{ObjectPath, OwnedObjectPath},
@@ -25,7 +28,7 @@ pub trait UiController {
     fn initialize(
         &self,
         request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<Flow<'_>, Box<dyn Error>>> + Send;
+    ) -> impl Future<Output = std::result::Result<Flow, Box<dyn Error>>> + Send;
 }
 
 #[proxy(
@@ -49,13 +52,18 @@ trait UiControlService2 {
     fn initialize(&self, request: ViewRequest) -> fdo::Result<OwnedObjectPath>;
 }
 
-pub struct Flow<'a> {
-    proxy: FlowObjectProxy<'a>,
-    pub ui_events_rx: Receiver<BackendRequest>,
+#[derive(Clone, Debug)]
+pub struct Flow {
+    proxy: Arc<FlowObjectProxy<'static>>,
+    ui_events_rx: Arc<AsyncMutex<Receiver<BackendRequest>>>,
 }
 
-impl Flow<'_> {
-    async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
+impl Flow {
+    pub async fn receive_ui_event(&self) -> Option<BackendRequest> {
+        self.ui_events_rx.lock().await.recv().await
+    }
+
+    pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
         if let Err(err) = self.proxy.notify_state_changed(event).await {
             match err {
                 fdo::Error::UnknownObject(description) => {
@@ -122,7 +130,7 @@ impl UiController for UiControlServiceClient {
             .map_err(|err| err.into())
     }
 
-    async fn initialize(&self, request: ViewRequest) -> Result<Flow<'_>, Box<dyn Error>> {
+    async fn initialize(&self, request: ViewRequest) -> Result<Flow, Box<dyn Error>> {
         let path = self.proxy2().await?.initialize(request).await?;
         tracing::debug!(?path, "Path initialized");
         let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
@@ -134,8 +142,8 @@ impl UiController for UiControlServiceClient {
         // Mark as ready to receive messages.
         flow_object.start().await?;
         Ok(Flow {
-            proxy: flow_object,
-            ui_events_rx: from_ui_rx,
+            proxy: Arc::new(flow_object),
+            ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
         })
     }
 }
@@ -197,7 +205,7 @@ pub mod test {
             Ok(())
         }
 
-        async fn initialize(&self, _request: ViewRequest) -> Result<Flow<'_>, Box<dyn Error>> {
+        async fn initialize(&self, _request: ViewRequest) -> Result<Flow, Box<dyn Error>> {
             unimplemented!()
         }
     }

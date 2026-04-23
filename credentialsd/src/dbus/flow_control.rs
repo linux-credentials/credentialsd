@@ -9,7 +9,7 @@ use credentialsd_common::model::{
     RequestingApplication, WebAuthnError,
 };
 use credentialsd_common::server::{ViewRequest, WindowHandle};
-use futures_lite::StreamExt;
+use futures_lite::{Stream, StreamExt};
 use tokio::sync::oneshot;
 use tokio::{
     sync::{
@@ -26,6 +26,7 @@ use zbus::{
 };
 
 use crate::credential_service::ManageDevice;
+use crate::dbus::ui_control::Flow;
 use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::{hybrid::HybridState, nfc::NfcState, UsbState},
@@ -128,7 +129,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .map_err(|err| err.to_string());
     */
 
-    let mut flow = match ui_control_client.initialize(view_request).await {
+    let flow = match ui_control_client.initialize(view_request).await {
         Ok(rx) => rx,
         Err(err) => {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
@@ -136,16 +137,37 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         }
     };
     tokio::spawn(async move {
-        while let Some(ui_request) = flow.ui_events_rx.recv().await {
+        while let Some(ui_request) = flow.receive_ui_event().await {
             match ui_request {
                 BackendRequest::StartHybridDiscovery => {
-                    let stream = svc.lock().await.get_hybrid_credential().await;
+                    let stream = svc
+                        .lock()
+                        .await
+                        .get_hybrid_credential()
+                        .await
+                        .map(|state| BackgroundEvent::HybridQrStateChanged(state.into()));
+                    let flow = flow.clone();
+                    forward_background_events(flow, stream);
                 }
                 BackendRequest::StartNfcDiscovery => {
-                    // let stream = self.get_nfc_credential().await;
+                    let stream = svc
+                        .lock()
+                        .await
+                        .get_nfc_credential()
+                        .await
+                        .map(|state| BackgroundEvent::NfcStateChanged(state.into()));
+                    let flow = flow.clone();
+                    forward_background_event_stream(flow, stream);
                 }
                 BackendRequest::StartUsbDiscovery => {
-                    // let stream = self.get_usb_credential().await;
+                    let stream = svc
+                        .lock()
+                        .await
+                        .get_usb_credential()
+                        .await
+                        .map(|usb_state| BackgroundEvent::UsbStateChanged(usb_state.into()));
+                    let flow = flow.clone();
+                    forward_background_events(flow, stream);
                 }
                 BackendRequest::EnterClientPin(_) => todo!(),
                 BackendRequest::SelectCredential(_) => todo!(),
@@ -159,6 +181,21 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .expect("Credential service not to drop request channel before responding.");
     let f = cred_response.map_err(|err| err.into());
     f
+}
+
+fn forward_background_events(
+    flow: Flow,
+    mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
+) {
+    tokio::spawn(async move {
+        while let Some(event) = stream.next().await {
+            let send_result = flow.send_state_update(event).await;
+            if send_result.is_err() {
+                tracing::error!("Failed to send state update event to backend. Stopping flow");
+                break;
+            }
+        }
+    });
 }
 
 struct FlowControlService<M: ManageDevice> {
