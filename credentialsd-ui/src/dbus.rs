@@ -7,8 +7,12 @@ use async_std::{
     task::JoinHandle,
 };
 use zbus::{
-    Connection, ObjectServer, fdo, interface, message::Header, names::OwnedUniqueName,
-    object_server::SignalEmitter, proxy, zvariant::ObjectPath,
+    Connection, ObjectServer, fdo, interface,
+    message::Header,
+    names::{BusName, OwnedUniqueName},
+    object_server::SignalEmitter,
+    proxy,
+    zvariant::ObjectPath,
 };
 
 use credentialsd_common::{
@@ -168,9 +172,12 @@ impl FlowObject {
         };
         self.bg_events_tx = Some(bg_events_tx);
 
-        let emitter = emitter.into_owned();
+        let emitter = emitter
+            .set_destination(BusName::Unique((&self.return_address).into()))
+            .to_owned();
         let ui_events_task = async_std::task::spawn(async move {
             while let Ok(ui_event) = ui_events_rx.recv().await {
+                tracing::trace!(?ui_event, "Sending UI event signal to portal");
                 if emitter.user_interacted(&ui_event).await.is_err() {
                     tracing::error!("Failed to send UI event signal.");
                     // TODO: we need to cancel the request here, so we need a

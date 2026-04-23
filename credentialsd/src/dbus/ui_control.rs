@@ -137,7 +137,7 @@ impl UiController for UiControlServiceClient {
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
         let ui_event_stream = flow_object.receive_user_interacted().await?;
         tokio::task::spawn(async move {
-            _ = forward_ui_events(ui_event_stream, from_ui_tx);
+            _ = forward_ui_events(ui_event_stream, from_ui_tx).await;
         });
         // Mark as ready to receive messages.
         flow_object.start().await?;
@@ -152,13 +152,16 @@ async fn forward_ui_events(
     mut ui_event_stream: UserInteractedStream,
     tx: mpsc::Sender<BackendRequest>,
 ) -> Result<(), Box<dyn Error>> {
+    tracing::debug!("Listening for events from UI");
     while let Some(signal) = ui_event_stream.next().await {
+        tracing::trace!(?signal, "Received event from UI");
         let event = signal.args()?.update;
         if let Err(_) = tx.send(event).await {
             tracing::trace!("credential service event listener stopped listening for UI events. Ending event stream listener");
             break;
         }
     }
+    tracing::trace!("Stopping UI event forwarder");
     Ok(())
 }
 

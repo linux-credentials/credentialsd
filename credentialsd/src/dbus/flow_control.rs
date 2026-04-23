@@ -1,6 +1,7 @@
 //! This module implements the service to allow the user to control the flow of
 //! the credential request through the trusted UI.
 
+use std::sync::Mutex;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
@@ -137,6 +138,8 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         }
     };
     tokio::spawn(async move {
+        let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
+        let cred_selector_tx = Arc::new(Mutex::new(None));
         while let Some(ui_request) = flow.receive_ui_event().await {
             match ui_request {
                 BackendRequest::StartHybridDiscovery => {
@@ -147,7 +150,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         .await
                         .map(|state| BackgroundEvent::HybridQrStateChanged(state.into()));
                     let flow = flow.clone();
-                    forward_background_events(flow, stream);
+                    forward_background_event_stream(flow, stream);
                 }
                 BackendRequest::StartNfcDiscovery => {
                     let stream = svc
@@ -160,18 +163,56 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                     forward_background_event_stream(flow, stream);
                 }
                 BackendRequest::StartUsbDiscovery => {
-                    let stream = svc
-                        .lock()
-                        .await
-                        .get_usb_credential()
-                        .await
-                        .map(|usb_state| BackgroundEvent::UsbStateChanged(usb_state.into()));
+                    let client_pin_tx = client_pin_tx.clone();
+                    let cred_selector_tx = cred_selector_tx.clone();
+                    let stream =
+                        svc.lock()
+                            .await
+                            .get_usb_credential()
+                            .await
+                            .map(move |usb_state| {
+                                match &usb_state {
+                                    UsbState::NeedsPin { pin_tx, .. } => {
+                                        *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                    }
+                                    UsbState::SelectingCredential { cred_tx, .. } => {
+                                        *cred_selector_tx.lock().unwrap() = Some(cred_tx.clone());
+                                    }
+                                    _ => {}
+                                }
+                                BackgroundEvent::UsbStateChanged(usb_state.into())
+                            });
                     let flow = flow.clone();
-                    forward_background_events(flow, stream);
+                    forward_background_event_stream(flow, stream);
                 }
-                BackendRequest::EnterClientPin(_) => todo!(),
-                BackendRequest::SelectCredential(_) => todo!(),
-                BackendRequest::CancelRequest => todo!(),
+                BackendRequest::EnterClientPin(pin) => {
+                    let tx = { client_pin_tx.lock().unwrap().take() };
+                    if let Some(tx) = tx {
+                        if tx.send(pin).await.is_err() {
+                            tracing::error!("Failed to send client PIN to device");
+                        }
+                    } else {
+                        tracing::error!(
+                            "Invalid state: received a client PIN with no pending request."
+                        );
+                    }
+                }
+                BackendRequest::SelectCredential(id) => {
+                    let tx = { cred_selector_tx.lock().unwrap().take() };
+                    if let Some(tx) = tx {
+                        if tx.send(id).await.is_err() {
+                            tracing::error!("Failed to send credential selection to device");
+                        }
+                    } else {
+                        tracing::error!(
+                            "Invalid state: received a credential selection ID with no pending request."
+                        );
+                    }
+                }
+                BackendRequest::CancelRequest => {
+                    tracing::debug!(%request_id, "Cancelling request");
+                    svc.lock().await.cancel_request(request_id).await;
+                }
             }
         }
     });
@@ -183,7 +224,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     f
 }
 
-fn forward_background_events(
+fn forward_background_event_stream(
     flow: Flow,
     mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
 ) {
