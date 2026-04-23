@@ -32,6 +32,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let _server_conn = zbus::connection::Builder::session()?
         .name(service)?
         .serve_at(path, interface)?
+        .serve_at(
+            "/xyz/iinuwa/credentialsd/UiControl",
+            portal_backend_interface,
+        )?
         .build()
         .await?;
     println!(" ✅");

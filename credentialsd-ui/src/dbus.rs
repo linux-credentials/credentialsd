@@ -107,7 +107,7 @@ impl UiControlService {
 }
 
 pub struct CredentialPortalBackend {
-    pub request_tx: Sender<ViewRequest>,
+    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
 }
 
 /// These methods are called by the credential service to control the UI.
