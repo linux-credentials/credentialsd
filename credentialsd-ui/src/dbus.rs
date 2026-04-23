@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use async_std::{channel::Sender, stream::StreamExt, sync::Mutex as AsyncMutex};
+use async_std::{
+    channel::{self, Receiver, Sender},
+    stream::StreamExt,
+    sync::Mutex as AsyncMutex,
+    task::JoinHandle,
+};
 use zbus::{
     Connection, ObjectServer, fdo, interface, message::Header, names::OwnedUniqueName,
     object_server::SignalEmitter, proxy, zvariant::ObjectPath,
@@ -130,6 +135,8 @@ impl CredentialPortalBackend {
             request,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
+            ui_events_forwarder_task: None,
+            bg_events_tx: None,
         };
         object_server.at(object_path.clone(), flow_object).await?;
         tracing::debug!("Received UI launch request");
@@ -139,16 +146,60 @@ impl CredentialPortalBackend {
 
 pub struct FlowObject {
     request: ViewRequest,
-    pub request_tx: Sender<ViewRequest>,
+    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
     pub return_address: OwnedUniqueName,
+    ui_events_forwarder_task: Option<JoinHandle<()>>,
+    bg_events_tx: Option<Sender<BackgroundEvent>>,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.experimental.Credential.FlowObject")]
 impl FlowObject {
     /// Start the UI flow with an initial set of available credential interfaces.
     /// Call this method after subscribing to the signals.
-    async fn start(&self) -> fdo::Result<()> {
-        if let Err(err) = self.request_tx.send(self.request.clone()).await {
+    async fn start(
+        &mut self,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        let (ui_events_tx, ui_events_rx) = channel::bounded(32);
+        let (bg_events_tx, bg_events_rx) = channel::bounded(32);
+        let flow_control_client = FlowControlClient {
+            tx: ui_events_tx,
+            rx: AsyncMutex::new(Some(bg_events_rx)),
+        };
+        self.bg_events_tx = Some(bg_events_tx);
+
+        let emitter = emitter.into_owned();
+        let ui_events_task = async_std::task::spawn(async move {
+            while let Ok(ui_event) = ui_events_rx.recv().await {
+                if emitter.user_interacted(&ui_event).await.is_err() {
+                    tracing::error!("Failed to send UI event signal.");
+                    // TODO: we need to cancel the request here, so we need a
+                    // channel back to the flow object to send the cancellation.
+                    break;
+                }
+            }
+        });
+        self.ui_events_forwarder_task = Some(ui_events_task);
+
+        // Assuming this is a PublicKey request, require the rp_id
+        let rp_id = self
+            .ui_context
+            .options
+            .rp_id
+            .as_ref()
+            .ok_or_else(|| {
+                {
+                    fdo::Error::InvalidArgs(
+                        "rp_id is required for public key credential requests".to_string(),
+                    )
+                }
+            })?
+            .to_string();
+        let req = (
+            self.request.clone(),
+            Arc::new(AsyncMutex::new(flow_control_client)),
+        );
+        if self.request_tx.send(req).await.is_err() {
             tracing::error!("Received message to start flow, but GUI thread is not listening.");
             return Err(fdo::Error::Failed("Failed to start GUI".to_string()));
         }
@@ -156,14 +207,26 @@ impl FlowObject {
     }
 
     async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()> {
-        todo!()
+        tracing::trace!(?event, "Received background event");
+        if let Some(tx) = &self.bg_events_tx {
+            if tx.send(event).await.is_ok() {
+                return Ok(());
+            }
+            tracing::error!("Failed to send event to GUI thread");
+        } else {
+            tracing::error!("Flow was not properly initialized before receiving events.");
+        }
+        return Err(fdo::Error::Failed("Failed to handle event".to_string()));
     }
 
     async fn cancel(
-        &self,
+        &mut self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
     ) -> fdo::Result<()> {
+        if let Some(task) = self.ui_events_forwarder_task.take() {
+            task.cancel().await;
+        }
         if let Some(path) = header.path() {
             // TODO: Send clean up task to GUI thread.
             object_server.remove::<FlowObject, _>(path).await?;
@@ -172,5 +235,8 @@ impl FlowObject {
     }
 
     #[zbus(signal)]
-    async fn user_interacted(emitter: SignalEmitter<'_>) -> zbus::Result<()>;
+    async fn user_interacted(
+        emitter: SignalEmitter<'_>,
+        event: &BackendRequest,
+    ) -> zbus::Result<()>;
 }
