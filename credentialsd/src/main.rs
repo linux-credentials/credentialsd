@@ -38,7 +38,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
         InternalHybridHandler::new(),
         InProcessNfcHandler {},
         InProcessUsbHandler {},
-        Arc::new(ui_controller),
     );
     let (_flow_control_conn, initiator) =
         dbus::start_flow_control_service(credential_service).await?;

@@ -11,6 +11,7 @@ use std::{
     task::Poll,
 };
 
+use async_trait::async_trait;
 use futures_lite::{FutureExt, Stream, StreamExt};
 use libwebauthn::{
     self,
@@ -69,6 +70,23 @@ impl RequestContext {
     }
 }
 
+/// Manages request to authenticator devices.
+#[async_trait]
+pub trait ManageDevice {
+    async fn init_request(
+        &self,
+        request: &CredentialRequest,
+        tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+    ) -> Result<RequestId, CredentialServiceError>;
+    async fn cancel_request(&self, request_id: RequestId);
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+    async fn get_hybrid_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>>;
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>>;
+    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>>;
+}
+
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     /// Current request and channel to respond to caller.
@@ -79,7 +97,7 @@ pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     usb_handler: Mutex<U>,
 }
 
-impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Debug>
+impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
     CredentialService<H, N, U>
 {
     pub fn new(hybrid_handler: H, nfc_handler: N, usb_handler: U) -> Self {
@@ -91,12 +109,15 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
             usb_handler: Mutex::new(usb_handler),
         }
     }
+}
 
-    pub async fn init_request(
+#[async_trait]
+impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> ManageDevice
+    for CredentialService<H, N, U>
+{
+    async fn init_request(
         &self,
         request: &CredentialRequest,
-        requesting_app: Option<RequestingApplication>,
-        window_handle: Option<WindowHandle>,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Result<RequestId, CredentialServiceError> {
         let mut cred_request = self.ctx.lock().unwrap();
@@ -118,7 +139,7 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
         }
     }
 
-    pub async fn cancel_request(&self, request_id: RequestId) {
+    async fn cancel_request(&self, request_id: RequestId) {
         let mut guard = self.ctx.lock().expect("Lock to be taken");
         if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id) {
             if request_id == ctx.request_id {
@@ -136,7 +157,7 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
         }
     }
 
-    pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         // We create the list new for each call, in case someone plugs in
         // an NFC-reader in the middle of an auth-flow
         let mut devices = vec![
@@ -158,7 +179,7 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
         Ok(devices)
     }
 
-    pub async fn get_hybrid_credential(
+    async fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
@@ -174,9 +195,7 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
         }
     }
 
-    pub async fn get_usb_credential(
-        &self,
-    ) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
             let stream = self.usb_handler.lock().unwrap().start(request);
@@ -190,9 +209,7 @@ impl<H: HybridHandler + Debug + Sync, N: NfcHandler + Debug, U: UsbHandler + Deb
         }
     }
 
-    pub async fn get_nfc_credential(
-        &self,
-    ) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
             let stream = self.nfc_handler.lock().unwrap().start(request);
@@ -365,7 +382,7 @@ mod test {
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
         nfc::InProcessNfcHandler,
-        AuthenticatorResponse, CredentialService,
+        AuthenticatorResponse, CredentialService, ManageDevice,
     };
 
     #[test]
@@ -395,7 +412,6 @@ mod test {
                     hybrid_handler,
                     nfc_handler,
                     usb_handler,
-                    Arc::new(ui_client),
                 )));
                 let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());
                 ui_server.init(flow_client).await;
@@ -405,7 +421,7 @@ mod test {
                 cred_service
                     .lock()
                     .await
-                    .init_request(&request, None, None, request_tx)
+                    .init_request(&request, request_tx)
                     .await;
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)

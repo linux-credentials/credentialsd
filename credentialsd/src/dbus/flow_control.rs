@@ -25,6 +25,7 @@ use zbus::{
     ObjectServer,
 };
 
+use crate::credential_service::ManageDevice;
 use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::{
@@ -39,12 +40,8 @@ use crate::{
 pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/FlowControl";
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
 
-pub async fn start_flow_control_service<
-    H: HybridHandler + Debug + Send + Sync + 'static,
-    N: NfcHandler + Debug + Send + Sync + 'static,
-    U: UsbHandler + Debug + Send + Sync + 'static,
->(
-    credential_service: CredentialService<H, N, U>,
+pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 'static>(
+    device_manager: M,
 ) -> zbus::Result<(
     Connection,
     Sender<(
@@ -54,7 +51,7 @@ pub async fn start_flow_control_service<
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 )> {
-    let svc = Arc::new(AsyncMutex::new(credential_service));
+    let svc = Arc::new(AsyncMutex::new(device_manager));
     let svc2 = svc.clone();
     let conn = Builder::session()?
         .name(SERVICE_NAME)?
@@ -88,24 +85,15 @@ pub async fn start_flow_control_service<
     Ok((conn, initiator_tx))
 }
 
-async fn handle<
-    H: HybridHandler + Debug + Sync,
-    N: NfcHandler + Debug,
-    U: UsbHandler + Debug,
-    UC: UiController + Debug,
->(
-    svc: Arc<AsyncMutex<CredentialService<H, N, U>>>,
+async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiController + Debug>(
+    svc: Arc<AsyncMutex<M>>,
     ui_control_client: UC,
     msg: CredentialRequest,
     requesting_app: RequestingApplication,
     window_handle: Option<WindowHandle>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
-    let request_id = svc
-        .lock()
-        .await
-        .init_request(&msg, Some(requesting_app), window_handle, request_tx)
-        .await?;
+    let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
     let operation = match &msg {
         CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
         CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
@@ -170,8 +158,8 @@ async fn handle<
     f
 }
 
-struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
-    svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
+struct FlowControlService<M: ManageDevice> {
+    svc: Arc<AsyncMutex<M>>,
     signal_state: Arc<AsyncMutex<SignalState>>,
     pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
@@ -180,14 +168,12 @@ struct FlowControlService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: Ui
     hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
 }
 
-impl<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController>
-    FlowControlService<H, N, U, UC>
-{
+impl<M: ManageDevice> FlowControlService<M> {
     fn send_update(&self);
 }
 
-struct FlowControlDbusService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC: UiController> {
-    svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
+struct FlowControlDbusService<M: ManageDevice> {
+    svc: Arc<AsyncMutex<M>>,
 
     signal_state: Arc<AsyncMutex<SignalState>>,
 
@@ -210,12 +196,9 @@ struct FlowControlDbusService<H: HybridHandler, N: NfcHandler, U: UsbHandler, UC
         default_service = "xyz.iinuwa.credentialsd.FlowControl",
     )
 )]
-impl<H, N, U, UC> FlowControlDbusService<H, N, U, UC>
+impl<M> FlowControlDbusService<M>
 where
-    H: HybridHandler + Debug + Send + Sync + 'static,
-    N: NfcHandler + Debug + Send + Sync + 'static,
-    U: UsbHandler + Debug + Send + Sync + 'static,
-    UC: UiController + Debug + Send + Sync + 'static,
+    M: ManageDevice + Debug + Send + Sync + 'static,
 {
     async fn subscribe(
         &self,
@@ -257,7 +240,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -300,7 +283,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -350,7 +333,7 @@ where
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
         let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<H, N, U, UC>>> =
+            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
                 object_server.interface(SERVICE_PATH).await;
 
             let emitter = match interface {
@@ -461,8 +444,8 @@ pub trait CredentialRequestController {
 pub struct CredentialRequestControllerClient {
     pub initiator: Sender<(
         CredentialRequest,
-        Option<RequestingApplication>, // Application name sending the request
-        Option<WindowHandle>,          // Client window handle,
+        RequestingApplication, // Application name sending the request
+        Option<WindowHandle>,  // Client window handle,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
 }
@@ -517,7 +500,7 @@ pub mod test {
         hybrid::{HybridHandler, HybridState},
         nfc::{NfcHandler, NfcState},
         usb::UsbHandler,
-        CredentialService, UiController, UsbState,
+        CredentialService, ManageDevice, UiController, UsbState,
     };
 
     #[allow(clippy::enum_variant_names)]
@@ -648,15 +631,12 @@ pub mod test {
     }
 
     #[derive(Debug)]
-    pub struct DummyFlowServer<H, N, U, UC>
+    pub struct DummyFlowServer<M>
     where
-        H: HybridHandler + Debug + Send + Sync,
-        N: NfcHandler + Debug + Send + Sync,
-        U: UsbHandler + Debug + Send + Sync,
-        UC: UiController + Debug + Send + Sync,
+        M: ManageDevice,
     {
         rx: mpsc::Receiver<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
-        svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
+        svc: Arc<AsyncMutex<M>>,
         bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
         pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
         usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
@@ -664,13 +644,7 @@ pub mod test {
         hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
     }
 
-    impl<
-            H: HybridHandler + Debug + Send + Sync,
-            N: NfcHandler + Debug + Send + Sync,
-            U: UsbHandler + Debug + Send + Sync,
-            UC: UiController + Debug + Send + Sync,
-        > DummyFlowServer<H, N, U, UC>
-    {
+    impl<M: ManageDevice> DummyFlowServer<M> {
         /*
         async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
             let (response_tx, response_rx) = oneshot::channel();
@@ -691,13 +665,11 @@ pub mod test {
             }
         }
         */
-        pub fn new(
-            svc: Arc<AsyncMutex<CredentialService<H, N, U, UC>>>,
-        ) -> (Self, DummyFlowClient) {
+        pub fn new(svc: M) -> (Self, DummyFlowClient) {
             let (request_tx, request_rx) = mpsc::channel(32);
             let server = Self {
                 rx: request_rx,
-                svc,
+                svc: Arc::new(AsyncMutex::new(svc)),
                 bg_event_tx: None,
                 pin_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(Mutex::new(None)),
@@ -906,13 +878,7 @@ pub mod test {
         }
     }
 
-    impl<
-            H: HybridHandler + Debug + Send + Sync,
-            N: NfcHandler + Debug + Send + Sync,
-            U: UsbHandler + Debug + Send + Sync,
-            UC: UiController + Debug + Send + Sync,
-        > Drop for DummyFlowServer<H, N, U, UC>
-    {
+    impl<M: ManageDevice> Drop for DummyFlowServer<M> {
         fn drop(&mut self) {
             if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
                 task.abort();
