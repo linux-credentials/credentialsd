@@ -310,8 +310,10 @@ async fn should_trust_app_id(pid: u32) -> bool {
     tracing::debug!(?trusted_callers, %exe_path, "Testing whether request is from trusted caller");
     if !trusted_callers.as_slice().contains(&exe_path.to_string()) {
         tracing::warn!(%exe_path, "Request received from untrusted caller");
+        return false;
+    } else {
+        return true;
     }
-    return true;
 }
 
 fn check_origin_from_app(
