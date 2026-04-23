@@ -6,7 +6,7 @@ mod gui;
 
 use std::error::Error;
 
-use crate::dbus::UiControlService;
+use crate::dbus::{CredentialPortalBackend, UiControlService};
 
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt::init();
@@ -23,7 +23,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!(" ✅");
 
     print!("Starting UI Control listener...\t");
-    let interface = UiControlService { request_tx };
+    let interface = UiControlService {
+        request_tx: request_tx.clone(),
+    };
+    let portal_backend_interface = CredentialPortalBackend { request_tx };
     let path = "/xyz/iinuwa/credentialsd/UiControl";
     let service = "xyz.iinuwa.credentialsd.UiControl";
     let _server_conn = zbus::connection::Builder::session()?
