@@ -63,6 +63,7 @@ pub async fn start_flow_control_service<
                 signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
                 svc,
                 pin_tx: Arc::new(AsyncMutex::new(None)),
+                set_pin_tx: Arc::new(AsyncMutex::new(None)),
                 cred_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
                 nfc_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
@@ -88,6 +89,7 @@ struct FlowControlService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: Ui
     signal_state: Arc<AsyncMutex<SignalState>>,
     svc: Arc<AsyncMutex<CredentialService<H, U, N, UC>>>,
     pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
+    set_pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
     usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
     nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
@@ -191,6 +193,7 @@ where
     ) -> fdo::Result<()> {
         let mut stream = self.svc.lock().await.get_usb_credential();
         let usb_pin_tx = self.pin_tx.clone();
+        let usb_set_pin_tx = self.set_pin_tx.clone();
         let usb_cred_tx = self.cred_tx.clone();
         let signal_state = self.signal_state.clone();
         let object_server = object_server.clone();
@@ -216,6 +219,10 @@ where
                     UsbState::NeedsPin { pin_tx, .. } => {
                         let mut usb_pin_tx = usb_pin_tx.lock().await;
                         let _ = usb_pin_tx.insert(pin_tx);
+                    }
+                    UsbState::PinNotSet { pin_tx, .. } => {
+                        let mut usb_set_pin_tx = usb_set_pin_tx.lock().await;
+                        let _ = usb_set_pin_tx.insert(pin_tx);
                     }
                     UsbState::SelectingCredential { cred_tx, .. } => {
                         let mut usb_cred_tx = usb_cred_tx.lock().await;
@@ -288,6 +295,17 @@ where
     async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
         if let Some(pin_tx) = self.pin_tx.lock().await.take() {
             pin_tx.send(pin).await.unwrap();
+        }
+        Ok(())
+    }
+
+    async fn set_device_pin(
+        &self,
+        pin: String,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        if let Some(set_pin_tx) = self.set_pin_tx.lock().await.take() {
+            set_pin_tx.send(pin).await.unwrap();
         }
         Ok(())
     }
@@ -419,6 +437,7 @@ pub mod test {
     #[allow(clippy::enum_variant_names)]
     #[derive(Debug)]
     pub enum DummyFlowRequest {
+        SetDevicePin(String),
         EnterClientPin(String),
         GetDevices,
         GetHybridCredential,
@@ -431,6 +450,7 @@ pub mod test {
     // intentional for now.
     #[allow(clippy::enum_variant_names)]
     pub enum DummyFlowResponse {
+        SetNewDevicePin(Result<(), ()>),
         EnterClientPin(Result<(), ()>),
         GetDevices(Vec<Device>),
         GetHybridCredential,
@@ -442,6 +462,9 @@ pub mod test {
     impl Debug for DummyFlowResponse {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
+                Self::SetNewDevicePin(arg0) => {
+                    f.debug_tuple("SetNewDevicePin").field(arg0).finish()
+                }
                 Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
                 Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
                 Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
@@ -534,6 +557,16 @@ pub mod test {
             }
         }
 
+        async fn set_device_pin(&mut self, pin: String) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::SetNewDevicePin(Ok(()))) =
+                self.send(DummyFlowRequest::SetDevicePin(pin)).await
+            {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
         async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
             todo!();
         }
@@ -555,6 +588,7 @@ pub mod test {
         svc: Arc<AsyncMutex<CredentialService<H, U, N, UC>>>,
         bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
         pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
+        set_pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
         usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
         nfc_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
         hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
@@ -596,6 +630,7 @@ pub mod test {
                 svc,
                 bg_event_tx: None,
                 pin_tx: Arc::new(AsyncMutex::new(None)),
+                set_pin_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(Mutex::new(None)),
                 nfc_event_forwarder_task: Arc::new(Mutex::new(None)),
                 hybrid_event_forwarder_task: Arc::new(Mutex::new(None)),
@@ -611,6 +646,10 @@ pub mod test {
                     DummyFlowRequest::EnterClientPin(pin) => {
                         let rsp = self.enter_client_pin(pin).await;
                         DummyFlowResponse::EnterClientPin(rsp)
+                    }
+                    DummyFlowRequest::SetDevicePin(pin) => {
+                        let rsp = self.set_device_pin(pin).await;
+                        DummyFlowResponse::SetNewDevicePin(rsp)
                     }
                     DummyFlowRequest::GetDevices => {
                         let rsp = self.get_available_public_key_devices().await.unwrap();
@@ -697,6 +736,7 @@ pub mod test {
             let mut stream = self.svc.lock().await.get_usb_credential();
             if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
                 let usb_pin_tx = self.pin_tx.clone();
+                let usb_set_pin_tx = self.set_pin_tx.clone();
                 let task = tokio::spawn(async move {
                     while let Some(state) = stream.next().await {
                         if let Some(tx) = tx_weak.upgrade() {
@@ -712,6 +752,10 @@ pub mod test {
                                 UsbState::NeedsPin { pin_tx, .. } => {
                                     let mut usb_pin_tx = usb_pin_tx.lock().await;
                                     let _ = usb_pin_tx.insert(pin_tx);
+                                }
+                                UsbState::PinNotSet { pin_tx, .. } => {
+                                    let mut usb_set_pin_tx = usb_set_pin_tx.lock().await;
+                                    let _ = usb_set_pin_tx.insert(pin_tx);
                                 }
                                 UsbState::Completed | UsbState::Failed(_) => {
                                     break;
@@ -789,6 +833,13 @@ pub mod test {
         async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
             if let Some(pin_tx) = self.pin_tx.lock().await.take() {
                 pin_tx.send(pin).await.unwrap();
+            }
+            Ok(())
+        }
+
+        async fn set_device_pin(&self, pin: String) -> Result<(), ()> {
+            if let Some(set_pin_tx) = self.set_pin_tx.lock().await.take() {
+                set_pin_tx.send(pin).await.unwrap();
             }
             Ok(())
         }

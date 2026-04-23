@@ -210,6 +210,66 @@
 
             <child>
               <object class="GtkStackPage">
+                <property name="name">set_new_pin</property>
+                <property name="title" translatable="yes">Set a PIN</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Please choose a new PIN for your device.</property>
+                        <property name="wrap">true</property>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkPasswordEntry" id="new_pin_primary_entry">
+                        <property name="placeholder-text" translatable="yes">New PIN</property>
+                        <signal name="changed" handler="handle_setting_pin_change" swapped="true"/>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkPasswordEntry" id="new_pin_confirm_entry">
+                        <property name="placeholder-text" translatable="yes">Confirm PIN</property>
+                        <signal name="changed" handler="handle_setting_pin_change" swapped="true"/>
+                      </object>
+                    </child>
+
+                    <child>
+                      <object class="GtkBox">
+                        <property name="halign">end</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkButton" id="new_pin_btn_close_window">
+                            <property name="label" translatable="yes">Close</property>
+                            <signal name="clicked" handler="handle_close_window" swapped="true"/>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="new_pin_btn_continue">
+                            <property name="label" translatable="yes">Continue</property>
+                            <binding name="sensitive">
+                              <lookup name="pin_fields_match">
+                                <lookup name="view-model">CredentialsUiWindow</lookup>
+                              </lookup>
+                            </binding>
+                            <style>
+                              <class name="suggested-action"/>
+                            </style>
+                            <signal name="clicked" handler="handle_commit_new_pin" swapped="true"/>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkStackPage">
                 <property name="name">completed</property>
                 <property name="title" translatable="yes">Complete</property>
                 <property name="child">
@@ -242,6 +302,31 @@
                           </lookup>
                         </binding>
                         <property name="label" translatable="yes">Something went wrong while retrieving a credential. Please try again later or use a different authenticator.</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="halign">end</property>
+                        <property name="spacing">6</property>
+                        <binding name="visible">
+                          <lookup name="start_setting_new_pin_visible">
+                            <lookup name="view-model">
+                              CredentialsUiWindow
+                            </lookup>
+                          </lookup>
+                        </binding>
+                        <child>
+                          <object class="GtkButton" id="failed_close_window">
+                            <property name="label" translatable="yes">Close</property>
+                            <signal name="clicked" handler="handle_close_window" swapped="true"/>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="start_setting_new_pin">
+                            <property name="label" translatable="yes">Set PIN on device</property>
+                            <signal name="clicked" handler="handle_start_setting_new_pin" swapped="true"/>
+                          </object>
+                        </child>
                       </object>
                     </child>
                   </object>

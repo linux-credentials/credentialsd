@@ -207,6 +207,12 @@ impl<F: FlowController + Send> ViewModel<F> {
                         error!("Failed to send pin to device");
                     }
                 }
+                Event::View(ViewEvent::SetNewDevicePin(pin)) => {
+                    let mut cred_service = self.flow_controller.lock().await;
+                    if cred_service.set_device_pin(pin).await.is_err() {
+                        error!("Failed to send new pin to device");
+                    }
+                }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
                     println!(
                         "Credential selected: {:?}. Current Device: {:?}",
@@ -243,6 +249,12 @@ impl<F: FlowController + Send> ViewModel<F> {
                         UsbState::NeedsPin { attempts_left } => {
                             self.tx_update
                                 .send(ViewUpdate::UsbNeedsPin { attempts_left })
+                                .await
+                                .unwrap();
+                        }
+                        UsbState::PinNotSet { error } => {
+                            self.tx_update
+                                .send(ViewUpdate::UsbPinNotSet { error })
                                 .await
                                 .unwrap();
                         }
@@ -283,9 +295,6 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 Error::PinAttemptsExhausted => gettext(
                                     "No more PIN attempts allowed. Try removing your device and plugging it back in.",
                                 ),
-                                Error::PinNotSet => gettext(
-                                    "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
-                                ),
                                 Error::AuthenticatorError | Error::Internal(_) => gettext(
                                     "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
                                 ),
@@ -318,6 +327,12 @@ impl<F: FlowController + Send> ViewModel<F> {
                                 .await
                                 .unwrap();
                         }
+                        NfcState::PinNotSet { error } => {
+                            self.tx_update
+                                .send(ViewUpdate::NfcPinNotSet { error })
+                                .await
+                                .unwrap();
+                        }
                         NfcState::Completed => {
                             self.tx_update.send(ViewUpdate::Completed).await.unwrap();
                         }
@@ -330,23 +345,20 @@ impl<F: FlowController + Send> ViewModel<F> {
                         }
                         // TODO: Provide more specific error messages using the wrapped Error.
                         NfcState::Failed(err) => {
-                            let error_msg = String::from(match err {
+                            let error_msg = match err {
                                 Error::NoCredentials => {
-                                    "No matching credentials found on this authenticator."
+                                    gettext("No matching credentials found on this authenticator.")
                                 }
-                                Error::PinAttemptsExhausted => {
-                                    "No more PIN attempts allowed. Try removing your device and plugging it back in."
-                                }
-                                Error::PinNotSet => {
-                                    "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again."
-                                }
-                                Error::AuthenticatorError | Error::Internal(_) => {
-                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator."
-                                }
-                                Error::CredentialExcluded => {
-                                    "This credential is already registered on this authenticator."
-                                }
-                            });
+                                Error::PinAttemptsExhausted => gettext(
+                                    "No more PIN attempts allowed. Try removing your device and plugging it back in.",
+                                ),
+                                Error::AuthenticatorError | Error::Internal(_) => gettext(
+                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                                ),
+                                Error::CredentialExcluded => gettext(
+                                    "This credential is already registered on this authenticator.",
+                                ),
+                            };
                             self.tx_update
                                 .send(ViewUpdate::Failed(error_msg))
                                 .await
@@ -411,6 +423,7 @@ pub enum ViewEvent {
     DeviceSelected(String),
     CredentialSelected(String),
     PinEntered(String),
+    SetNewDevicePin(String),
     UserCancelled,
 }
 
