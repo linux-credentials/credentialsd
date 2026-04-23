@@ -40,19 +40,6 @@ use self::{
 
 pub use usb::UsbState;
 
-/// Used by the credential service to control the UI.
-pub trait UiController {
-    fn launch_ui(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
-
-    fn initialize(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<mpsc::Receiver<BackendRequest>, Box<dyn Error>>> + Send;
-}
-
 #[derive(Debug)]
 struct RequestContext {
     request: CredentialRequest,

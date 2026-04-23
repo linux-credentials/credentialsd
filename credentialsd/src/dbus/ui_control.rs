@@ -1,6 +1,6 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::error::Error;
+use std::{error::Error, future::Future};
 
 use futures_lite::StreamExt;
 use tokio::sync::mpsc::{self, Receiver};
@@ -15,7 +15,18 @@ use credentialsd_common::{
     server::ViewRequest,
 };
 
-use crate::credential_service::UiController;
+/// Used by the credential service to control the UI.
+pub trait UiController {
+    fn launch_ui(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
+
+    fn initialize(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<Flow<'_>, Box<dyn Error>>> + Send;
+}
 
 #[proxy(
     gen_blocking = false,
@@ -38,6 +49,25 @@ trait UiControlService2 {
     fn initialize(&self, request: ViewRequest) -> fdo::Result<OwnedObjectPath>;
 }
 
+pub struct Flow<'a> {
+    proxy: FlowObjectProxy<'a>,
+    pub ui_events_rx: Receiver<BackendRequest>,
+}
+
+impl Flow<'_> {
+    async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
+        if let Err(err) = self.proxy.notify_state_changed(event).await {
+            match err {
+                fdo::Error::UnknownObject(description) => {
+                    tracing::error!(%description, "Flow D-Bus object no longer available at path");
+                }
+                _ => tracing::error!(%err, "Failed to send update to backend"),
+            }
+            return Err(());
+        }
+        Ok(())
+    }
+}
 #[proxy(
     gen_blocking = false,
     interface = "org.freedesktop.impl.portal.experimental.Credential.FlowObject",
@@ -92,10 +122,7 @@ impl UiController for UiControlServiceClient {
             .map_err(|err| err.into())
     }
 
-    async fn initialize(
-        &self,
-        request: ViewRequest,
-    ) -> Result<Receiver<BackendRequest>, Box<dyn Error>> {
+    async fn initialize(&self, request: ViewRequest) -> Result<Flow<'_>, Box<dyn Error>> {
         let path = self.proxy2().await?.initialize(request).await?;
         tracing::debug!(?path, "Path initialized");
         let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
@@ -106,7 +133,10 @@ impl UiController for UiControlServiceClient {
         });
         // Mark as ready to receive messages.
         flow_object.start().await?;
-        Ok(from_ui_rx)
+        Ok(Flow {
+            proxy: flow_object,
+            ui_events_rx: from_ui_rx,
+        })
     }
 }
 
@@ -136,15 +166,15 @@ pub mod test {
     };
 
     use credentialsd_common::{
-        client::FlowController,
-        model::{BackendRequest, BackgroundEvent},
-        server::ViewRequest,
+        client::FlowController, model::BackgroundEvent, server::ViewRequest,
     };
     use futures_lite::StreamExt;
     use tokio::sync::{
         mpsc::{self, Receiver, Sender},
         Mutex as AsyncMutex, Notify,
     };
+
+    use crate::dbus::ui_control::Flow;
 
     use super::UiController;
 
@@ -167,10 +197,7 @@ pub mod test {
             Ok(())
         }
 
-        async fn initialize(
-            &self,
-            _request: ViewRequest,
-        ) -> Result<Receiver<BackendRequest>, Box<dyn Error>> {
+        async fn initialize(&self, _request: ViewRequest) -> Result<Flow<'_>, Box<dyn Error>> {
             unimplemented!()
         }
     }

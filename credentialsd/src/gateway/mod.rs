@@ -107,7 +107,7 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(Some(context.into()), cred_request, parent_window)
+                .request_credential(context.into(), cred_request, parent_window)
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -162,7 +162,7 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(Some(context.into()), cred_request, parent_window)
+                .request_credential(context.into(), cred_request, parent_window)
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {

@@ -28,12 +28,8 @@ use zbus::{
 use crate::credential_service::ManageDevice;
 use crate::dbus::UiControlServiceClient;
 use crate::{
-    credential_service::{
-        hybrid::{HybridHandler, HybridState},
-        nfc::{NfcHandler, NfcState},
-        usb::UsbHandler,
-        CredentialService, UiController, UsbState,
-    },
+    credential_service::{hybrid::HybridState, nfc::NfcState, UsbState},
+    dbus::ui_control::UiController,
     model::{CredentialRequest, CredentialResponse},
 };
 
@@ -75,11 +71,18 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
         Option<WindowHandle>,
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>(2);
+    let conn2 = conn.clone();
     tokio::spawn(async move {
-        let svc = svc2;
         while let Some((msg, requesting_app, window_handle, tx)) = initiator_rx.recv().await {
-            let ui_control_client = UiControlServiceClient::new(conn.clone());
-            tx.send(handle(svc, ui_control_client, msg, requesting_app, window_handle).await);
+            let svc = svc2.clone();
+            let ui_control_client = UiControlServiceClient::new(conn2.clone());
+            if let Err(_) =
+                tx.send(handle(svc, ui_control_client, msg, requesting_app, window_handle).await)
+            {
+                tracing::error!(
+                    "Received response to credential request, but failed to forward it to gateway"
+                );
+            }
         }
     });
     Ok((conn, initiator_tx))
@@ -125,7 +128,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .map_err(|err| err.to_string());
     */
 
-    let mut ui_request_rx = match ui_control_client.initialize(view_request).await {
+    let mut flow = match ui_control_client.initialize(view_request).await {
         Ok(rx) => rx,
         Err(err) => {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
@@ -133,7 +136,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         }
     };
     tokio::spawn(async move {
-        while let Some(ui_request) = ui_request_rx.recv().await {
+        while let Some(ui_request) = flow.ui_events_rx.recv().await {
             match ui_request {
                 BackendRequest::StartHybridDiscovery => {
                     let stream = svc.lock().await.get_hybrid_credential().await;
@@ -169,7 +172,7 @@ struct FlowControlService<M: ManageDevice> {
 }
 
 impl<M: ManageDevice> FlowControlService<M> {
-    fn send_update(&self);
+    fn send_update(&self) {}
 }
 
 struct FlowControlDbusService<M: ManageDevice> {
@@ -435,7 +438,7 @@ enum SignalState {
 pub trait CredentialRequestController {
     async fn request_credential(
         &self,
-        requesting_app: Option<RequestingApplication>,
+        requesting_app: RequestingApplication,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
     ) -> Result<CredentialResponse, WebAuthnError>;
@@ -454,7 +457,7 @@ pub struct CredentialRequestControllerClient {
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
-        requesting_app: Option<RequestingApplication>,
+        requesting_app: RequestingApplication,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
     ) -> Result<CredentialResponse, WebAuthnError> {
@@ -496,12 +499,7 @@ pub mod test {
     use futures_lite::{Stream, StreamExt};
     use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
-    use crate::credential_service::{
-        hybrid::{HybridHandler, HybridState},
-        nfc::{NfcHandler, NfcState},
-        usb::UsbHandler,
-        CredentialService, ManageDevice, UiController, UsbState,
-    };
+    use crate::credential_service::{hybrid::HybridState, nfc::NfcState, ManageDevice, UsbState};
 
     #[allow(clippy::enum_variant_names)]
     #[derive(Debug)]
@@ -665,11 +663,11 @@ pub mod test {
             }
         }
         */
-        pub fn new(svc: M) -> (Self, DummyFlowClient) {
+        pub fn new(svc: Arc<AsyncMutex<M>>) -> (Self, DummyFlowClient) {
             let (request_tx, request_rx) = mpsc::channel(32);
             let server = Self {
                 rx: request_rx,
-                svc: Arc::new(AsyncMutex::new(svc)),
+                svc,
                 bg_event_tx: None,
                 pin_tx: Arc::new(AsyncMutex::new(None)),
                 usb_event_forwarder_task: Arc::new(Mutex::new(None)),
