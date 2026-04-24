@@ -43,6 +43,7 @@ fn run_gui(flow_controller: Arc<AsyncMutex<FlowControlClient>>, request: ViewReq
         tracing::debug!("Finishing user request.");
         // If cancellation fails, that's fine.
         let _ = flow_controller.lock().await.cancel_request().await;
+        // TODO: Clean up flow_object when request completes
     });
 
     view_model::gtk::start_gtk_app(parent_window, tx_event, rx_update);
