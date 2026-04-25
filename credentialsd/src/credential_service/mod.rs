@@ -3,26 +3,22 @@ pub mod nfc;
 pub mod usb;
 
 use std::{
-    error::Error,
     fmt::Debug,
-    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
 };
 
+use async_trait::async_trait;
 use futures_lite::{FutureExt, Stream, StreamExt};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
 };
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
-use tokio::sync::oneshot::Sender;
+use tokio::sync::oneshot;
 
-use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, Operation, RequestingApplication, Transport},
-    server::{RequestId, ViewRequest, WindowHandle},
-};
+use credentialsd_common::model::{Device, Error as CredentialServiceError, RequestId, Transport};
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -36,18 +32,10 @@ use self::{
 
 pub use usb::UsbState;
 
-/// Used by the credential service to control the UI.
-pub trait UiController {
-    fn launch_ui(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
-}
-
 #[derive(Debug)]
 struct RequestContext {
     request: CredentialRequest,
-    response_channel: Sender<Result<CredentialResponse, CredentialServiceError>>,
+    response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
 }
 
@@ -61,101 +49,76 @@ impl RequestContext {
     }
 }
 
+/// Manages request to authenticator devices.
+#[async_trait]
+pub trait ManageDevice {
+    async fn init_request(
+        &self,
+        request: &CredentialRequest,
+        tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+    ) -> Result<RequestId, CredentialServiceError>;
+    async fn cancel_request(&self, request_id: RequestId);
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+    async fn get_hybrid_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>>;
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>>;
+    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>>;
+}
+
 #[derive(Debug)]
-pub struct CredentialService<H: HybridHandler, U: UsbHandler, N: NfcHandler, UC: UiController> {
+pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
-    hybrid_handler: H,
-    usb_handler: U,
-    nfc_handler: N,
-
-    ui_control_client: Arc<UC>,
+    hybrid_handler: Mutex<H>,
+    nfc_handler: Mutex<N>,
+    usb_handler: Mutex<U>,
 }
 
-impl<
-        H: HybridHandler + Debug,
-        U: UsbHandler + Debug,
-        N: NfcHandler + Debug,
-        UC: UiController + Debug,
-    > CredentialService<H, U, N, UC>
+impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
+    CredentialService<H, N, U>
 {
-    pub fn new(
-        hybrid_handler: H,
-        usb_handler: U,
-        nfc_handler: N,
-        ui_control_client: Arc<UC>,
-    ) -> Self {
+    pub fn new(hybrid_handler: H, nfc_handler: N, usb_handler: U) -> Self {
         Self {
             ctx: Arc::new(Mutex::new(None)),
 
-            hybrid_handler,
-            usb_handler,
-            nfc_handler,
-
-            ui_control_client,
+            hybrid_handler: Mutex::new(hybrid_handler),
+            nfc_handler: Mutex::new(nfc_handler),
+            usb_handler: Mutex::new(usb_handler),
         }
     }
+}
 
-    pub async fn init_request(
+#[async_trait]
+impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> ManageDevice
+    for CredentialService<H, N, U>
+{
+    async fn init_request(
         &self,
         request: &CredentialRequest,
-        requesting_app: Option<RequestingApplication>,
-        window_handle: Option<WindowHandle>,
-        tx: Sender<Result<CredentialResponse, CredentialServiceError>>,
-    ) {
-        let request_id = {
-            let mut cred_request = self.ctx.lock().unwrap();
-            if cred_request.is_some() {
-                tx.send(Err(CredentialServiceError::Internal(
-                    "Already a request in progress.".to_string(),
-                )))
-                .expect("Send to local receiver to succeed");
-                return;
-            } else {
-                let request_id: RequestId = rand::random();
-                let ctx = RequestContext {
-                    request: request.clone(),
-                    response_channel: tx,
-                    request_id,
-                };
-                _ = cred_request.insert(ctx);
-                request_id
-            }
-        };
-        let operation = match &request {
-            CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::Create,
-            CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::Get,
-        };
-        let rp_id = match &request {
-            CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
-            CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
-        };
-        let view_request = ViewRequest {
-            operation,
-            id: request_id,
-            rp_id,
-            requesting_app: requesting_app.unwrap_or_default(), // We can't send Options, so we send an empty string instead, if we don't know the peer
-            window_handle: window_handle.into(),
-        };
-
-        let launch_ui_response = self
-            .ui_control_client
-            .launch_ui(view_request)
-            .await
-            .map_err(|err| err.to_string());
-        if let Err(err) = launch_ui_response {
-            tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            let err = Err(CredentialServiceError::Internal(err));
-            let ctx = self.ctx.lock().unwrap().take().unwrap();
-            ctx.response_channel
-                .send(err)
-                .expect("Request handler to be listening");
+        tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+    ) -> Result<RequestId, CredentialServiceError> {
+        let mut cred_request = self.ctx.lock().unwrap();
+        if cred_request.is_some() {
+            Err(CredentialServiceError::Internal(
+                "Already a request in progress.".to_string(),
+            ))
+        } else {
+            let request_id: RequestId = rand::random();
+            // TODO: Spawn a task here that will listen to the signals from ui_control_client.
+            // Move the get_*_credential(), etc. from gateway to here.
+            let ctx = RequestContext {
+                request: request.clone(),
+                response_channel: tx,
+                request_id,
+            };
+            _ = cred_request.insert(ctx);
+            Ok(request_id)
         }
-        tracing::debug!("Finished setting up request {request_id}");
     }
 
-    pub async fn cancel_request(&self, request_id: RequestId) {
+    async fn cancel_request(&self, request_id: RequestId) {
         let mut guard = self.ctx.lock().expect("Lock to be taken");
         if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id) {
             if request_id == ctx.request_id {
@@ -173,7 +136,7 @@ impl<
         }
     }
 
-    pub async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         // We create the list new for each call, in case someone plugs in
         // an NFC-reader in the middle of an auth-flow
         let mut devices = vec![
@@ -195,12 +158,12 @@ impl<
         Ok(devices)
     }
 
-    pub fn get_hybrid_credential(
+    async fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.hybrid_handler.start(request);
+            let stream = self.hybrid_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(HybridStateStream { inner: stream, ctx })
         } else {
@@ -211,10 +174,10 @@ impl<
         }
     }
 
-    pub fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.usb_handler.start(request);
+            let stream = self.usb_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -225,10 +188,10 @@ impl<
         }
     }
 
-    pub fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.nfc_handler.start(request);
+            let stream = self.nfc_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(NfcStateStream { inner: stream, ctx })
         } else {
@@ -398,7 +361,7 @@ mod test {
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
         nfc::InProcessNfcHandler,
-        AuthenticatorResponse, CredentialService,
+        AuthenticatorResponse, CredentialService, ManageDevice,
     };
 
     #[test]
@@ -421,25 +384,25 @@ mod test {
                 ]);
                 let usb_handler = InProcessUsbHandler {};
                 let nfc_handler = InProcessNfcHandler {};
-                let (ui_server, ui_client) = DummyUiServer::new(Vec::new());
+                let (ui_server, _ui_client) = DummyUiServer::new(Vec::new());
                 let ui_server = Arc::new(ui_server);
                 let user = ui_server.clone();
                 let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
                     hybrid_handler,
-                    usb_handler,
                     nfc_handler,
-                    Arc::new(ui_client),
+                    usb_handler,
                 )));
                 let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());
                 ui_server.init(flow_client).await;
 
                 tokio::spawn(async move { ui_server.run().await });
                 tokio::spawn(async move { flow_server.run().await });
-                cred_service
+                _ = cred_service
                     .lock()
                     .await
-                    .init_request(&request, None, None, request_tx)
-                    .await;
+                    .init_request(&request, request_tx)
+                    .await
+                    .unwrap();
                 user.request_hybrid_credential().await;
                 tokio::time::timeout(Duration::from_secs(5), request_rx)
                     .await
@@ -453,7 +416,7 @@ mod test {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
         let origin = NavigationContext::SameOrigin("https://webauthn.io".parse().unwrap());
         let client_data_json =
-            webauthn::format_client_data_json(Operation::Create, challenge, &origin);
+            webauthn::format_client_data_json(Operation::PublicKeyCreate, challenge, &origin);
         let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
         let make_request = MakeCredentialRequest {
             hash: client_data_hash,

@@ -28,11 +28,16 @@ meson.add_dist_script(
   meson.project_source_root(),
 )
 
+# Libs and executables
 subdir('credentialsd-common')
 subdir('credentialsd')
 subdir('credentialsd-ui')
+
+# Data files
+subdir('doc')
 subdir('dbus')
+subdir('portal')
 subdir('systemd')
 subdir('webext')
-subdir('doc')
+
 subdir('demo_client')

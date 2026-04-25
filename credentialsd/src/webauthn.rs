@@ -680,8 +680,8 @@ pub fn format_client_data_json(
     origin: &NavigationContext,
 ) -> String {
     let op_str = match op {
-        Operation::Create => "webauthn.create",
-        Operation::Get => "webauthn.get",
+        Operation::PublicKeyCreate => "webauthn.create",
+        Operation::PublicKeyGet => "webauthn.get",
     };
     let mut client_data_json = format!(
         r#"{{"type":"{}","challenge":"{}","origin":"{}""#,
@@ -868,7 +868,7 @@ mod tests {
     fn test_same_origin_client_data_json_str() {
         let expected = r#"{"type":"webauthn.create","challenge":"abcd","origin":"https://example.com","crossOrigin":false}"#;
         let json = format_client_data_json(
-            Operation::Create,
+            Operation::PublicKeyCreate,
             "abcd",
             &NavigationContext::SameOrigin("https://example.com".parse().unwrap()),
         );
@@ -879,7 +879,7 @@ mod tests {
     fn test_cross_origin_client_data_json_str() {
         let expected = r#"{"type":"webauthn.create","challenge":"abcd","origin":"https://example.com","crossOrigin":true,"topOrigin":"https://example.org"}"#;
         let json = format_client_data_json(
-            Operation::Create,
+            Operation::PublicKeyCreate,
             "abcd",
             &NavigationContext::CrossOrigin((
                 "https://example.com".parse().unwrap(),

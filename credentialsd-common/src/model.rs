@@ -40,8 +40,17 @@ pub struct Device {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum Operation {
-    Create,
-    Get,
+    PublicKeyCreate,
+    PublicKeyGet,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+pub struct PortalBackendOptions {
+    /// Top-level origin of the request if different from the origin.
+    pub top_origin: Optional<String>,
+
+    /// RP ID of the request. Required for WebAuthn/PublicKey requests.
+    pub rp_id: Optional<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
@@ -121,6 +130,9 @@ pub struct RequestingParty {
     pub rp_id: String,
     pub origin: String,
 }
+
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
@@ -250,6 +262,41 @@ pub enum NfcState {
 
     /// Interaction with the authenticator failed.
     Failed(Error),
+}
+
+pub enum BackendRequest {
+    /// Start Hybrid discovery
+    StartHybridDiscovery,
+
+    /// Start NFC discovery
+    StartNfcDiscovery,
+
+    /// Start USB discovery
+    StartUsbDiscovery,
+
+    /// Send client PIN
+    EnterClientPin(String),
+
+    /// Select a credential by credential ID
+    SelectCredential(String),
+
+    CancelRequest,
+}
+
+impl std::fmt::Debug for BackendRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StartHybridDiscovery => write!(f, "StartHybridDiscovery"),
+            Self::StartNfcDiscovery => write!(f, "StartNfcDiscovery"),
+            Self::StartUsbDiscovery => write!(f, "StartUsbDiscovery"),
+            Self::EnterClientPin(_) => f
+                .debug_tuple("EnterClientPin")
+                .field(&"******".to_string())
+                .finish(),
+            Self::SelectCredential(arg0) => f.debug_tuple("SelectCredential").field(arg0).finish(),
+            Self::CancelRequest => write!(f, "CancelRequest"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

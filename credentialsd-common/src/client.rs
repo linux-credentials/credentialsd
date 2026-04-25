@@ -2,10 +2,7 @@ use std::pin::Pin;
 
 use futures_lite::Stream;
 
-use crate::{
-    model::{BackgroundEvent, Device},
-    server::RequestId,
-};
+use crate::model::{BackgroundEvent, Device, RequestId};
 
 /// Used for communication from trusted UI to credential service
 pub trait FlowController {

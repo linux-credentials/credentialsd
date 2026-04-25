@@ -1,5 +1,12 @@
-use async_std::stream::Stream;
-use credentialsd_common::{client::FlowController, server::RequestId};
+use async_std::{
+    channel::{Receiver, Sender},
+    stream::Stream,
+    sync::Mutex as AsyncMutex,
+};
+use credentialsd_common::{
+    client::FlowController,
+    model::{BackendRequest, BackgroundEvent, RequestId},
+};
 use futures_lite::StreamExt;
 use zbus::Connection;
 
@@ -116,5 +123,53 @@ impl FlowController for DbusCredentialClient {
             tracing::warn!("Failed to cancel request {request_id}");
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct FlowControlClient {
+    pub tx: Sender<BackendRequest>,
+    pub rx: AsyncMutex<Option<Receiver<BackgroundEvent>>>,
+}
+
+impl FlowControlClient {
+    pub async fn discover_hybrid_authenticators(&self) -> Result<(), ()> {
+        self.send(BackendRequest::StartHybridDiscovery).await
+    }
+
+    pub async fn discover_nfc_authenticators(&mut self) -> Result<(), ()> {
+        self.send(BackendRequest::StartNfcDiscovery).await
+    }
+
+    pub async fn discover_usb_authenticators(&mut self) -> Result<(), ()> {
+        self.send(BackendRequest::StartUsbDiscovery).await
+    }
+
+    pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
+        self.send(BackendRequest::EnterClientPin(pin)).await
+    }
+
+    pub async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
+        self.send(BackendRequest::SelectCredential(credential_id))
+            .await
+    }
+
+    pub async fn cancel_request(&self) -> Result<(), ()> {
+        self.send(BackendRequest::CancelRequest).await
+    }
+
+    /// Returns a channel for background events.
+    /// Can only be called once; returns an error if the subscription has already been taken.
+    pub async fn subscribe(&mut self) -> Result<Receiver<BackgroundEvent>, ()> {
+        self.rx.lock().await.take().ok_or_else(|| {
+            tracing::error!("Subscribe has already been called.");
+        })
+    }
+
+    async fn send(&self, request: BackendRequest) -> Result<(), ()> {
+        match self.tx.send(request).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(()),
+        }
     }
 }

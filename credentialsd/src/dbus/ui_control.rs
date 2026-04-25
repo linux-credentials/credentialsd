@@ -1,12 +1,44 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::error::Error;
+use std::{error::Error, future::Future, sync::Arc};
 
-use zbus::{fdo, proxy, Connection};
+use futures_lite::StreamExt;
+use tokio::sync::{
+    mpsc::{self, Receiver},
+    Mutex as AsyncMutex,
+};
+use zbus::{
+    fdo, proxy,
+    zvariant::{ObjectPath, Optional, OwnedObjectPath},
+    Connection,
+};
 
-use credentialsd_common::server::{RequestId, ViewRequest};
+use credentialsd_common::{
+    model::{BackendRequest, BackgroundEvent, Device, Operation, PortalBackendOptions, RequestId},
+    server::{ViewRequest, WindowHandle},
+};
 
-use crate::credential_service::UiController;
+/// Used by the credential service to control the UI.
+pub trait UiController {
+    fn launch_ui(
+        &self,
+        request: ViewRequest,
+    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
+
+    fn initialize(
+        &self,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
+    ) -> impl Future<Output = std::result::Result<Flow, Box<dyn Error>>> + Send;
+}
 
 #[proxy(
     gen_blocking = false,
@@ -17,6 +49,67 @@ use crate::credential_service::UiController;
 trait UiControlService {
     fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
     fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
+}
+
+#[proxy(
+    gen_blocking = false,
+    interface = "org.freedesktop.impl.portal.experimental.Credential",
+    default_service = "xyz.iinuwa.credentialsd.UiControl",
+    default_path = "/org/freedesktop/portal/desktop"
+)]
+trait UiControlService2 {
+    fn initialize(
+        &self,
+        parent_window: Optional<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
+    ) -> fdo::Result<OwnedObjectPath>;
+}
+
+#[derive(Clone, Debug)]
+pub struct Flow {
+    proxy: Arc<FlowObjectProxy<'static>>,
+    ui_events_rx: Arc<AsyncMutex<Receiver<BackendRequest>>>,
+}
+
+impl Flow {
+    pub async fn receive_ui_event(&self) -> Option<BackendRequest> {
+        self.ui_events_rx.lock().await.recv().await
+    }
+
+    pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
+        if let Err(err) = self.proxy.notify_state_changed(event).await {
+            match err {
+                fdo::Error::UnknownObject(description) => {
+                    tracing::error!(%description, "Flow D-Bus object no longer available at path");
+                }
+                _ => tracing::error!(%err, "Failed to send update to backend"),
+            }
+            return Err(());
+        }
+        Ok(())
+    }
+}
+#[proxy(
+    gen_blocking = false,
+    interface = "org.freedesktop.impl.portal.experimental.Credential.FlowObject",
+    default_service = "xyz.iinuwa.credentialsd.UiControl"
+)]
+trait FlowObject {
+    async fn start(&self) -> fdo::Result<()>;
+    async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()>;
+
+    async fn cancel(&self) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn user_interacted(&self, update: BackendRequest) -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -32,7 +125,23 @@ impl UiControlServiceClient {
     async fn proxy(&self) -> Result<UiControlServiceProxy<'_>, zbus::Error> {
         UiControlServiceProxy::new(&self.conn).await
     }
+
+    async fn proxy2(&self) -> Result<UiControlService2Proxy<'_>, zbus::Error> {
+        UiControlService2Proxy::new(&self.conn).await
+    }
+
+    async fn request_proxy(
+        &self,
+        request_id: RequestId,
+    ) -> Result<FlowObjectProxy<'_>, zbus::Error> {
+        let object_path = ObjectPath::from_string_unchecked(format!(
+            "/org/freedesktop/portal/Credential/{}",
+            request_id
+        ));
+        FlowObjectProxy::new(&self.conn, object_path).await
+    }
 }
+
 impl UiController for UiControlServiceClient {
     async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
         self.proxy()
@@ -41,11 +150,73 @@ impl UiController for UiControlServiceClient {
             .await
             .map_err(|err| err.into())
     }
+
+    async fn initialize(
+        &self,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        request_id: RequestId,
+        devices: Vec<Device>,
+        app_id: String,
+        app_display_name: String,
+        app_pid: u32,
+        app_path: String,
+        options: PortalBackendOptions,
+    ) -> Result<Flow, Box<dyn Error>> {
+        let path = self
+            .proxy2()
+            .await?
+            .initialize(
+                parent_window.into(),
+                origin,
+                r#type,
+                request_id,
+                devices,
+                app_id,
+                app_display_name,
+                app_pid,
+                app_path,
+                options,
+            )
+            .await?;
+        tracing::debug!(?path, "Path initialized");
+        let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
+        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
+        let ui_event_stream = flow_object.receive_user_interacted().await?;
+        tokio::task::spawn(async move {
+            _ = forward_ui_events(ui_event_stream, from_ui_tx).await;
+        });
+        // Mark as ready to receive messages.
+        flow_object.start().await?;
+        Ok(Flow {
+            proxy: Arc::new(flow_object),
+            ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
+        })
+    }
+}
+
+async fn forward_ui_events(
+    mut ui_event_stream: UserInteractedStream,
+    tx: mpsc::Sender<BackendRequest>,
+) -> Result<(), Box<dyn Error>> {
+    tracing::debug!("Listening for events from UI");
+    while let Some(signal) = ui_event_stream.next().await {
+        tracing::trace!(?signal, "Received event from UI");
+        let event = signal.args()?.update;
+        if let Err(_) = tx.send(event).await {
+            tracing::trace!("credential service event listener stopped listening for UI events. Ending event stream listener");
+            break;
+        }
+    }
+    tracing::trace!("Stopping UI event forwarder");
+    Ok(())
 }
 
 #[cfg(test)]
 pub mod test {
     use std::{
+        error::Error,
         fmt::Debug,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -54,13 +225,17 @@ pub mod test {
     };
 
     use credentialsd_common::{
-        client::FlowController, model::BackgroundEvent, server::ViewRequest,
+        client::FlowController,
+        model::{BackgroundEvent, Device, Operation, PortalBackendOptions, RequestId},
+        server::{ViewRequest, WindowHandle},
     };
     use futures_lite::StreamExt;
     use tokio::sync::{
         mpsc::{self, Receiver, Sender},
         Mutex as AsyncMutex, Notify,
     };
+
+    use crate::dbus::ui_control::Flow;
 
     use super::UiController;
 
@@ -70,7 +245,7 @@ pub mod test {
     }
 
     impl UiController for DummyUiClient {
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
+        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
             tracing::debug!(
                 target: "DummyUiClient",
                 "Sending launch_ui() request"
@@ -81,6 +256,22 @@ pub mod test {
                 "Finish launch_ui() request"
             );
             Ok(())
+        }
+
+        async fn initialize(
+            &self,
+            _parent_window: Option<WindowHandle>,
+            _origin: String,
+            _type: Operation,
+            _request_id: RequestId,
+            _devices: Vec<Device>,
+            _app_id: String,
+            _app_display_name: String,
+            _app_pid: u32,
+            _app_path: String,
+            _options: PortalBackendOptions,
+        ) -> Result<Flow, Box<dyn Error>> {
+            unimplemented!()
         }
     }
 
@@ -211,7 +402,7 @@ pub mod test {
             );
         }
 
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
+        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
             tracing::debug!(
                 target: "DummyUiServer",
                 "Received launch_ui() request"

@@ -8,14 +8,143 @@ use serde::{
 };
 use zvariant::{
     self, Array, DeserializeDict, DynamicDeserialize, NoneValue, Optional, OwnedValue,
-    SerializeDict, Signature, Structure, StructureBuilder, Type, Value, signature::Fields,
+    SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackgroundEvent, Operation, RequestingApplication};
+use crate::model::{
+    BackendRequest, BackgroundEvent, Device, Operation, RequestId, RequestingApplication,
+};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U8, &Signature::Variant],
 });
+
+/// Ceremony completed successfully
+const BACKGROUND_EVENT_CEREMONY_COMPLETED: u32 = 0x01;
+/// Device needs the client PIN to be entered. The backend should collect the
+/// PIN and send it back with `EnterClientPin` event of `UserInteracted` signal.
+const BACKGROUND_EVENT_NEEDS_PIN: u32 = 0x10;
+const BACKGROUND_EVENT_NEEDS_USER_VERIFICATION: u32 = 0x11;
+const BACKGROUND_EVENT_NEEDS_PRESENCE: u32 = 0x12;
+const BACKGROUND_EVENT_SELECTING_CREDENTIAL: u32 = 0x13;
+
+const BACKGROUND_EVENT_HYBRID_IDLE: u32 = 0x20;
+const BACKGROUND_EVENT_HYBRID_STARTED: u32 = 0x21;
+const BACKGROUND_EVENT_HYBRID_CONNECTING: u32 = 0x22;
+const BACKGROUND_EVENT_HYBRID_CONNECTED: u32 = 0x23;
+
+const BACKGROUND_EVENT_NFC_IDLE: u32 = 0x30;
+const BACKGROUND_EVENT_NFC_WAITING: u32 = 0x31;
+const BACKGROUND_EVENT_NFC_SELECTING_DEVICE: u32 = 0x32;
+const BACKGROUND_EVENT_NFC_CONNECTED: u32 = 0x33;
+
+const BACKGROUND_EVENT_USB_IDLE: u32 = 0x41;
+const BACKGROUND_EVENT_USB_WAITING: u32 = 0x42;
+const BACKGROUND_EVENT_USB_SELECTING_DEVICE: u32 = 0x43;
+const BACKGROUND_EVENT_USB_CONNECTED: u32 = 0x44;
+
+const BACKGROUND_EVENT_ERROR_AUTHENTICATOR: u32 = 0x80000001;
+const BACKGROUND_EVENT_ERROR_NO_CREDENTIALS: u32 = 0x80000002;
+const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000003;
+const BACKGROUND_EVENT_ERROR_INTERNAL: u32 = 0x80000004;
+const BACKGROUND_EVENT_ERROR_TIMED_OUT: u32 = 0x80000005;
+const BACKGROUND_EVENT_ERROR_CANCELLED: u32 = 0x80000006;
+
+// BackendRequest
+const BACKEND_REQUEST_START_HYBRID_DISCOVERY: u32 = 0x01;
+const BACKEND_REQUEST_START_USB_DISCOVERY: u32 = 0x02;
+const BACKEND_REQUEST_START_NFC_DISCOVERY: u32 = 0x03;
+const BACKEND_REQUEST_ENTER_CLIENT_PIN: u32 = 0x04;
+const BACKEND_REQUEST_SELECT_CREDENTIAL: u32 = 0x05;
+const BACKEND_REQUEST_CANCEL_REQUEST: u32 = 0x06;
+
+impl Type for BackendRequest {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
+}
+
+impl From<&BackendRequest> for Structure<'_> {
+    fn from(value: &BackendRequest) -> Self {
+        match value {
+            BackendRequest::StartHybridDiscovery => tag_value_to_struct(0x01, None),
+            BackendRequest::StartNfcDiscovery => tag_value_to_struct(0x02, None),
+            BackendRequest::StartUsbDiscovery => tag_value_to_struct(0x03, None),
+            BackendRequest::EnterClientPin(pin) => {
+                tag_value_to_struct(0x04, Some(Value::Str(pin.into())))
+            }
+            BackendRequest::SelectCredential(credential_id) => {
+                tag_value_to_struct(0x05, Some(Value::Str(credential_id.into())))
+            }
+            BackendRequest::CancelRequest => tag_value_to_struct(0x06, None),
+        }
+    }
+}
+
+impl TryFrom<&Structure<'_>> for BackendRequest {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Structure<'_>) -> Result<Self, Self::Error> {
+        let (tag, value) = parse_tag_value_struct(value)?;
+
+        match tag {
+            0x01 => Ok(BackendRequest::StartHybridDiscovery),
+            0x02 => Ok(BackendRequest::StartNfcDiscovery),
+            0x03 => Ok(BackendRequest::StartUsbDiscovery),
+            0x04 => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(BackendRequest::EnterClientPin(s.as_str().to_string()))
+            }
+            0x05 => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(BackendRequest::SelectCredential(s.as_str().to_string()))
+            }
+            0x06 => Ok(BackendRequest::CancelRequest),
+            _ => Err(zvariant::Error::Message(format!(
+                "Unknown BackendRequest tag : {tag}"
+            ))),
+        }
+    }
+}
+
+impl Serialize for BackendRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BackendRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let d = Structure::deserializer_for_signature(TAG_VALUE_SIGNATURE).map_err(|err| {
+            D::Error::custom(format!(
+                "could not create deserializer for tag-value struct: {err}"
+            ))
+        })?;
+        let structure = d.deserialize(deserializer)?;
+        (&structure).try_into().map_err(|err| {
+            D::Error::custom(format!(
+                "could not deserialize structure into BackendRequest: {err}"
+            ))
+        })
+    }
+}
 
 impl Type for BackgroundEvent {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
@@ -308,9 +437,6 @@ impl Type for crate::model::HybridState {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
 
-/// Identifier for a request to be used for cancellation.
-pub type RequestId = u32;
-
 impl Type for crate::model::UsbState {
     const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
 }
@@ -587,18 +713,27 @@ where
         .map_err(|err| D::Error::custom(format!("could not deserialize from structure: {err}")))
 }
 
-#[derive(Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct ViewRequest {
     pub operation: Operation,
+
+    /// ID of the request.
     pub id: RequestId,
+
+    /// The RP ID
     pub rp_id: String,
+
+    /// Details about the application requesting credentials.
     pub requesting_app: RequestingApplication,
+
+    /// Initial list of device interfaces that may provide credentials.
+    pub initial_devices: Vec<Device>,
 
     /// Client window handle.
     pub window_handle: Optional<WindowHandle>,
 }
 
-#[derive(Type, PartialEq, Debug)]
+#[derive(Clone, Debug, PartialEq, Type)]
 #[zvariant(signature = "s")]
 pub enum WindowHandle {
     Wayland(String),
