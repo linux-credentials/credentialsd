@@ -146,7 +146,7 @@ impl ViewModel {
                                         let localized = ngettext(
                                             "Enter your PIN. One attempt remaining.",
                                             "Enter your PIN. %d attempts remaining.",
-                                            left,
+                                            left.into(),
                                         );
                                         localized.replace("%d", &format!("{}", left))
                                     } else {
@@ -162,7 +162,7 @@ impl ViewModel {
                                             let localized = ngettext(
                                                 "Touch your device again. One attempt remaining.",
                                                 "Touch your device again. %d attempts remaining.",
-                                                left,
+                                                left.into(),
                                             );
                                             localized.replace("%d", &format!("{}", left))
                                         }

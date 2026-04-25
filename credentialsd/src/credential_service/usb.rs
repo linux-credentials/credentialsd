@@ -17,7 +17,10 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, Error};
+use credentialsd_common::{
+    model::{Credential, Error},
+    server::BackgroundEvent,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -562,6 +565,36 @@ impl From<&UsbState> for credentialsd_common::model::UsbState {
             }
             UsbState::Completed => credentialsd_common::model::UsbState::Completed,
             UsbState::Failed(err) => credentialsd_common::model::UsbState::Failed(err.to_owned()),
+        }
+    }
+}
+
+impl From<&UsbState> for BackgroundEvent {
+    fn from(value: &UsbState) -> Self {
+        match value {
+            UsbState::Idle => BackgroundEvent::UsbIdle,
+            UsbState::Waiting => BackgroundEvent::UsbWaiting,
+            UsbState::SelectingDevice => BackgroundEvent::UsbSelectingDevice,
+            UsbState::Connected => BackgroundEvent::UsbConnected,
+            UsbState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
+                attempts_left: *attempts_left,
+            },
+            UsbState::NeedsUserVerification { attempts_left } => {
+                BackgroundEvent::NeedsUserVerification {
+                    attempts_left: *attempts_left,
+                }
+            }
+            UsbState::NeedsUserPresence => BackgroundEvent::NeedsUserPresence,
+            UsbState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
+                creds: creds.to_owned().into_iter().map(|c| c.into()).collect(),
+            },
+            UsbState::Completed => BackgroundEvent::CeremonyCompleted,
+            UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
+            UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::PinNotSet) => BackgroundEvent::ErrorPinNotSet,
+            UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }

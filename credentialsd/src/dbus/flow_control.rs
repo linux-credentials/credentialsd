@@ -5,9 +5,9 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackgroundEvent, Device, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
+    Device, Error as CredentialServiceError, RequestingApplication, WebAuthnError,
 };
-use credentialsd_common::server::{RequestId, WindowHandle};
+use credentialsd_common::server::{BackgroundEvent, RequestId, WindowHandle};
 use futures_lite::StreamExt;
 use tokio::sync::oneshot;
 use tokio::{
@@ -163,9 +163,7 @@ where
                 }
             };
             while let Some(state) = stream.next().await {
-                let event = credentialsd_common::model::BackgroundEvent::HybridQrStateChanged(
-                    state.clone().into(),
-                );
+                let event = (&state).into();
                 if let Err(err) = send_state_update(emitter, &signal_state, event).await {
                     tracing::error!("Failed to send state update to UI: {err}");
                     break;
@@ -206,8 +204,7 @@ where
                 }
             };
             while let Some(state) = stream.next().await {
-                let event =
-                    credentialsd_common::model::BackgroundEvent::UsbStateChanged((&state).into());
+                let event = (&state).into();
                 if let Err(err) = send_state_update(emitter, &signal_state, event).await {
                     tracing::error!("Failed to send state update to UI: {err}");
                     break;
@@ -256,8 +253,7 @@ where
                 }
             };
             while let Some(state) = stream.next().await {
-                let event =
-                    credentialsd_common::model::BackgroundEvent::NfcStateChanged((&state).into());
+                let event = (&state).into();
                 if let Err(err) = send_state_update(emitter, &signal_state, event).await {
                     tracing::error!("Failed to send state update to UI: {err}");
                     break;
@@ -267,7 +263,7 @@ where
                         let mut nfc_pin_tx = nfc_pin_tx.lock().await;
                         let _ = nfc_pin_tx.insert(pin_tx);
                     }
-                    NfcState::SelectCredential { cred_tx, .. } => {
+                    NfcState::SelectingCredential { cred_tx, .. } => {
                         let mut nfc_cred_tx = nfc_cred_tx.lock().await;
                         let _ = nfc_cred_tx.insert(cred_tx);
                     }
@@ -403,8 +399,8 @@ pub mod test {
 
     use credentialsd_common::{
         client::FlowController,
-        model::{BackgroundEvent, Device},
-        server::RequestId,
+        model::Device,
+        server::{BackgroundEvent, RequestId},
     };
     use futures_lite::{Stream, StreamExt};
     use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
@@ -659,21 +655,14 @@ pub mod test {
                     while let Some(hybrid_state) = stream.next().await {
                         tracing::debug!(target: "DummyFlowServer", "Received hybrid state change: {hybrid_state:?}");
                         if let Some(tx) = tx_weak.upgrade() {
+                            tx.send((&hybrid_state).into())
+                                .await
+                                .unwrap();
                             match hybrid_state {
                                 HybridState::Completed | HybridState::Failed => {
-                                    tx.send(BackgroundEvent::HybridQrStateChanged(
-                                        hybrid_state.into(),
-                                    ))
-                                    .await
-                                    .unwrap();
                                     break;
                                 }
-                                _ => tx
-                                    .send(BackgroundEvent::HybridQrStateChanged(
-                                        hybrid_state.into(),
-                                    ))
-                                    .await
-                                    .unwrap(),
+                                _ => {},
                             };
                         }
                     }
@@ -700,11 +689,7 @@ pub mod test {
                 let task = tokio::spawn(async move {
                     while let Some(state) = stream.next().await {
                         if let Some(tx) = tx_weak.upgrade() {
-                            if tx
-                                .send(BackgroundEvent::UsbStateChanged(state.clone().into()))
-                                .await
-                                .is_err()
-                            {
+                            if tx.send((&state).into()).await.is_err() {
                                 tracing::debug!("Closing USB background event forwarder");
                                 break;
                             }
@@ -739,11 +724,7 @@ pub mod test {
                 let task = tokio::spawn(async move {
                     while let Some(state) = stream.next().await {
                         if let Some(tx) = tx_weak.upgrade() {
-                            if tx
-                                .send(BackgroundEvent::NfcStateChanged(state.clone().into()))
-                                .await
-                                .is_err()
-                            {
+                            if tx.send((&state).into()).await.is_err() {
                                 tracing::debug!("Closing NFC background event forwarder");
                                 break;
                             }

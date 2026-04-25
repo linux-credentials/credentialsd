@@ -64,7 +64,7 @@ impl FlowController for DbusCredentialClient {
         &mut self,
     ) -> std::result::Result<
         std::pin::Pin<
-            Box<dyn Stream<Item = credentialsd_common::model::BackgroundEvent> + Send + 'static>,
+            Box<dyn Stream<Item = credentialsd_common::server::BackgroundEvent> + Send + 'static>,
         >,
         (),
     > {

@@ -122,11 +122,13 @@ pub struct RequestingParty {
     pub origin: String,
 }
 
+// TODO: Move to credentialsd-ui
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
     SetTitle((String, String)),
     SetDevices(Vec<Device>),
-    SetCredentials(Vec<Credential>),
+    // TODO: Fix this
+    SetCredentials(Vec<crate::server::Credential>),
 
     WaitingForDevice(Device),
     SelectingDevice,
@@ -250,13 +252,6 @@ pub enum NfcState {
 
     /// Interaction with the authenticator failed.
     Failed(Error),
-}
-
-#[derive(Clone, Debug)]
-pub enum BackgroundEvent {
-    UsbStateChanged(UsbState),
-    HybridQrStateChanged(HybridState),
-    NfcStateChanged(NfcState),
 }
 
 #[derive(Debug, Clone)]

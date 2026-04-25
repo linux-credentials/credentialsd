@@ -2,6 +2,7 @@ use core::panic;
 use std::fmt::Debug;
 
 use async_stream::stream;
+use credentialsd_common::server::BackgroundEvent;
 use futures_lite::Stream;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Sender};
@@ -216,6 +217,19 @@ impl From<HybridState> for credentialsd_common::model::HybridState {
             HybridState::Completed => credentialsd_common::model::HybridState::Completed,
             HybridState::UserCancelled => credentialsd_common::model::HybridState::UserCancelled,
             HybridState::Failed => credentialsd_common::model::HybridState::Failed,
+        }
+    }
+}
+
+impl From<&HybridState> for BackgroundEvent {
+    fn from(value: &HybridState) -> Self {
+        match value {
+            HybridState::Init(qr_code) => BackgroundEvent::HybridStarted(qr_code.to_string()),
+            HybridState::Connecting => BackgroundEvent::HybridConnecting,
+            HybridState::Connected => BackgroundEvent::HybridConnected,
+            HybridState::Completed => BackgroundEvent::CeremonyCompleted,
+            HybridState::UserCancelled => BackgroundEvent::ErrorCancelled,
+            HybridState::Failed => BackgroundEvent::ErrorAuthenticator,
         }
     }
 }

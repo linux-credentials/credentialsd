@@ -54,7 +54,8 @@ pub mod test {
     };
 
     use credentialsd_common::{
-        client::FlowController, model::BackgroundEvent, server::ViewRequest,
+        client::FlowController,
+        server::{BackgroundEvent, ViewRequest},
     };
     use futures_lite::StreamExt;
     use tokio::sync::{
