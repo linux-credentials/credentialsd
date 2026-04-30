@@ -263,15 +263,24 @@ class MainWindow(Gtk.ApplicationWindow):
         username = self.username.get_text()
         if username:
             print(f"Using username-flow: {username}")
-            sql = """
+            db = connect_db()
+            get_user_sql = """
+            select user_id from users u
+            where u.username = ?
+            """
+
+            get_user_creds_sql = """
             select p.user_handle, cred_id, backup_eligible, backup_state, cose_pub_key, sign_count
             from user_passkeys p
             inner join users u on u.user_handle = p.user_handle
             where u.username = ?
             """
-            db = connect_db()
             with closing(db.cursor()) as cur:
-                cur.execute(sql, (username,))
+                cur.execute(get_user_sql, (username,))
+                if not cur.fetchone():
+                    raise Exception(f"No account found for username: {username}")
+
+                cur.execute(get_user_creds_sql, (username,))
                 user_creds = []
                 for row in cur.fetchall():
                     [
