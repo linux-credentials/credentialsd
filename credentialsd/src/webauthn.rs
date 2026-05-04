@@ -746,7 +746,7 @@ impl FromStr for AppId {
 }
 
 /// The origin of the client for the request.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Origin {
     Https { host: String, port: Option<u16> },
     AppId(AppId),

@@ -35,6 +35,38 @@ pub async fn start_gateway<C: CredentialRequestController + Send + Sync + 'stati
     dbus::start_dbus_gateway(svc).await
 }
 
+/// Type denoting a request's privilege level and origin.
+#[derive(Debug)]
+enum RequestKind {
+    /// Only privileged clients are trusted to set both the origin and top origin.
+    Privileged {
+        origin: Origin,
+        top_origin: Option<Origin>,
+    },
+    /// Unprivileged clients may only set an origin, which will be verified
+    /// against a static list of allowed origins for the client.
+    Unprivileged(Origin),
+}
+
+/// Details about the credential request and the client making it.
+#[derive(Debug)]
+struct RequestContext {
+    app_id: AppId,
+    app_name: String,
+    pid: u32,
+    request_kind: RequestKind,
+}
+
+impl From<RequestContext> for RequestingApplication {
+    fn from(value: RequestContext) -> Self {
+        RequestingApplication {
+            path_or_app_id: value.app_id.as_ref().to_string(),
+            name: Some(value.app_name).into(),
+            pid: value.pid,
+        }
+    }
+}
+
 /// Service responsible for processing credential requests received from various
 /// client interfaces.
 struct GatewayService {
@@ -47,10 +79,11 @@ impl GatewayService {
     async fn handle_create_credential(
         &self,
         request: CreateCredentialRequest,
-        request_environment: NavigationContext,
-        requesting_app: Option<RequestingApplication>,
+        context: RequestContext,
         parent_window: Option<WindowHandle>,
     ) -> Result<CreateCredentialResponse, WebAuthnError> {
+        let request_environment = validate_request(&context)?;
+
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             // TODO: assert that RP ID is bound to origin:
             // - if RP ID is not set, set the RP ID to the origin's effective domain
@@ -74,7 +107,7 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(requesting_app, cred_request, parent_window)
+                .request_credential(Some(context.into()), cred_request, parent_window)
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -104,11 +137,12 @@ impl GatewayService {
     async fn handle_get_credential(
         &self,
         request: GetCredentialRequest,
-        request_environment: NavigationContext,
-        requesting_app: Option<RequestingApplication>,
+        context: RequestContext,
         parent_window: Option<WindowHandle>,
     ) -> Result<GetCredentialResponse, WebAuthnError> {
-        if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
+        let request_environment = validate_request(&context)?;
+
+        if request.public_key.is_some() {
             // Setup request
 
             // TODO: assert that RP ID is bound to origin:
@@ -128,7 +162,7 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(requesting_app, cred_request, parent_window)
+                .request_credential(Some(context.into()), cred_request, parent_window)
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
@@ -150,7 +184,7 @@ impl GatewayService {
                 Err(WebAuthnError::NotAllowedError)
             }
         } else {
-            tracing::error!("Unknown credential type request: {}", request.r#type);
+            tracing::error!("Request did not match any known credential types. Supported types: [`public_key`].");
             Err(WebAuthnError::TypeError)
         }
     }
@@ -160,7 +194,7 @@ impl GatewayService {
             conditional_create: false,
             conditional_get: false,
             hybrid_transport: true,
-            passkey_platform_authenticator: false,
+            passkey_platform_authenticator: true,
             user_verifying_platform_authenticator: false,
             related_origins: false,
             signal_all_accepted_credentials: false,
@@ -168,6 +202,29 @@ impl GatewayService {
             signal_unknown_credential: false,
         }
     }
+}
+
+/// Verifies that the calling client is able to request credentials for the
+/// given origin, then returns the origin.
+fn validate_request(context: &RequestContext) -> Result<NavigationContext, WebAuthnError> {
+    let request_environment = match &context.request_kind {
+        RequestKind::Privileged { origin, top_origin } => {
+            check_origin_from_privileged_client(origin, top_origin.as_ref())?
+        }
+        RequestKind::Unprivileged(origin) => {
+            let origin_allowed_for_app_id = true;
+            if origin_allowed_for_app_id {
+                NavigationContext::SameOrigin(origin.clone())
+            } else {
+                tracing::warn!(
+                    "App ID {:?} is not allowed for origin {origin}",
+                    context.app_id
+                );
+                return Err(WebAuthnError::SecurityError);
+            }
+        }
+    };
+    Ok(request_environment)
 }
 
 fn get_app_info_from_pid(pid: u32) -> Option<RequestingApplication> {
@@ -223,7 +280,7 @@ async fn should_trust_app_id(pid: u32) -> bool {
         return false;
     };
     tracing::debug!(
-        "mount namespace:\n  ours:\t{:?}\n  theirs:\t{:?}",
+        "mount namespace:\n  ours:   {:?}\n  theirs: {:?}",
         my_mnt_ns,
         peer_mnt_ns
     );
@@ -255,30 +312,48 @@ fn check_origin_from_app(
     app_id: &AppId,
     origin: Origin,
     top_origin: Option<Origin>,
-) -> Result<NavigationContext, WebAuthnError> {
-    let trusted_clients = [
-        "org.mozilla.firefox",
-        "xyz.iinuwa.credentialsd.DemoCredentialsUi",
-    ];
-    let is_privileged_client = trusted_clients.contains(&app_id.as_ref());
+) -> Result<RequestKind, WebAuthnError> {
+    let is_privileged_client = {
+        let trusted_clients = [
+            "org.mozilla.firefox",
+            "xyz.iinuwa.credentialsd.DemoCredentialsUi",
+        ];
+        let mut privileged = trusted_clients.contains(&app_id.as_ref());
+        if cfg!(debug_assertions) && !privileged {
+            let trusted_clients_env = std::env::var("CREDSD_TRUSTED_APP_IDS").unwrap_or_default();
+            privileged = trusted_clients_env
+                .split(',')
+                .map(String::from)
+                .any(|c| app_id.as_ref() == c);
+        }
+        privileged
+    };
     if is_privileged_client {
-        check_origin_from_privileged_client(origin, top_origin)
+        let (origin, top_origin) =
+            match check_origin_from_privileged_client(&origin, top_origin.as_ref())? {
+                NavigationContext::SameOrigin(origin) => (origin, None),
+                NavigationContext::CrossOrigin((origin, top_origin)) => (origin, Some(top_origin)),
+            };
+        Ok(RequestKind::Privileged { origin, top_origin })
     } else {
-        Ok(NavigationContext::SameOrigin(Origin::AppId(app_id.clone())))
+        Ok(RequestKind::Unprivileged(origin))
     }
 }
 
 fn check_origin_from_privileged_client(
-    origin: Origin,
-    top_origin: Option<Origin>,
+    origin: &Origin,
+    top_origin: Option<&Origin>,
 ) -> Result<NavigationContext, WebAuthnError> {
     match (origin, top_origin) {
-        (origin @ Origin::Https { .. }, None) => Ok(NavigationContext::SameOrigin(origin)),
+        (origin @ Origin::Https { .. }, None) => Ok(NavigationContext::SameOrigin(origin.clone())),
         (origin @ Origin::Https { .. }, Some(top_origin @ Origin::Https { .. })) => {
             if origin == top_origin {
-                Ok(NavigationContext::SameOrigin(origin))
+                Ok(NavigationContext::SameOrigin(origin.clone()))
             } else {
-                Ok(NavigationContext::CrossOrigin((origin, top_origin)))
+                Ok(NavigationContext::CrossOrigin((
+                    origin.clone(),
+                    top_origin.clone(),
+                )))
             }
         }
         _ => {
@@ -297,7 +372,7 @@ mod test {
     use super::check_origin_from_privileged_client;
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();
-        check_origin_from_privileged_client(origin, None)
+        check_origin_from_privileged_client(&origin, None)
     }
 
     #[test]

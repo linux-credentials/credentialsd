@@ -50,6 +50,10 @@ sequenceDiagram
 
 - (UI Controller): Renamed `InitiateEventStream()` to `Subscribe()`
 - (UI Controller): Serialize enums (including BackgroundEvent, HybridState and UsbState) as (yv) structs instead for a{sv} dicts
+- (Gateway): Flatten `request` parameters into options.
+- (Gateway): Make `origin` and `type` a required method parameter.
+- (Gateway): Flatten nested D-Bus struct with `request_json` on CreateCredential and GetCredential
+- (Gateway): Remove Client Capabilities method from Gateway API until further notice.
 
 ### Improvements
 
@@ -85,8 +89,6 @@ A single null byte (`\0`) is sent for unused enum values.
 
 ## D-Bus/JSON serialization
 
-> TODO: rename fields to snake_case so that this note is true in all cases.
-
 This API is modelled after the [Credential Management API][credman-api]. The
 top-level fields corresponding to `navigator.credentials.create()` and `get()`
 are passed as fields in D-Bus dictionaries using snake_case, according to D-Bus
@@ -106,9 +108,12 @@ this API takes:
 
 ```
 [a{sv}] {
-    origin: Variant(""),
-    top_origin: Variant(""), // topOrigin is changed to top_origin
-    password: Variant(true),
+    IN origin s = "https://example.com",
+    IN type = "password",
+    options a{sv} = {
+        top_origin: Variant("https://example.com"), // topOrigin is changed to top_origin
+        password: Variant(true),
+    }
 }
 ```
 
@@ -123,8 +128,8 @@ So if a client passed this in JavaScript:
 
 ```javascript
 {
-  "origin": "example.com",
-  "topOrigin": "example.com",
+  "origin": "https://example.com",
+  "topOrigin": "https://example.com",
   "publicKey": {
     "challenge": new Uint8Array([97, 32, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
     "excludeCredentials": [
@@ -138,18 +143,21 @@ So if a client passed this in JavaScript:
 it would pass this request to this API:
 
 ```
-[a{sv}] {
-  origin: Variant(''),
-  top_origin: Variant(''),                      // top-level fields topOrigin and publicKey are
-  public_key: Variant([a{sv}] {                 // changed to snake_case
-    registration_request_json: [s] '{           // <- JSON-encoded string
-        "challenge": "YSBjaGFsbGVuZ2U",         // buffer is encoded as base64url without padding
-        "excludeCredentials": [                 // "excludeCredentials" is not changed to snake_case
-            {"type": "public-key", "alg": -7}   // "public-key" is not changed to snake_case
+CreateCredential(
+  // ...
+  IN origin s = "https://example.com",
+  IN type s = "publicKey",
+  IN options a{sv} {
+    top_origin: Variant("https://example.com"), // top-level fields topOrigin and publicKey are
+                                                // changed to snake_case, JSON-encoded string
+    public_key: [s] = "{                        // `public_key` is a JSON-encoded string, snake_case field name
+        \"challenge\": \"YSBjaGFsbGVuZ2U\",     // "challenge" buffer is encoded as base64url without padding
+        \"excludeCredentials\": [               // "excludeCredentials" is not changed to snake_case within the JSON
+        {\"type\": \"public-key\", \"alg\": -7} // "public-key" is not changed to snake_case within the JSON string
         ]
         // ...
-    }'
-  })
+    }"
+  }
 }
 ```
 
@@ -191,12 +199,15 @@ for what kind of credential the client would like to create.
 ```
 CreateCredentialRequest(
     IN parent_window s,
+    IN origin s,
+    IN type CredentialType,
     IN options a{sv} {
-        origin: string
-        is_same_origin: string
-        type: CredentialType
-        <extra_fields>
-    }
+        activation_token: s
+        top_origin: s
+        <type_specific_fields>
+    },
+    IN app_id s,
+    IN app_display_name s
 )
 ```
 
@@ -212,15 +223,11 @@ CredentialType[s] [
 
 #### Request context
 
-> TODO: replace is_same_origin with topOrigin, required if origin is set.
-
-> TODO: Should we say that `origin` will be optional in the future?
-
 > TODO: Define methods for safe comparison of hosts Punycode origins.
 
-`origin` and `is_same_origin` define the request context. Both are required. A
-request is considered to be a cross-origin request if `is_same_origin` is
-`false`. For certain credentials, cross-origin requests are not allowed and
+`origin` and `options.top_origin` define the request context. `origin` is required. A
+request is considered to be a cross-origin request if `options.top_origin` is
+specified. For certain credentials, cross-origin requests are not allowed and
 will be denied.
 
 At this time, only [web origins][web-origins] with HTTPS schemes are permitted
@@ -233,27 +240,29 @@ suffix, as defined by the [Public Suffix List][PSL].
 [web-origins]: https://html.spec.whatwg.org/multipage/browsers.html#concept-origin-tuple
 [PSL]: https://github.com/publicsuffix/list
 
-#### Credential Types
+#### Credential Request Types
 
-> TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
+##### WebAuthn Credential Request
 
 Currently, there is only one supported type of `CreateCredentialRequest`,
 `CreatePublicKeyCredentialRequest`, identified by `type: "publicKey"` and
-corresponds to WebAuthn credentials:
-
-    CreatePublicKeyCredentialRequest[a{sv}] : CreateCredentialRequest {
-        origin: string
-        is_same_origin: string
-        type: "publicKey"
-        publicKey: CreatePublicKeyCredentialOptions[a{sv}] {
-            // WebAuthn credential attestation JSON
-            request_json: String
-        }
-    }
-
-`request_json` is a string of JSON that corresponds to the WebAuthn
+corresponds to WebAuthn credentials. It extends the `options` parameter
+with a field `public_key`, which is a string of JSON that corresponds to the
+WebAuthn
 [`PublicKeyCredentialCreationOptions`][def-pubkeycred-creation-options]
 type.
+
+    CreatePublicKeyCredentialRequest: CreateCredentialRequest (
+        IN parent_window s,
+        IN origin s,
+        IN type s = "publicKey",
+        options a{sv} {
+            <other optional fields>,
+            public_key: s  // WebAuthn credential attestation JSON
+        },
+        IN app_id s,
+        IN app_display_name s
+    )
 
 ### Response
 
@@ -263,24 +272,26 @@ type.
 
 `CreateCredentialResponse` is a polymorphic type that depends on the type of
 the request sent. Its `type` field is a string specifies what kind of
-credential it is, and what `<extra_fields>` should be expected.
+credential it is, and what `<type_specific_fields>` should be expected.
 
 ```
 CreateCredentialResponse[a{sv}] {
     type: CredentialType
-    <extra_fields>
+    <type_specific_fields>
 }
 ```
 
 `CredentialType` is defined above.
+
+#### WebAuthn Credential Response
 
 As the only supported request is `CreatePublicKeyCredentialRequest`, the only
 type of response is `CreateCredentialResponse` is `CreatePublicKeyResponse`, also
 denoted by `type: "publicKey"`:
 
     CreatePublicKeyResponse {
-        type: "publicKey"
-        registration_response_json: String
+        type: s = "publicKey"
+        registration_response_json: s
     }
 
 `registration_response_json` is a JSON string that corresponds to the WebAuthn
@@ -308,12 +319,16 @@ credentials the client will accept.
 
 ```
 GetCredentialRequest (
-    IN parent_window s
+    IN parent_window s,
+    IN origin s,
     IN options a{sv} {
-        origin: string
-        is_same_origin: string
-        publicKey: GetPublicKeyCredentialOptions?
-    }
+        activation_token: s
+        top_origin: s
+        <type_specific_fields>
+        public_key: s
+    },
+    IN app_id s,
+    IN app_display_name s
 )
 ```
 
@@ -326,29 +341,20 @@ request multiple different types of credentials at once, and it can expect the
 returned credential to be any one of those credential types. Because of that,
 there is no `type` field, and credential types are specified using the optional fields.
 
+
 #### Request Context
 
-The `GetCredential()` `origin` and `is_same_origin` have the same semantics and
+The `GetCredential()` `origin` and `options.top_origin` have the same semantics and
 restrictions as in `CreateCredential()` described above.
 
 When multiple credential types are specified, the request context applies to
 all credentials.
 
-#### Credential Types
+#### Credential Request Types
 
-> TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
+##### WebAuthn Credential Request
 
-Currently, there is only one supported type of credential, specified by the
-`publicKey` field, which corresponds to WebAuthn credentials and takes a
-`GetPublicKeyCredentialOptions`:
-
-```
-GetPublicKeyCredentialOptions[a{sv}] {
-    request_json: string
-}
-```
-
-`request_json` is a string of JSON that corresponds to the WebAuthn
+Currently, there is only one supported type of credential, a WebAuthn PublicKeyCredential. A WebAuthn credential can be requested using the `options.public_key` field, which is a string of JSON that corresponds to the WebAuthn
 [`PublicKeyCredentialRequestOptions`][def-pubkeycred-request-options].
 
 [def-pubkeycred-request-options]: https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialrequestoptions
@@ -361,27 +367,27 @@ GetPublicKeyCredentialOptions[a{sv}] {
 
 `GetCredentialResponse` is a polymorphic type that depends on the type of the
 request sent. Its `type` field is a string specifies what kind of credential it
-is, and what `<extra_fields>` should be expected.
+is, and what `<type_specific_fields>` should be expected.
 
 ```
 GetCredentialResponse[a{sv}] {
     type: CredentialType
-    <extra_fields>
+    <type_specific_fields>
 }
 ```
 
 `CredentialType` is defined above.
 
-As the only supported request is `CreatePublicKeyCredentialRequest`, the only
-type of response is CreateCredentialResponse is CreatePublicKeyResponse, also
+
+#### WebAuthn Credential Response
+
+As the only supported request is `GetPublicKeyCredentialRequest`, the only
+type of response is `GetCredentialResponse` is `GetPublicKeyCredentialResponse`, also
 denoted by `type: "publicKey"`:
 
     GetPublicKeyCredentialRepsonse {
-        type: "publicKey"
-        publicKey: {
-            // WebAuthn credential assertion response JSON
-            authentication_response_json: string
-        }
+        type: s = "publicKey"
+        authentication_response_json: s // WebAuthn credential assertion response JSON
     }
 
 `authentication_response_json` is a JSON string that corresponds to the WebAuthn
@@ -398,31 +404,6 @@ denoted by `type: "publicKey"`:
 - `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
 - `TypeError`: An invalid request is made.
 - `NotAllowedError`: catch-all error.
-
-## `GetClientCapabilities() -> GetClientCapabilitiesResponse`
-
-Analogous to WebAuthn Level 3's [`getClientCapabilities()`][def-getClientCapabilities] method.
-
-### Response
-
-`GetClientCapabilitiesResponse` is a set of boolean flags indicating what features this client supports.
-
-    GetClientCapabilitiesResponse[a{sb}] {
-        conditional_create: bool,
-        conditional_get: bool,
-        hybrid_transport: bool,
-        passkey_platform_authenticator: bool,
-        user_verifying_platform_authenticator: bool,
-        related_origins: bool,
-        signal_all_accepted_credentials: bool,
-        signal_current_user_details: bool,
-        signal_unknown_credential: bool,
-    }
-
-See the WebAuthn spec for meanings of the [client capability keys][def-client-capabilitities].
-
-[def-client-capabilities]: https://www.w3.org/TR/webauthn-3/#enumdef-clientcapability
-[def-getClientCapabilities]: https://w3c.github.io/webauthn/#sctn-getClientCapabilities
 
 # Flow Control API
 

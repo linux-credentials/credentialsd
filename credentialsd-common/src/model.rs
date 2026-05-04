@@ -10,6 +10,8 @@ pub struct Credential {
     pub username: Option<String>,
 }
 
+/// Client Capabilities, as defined in
+/// [WebAuthn](https://www.w3.org/TR/webauthn-3/#enumdef-clientcapability).
 #[derive(SerializeDict, Type)]
 #[zvariant(signature = "dict", rename_all = "camelCase")]
 pub struct GetClientCapabilitiesResponse {
@@ -110,7 +112,7 @@ pub struct RequestingApplication {
     /// The name of the application.
     pub name: Optional<String>,
 
-    /// The PID of the applicatoin
+    /// The PID of the application
     pub pid: u32,
 }
 
