@@ -220,8 +220,8 @@ class MainWindow(Gtk.ApplicationWindow):
         )
 
         try:
-            handle = window_handle[window_handle.find(":") + 1 :]
-            toplevel.unexport_handle(handle)
+            if isinstance(toplevel, GdkWayland.WaylandToplevel):
+                toplevel.drop_exported_handle(handle)
         except Exception as err:
             print(err)
 
