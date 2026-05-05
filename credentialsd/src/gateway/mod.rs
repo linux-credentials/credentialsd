@@ -4,7 +4,10 @@
 mod dbus;
 mod util;
 
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use credentialsd_common::{
     model::{GetClientCapabilitiesResponse, RequestingApplication, WebAuthnError},
@@ -294,22 +297,23 @@ async fn should_trust_app_id(pid: u32) -> bool {
         return false;
     };
 
-    // The target binaries are hard-coded to valid UTF-8, so it's acceptable to
-    // lose some data here.
-    let Some(exe_path) = exe_path.to_str() else {
-        tracing::warn!("Could not read executable path from procfs");
-        return false;
-    };
     tracing::debug!(?exe_path, %pid, "Found executable path:");
-    let trusted_callers: Vec<String> = if cfg!(debug_assertions) {
+    let trusted_callers: Vec<PathBuf> = if cfg!(debug_assertions) {
         let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
-        trusted_callers_env.split(',').map(String::from).collect()
+        trusted_callers_env
+            .split(',')
+            .filter_map(|path| Path::new(path).canonicalize().ok())
+            .collect()
     } else {
-        vec!["/usr/bin/xdg-desktop-portal".to_string()]
+        vec![PathBuf::from("/usr/bin/xdg-desktop-portal")]
     };
-    tracing::debug!(?trusted_callers, %exe_path, "Testing whether request is from trusted caller");
-    if !trusted_callers.as_slice().contains(&exe_path.to_string()) {
-        tracing::warn!(%exe_path, "Request received from untrusted caller");
+    tracing::debug!(
+        ?trusted_callers,
+        ?exe_path,
+        "Testing whether request is from trusted caller"
+    );
+    if !trusted_callers.as_slice().contains(&exe_path) {
+        tracing::warn!(?exe_path, "Request received from untrusted caller");
         return false;
     } else {
         return true;
