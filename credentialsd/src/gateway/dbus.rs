@@ -484,7 +484,10 @@ async fn validate_app_details(
     };
 
     if claimed_app_id.is_empty() || !super::should_trust_app_id(pid).await {
-        tracing::warn!("App ID could not be determined. Rejecting request.");
+        tracing::warn!(
+            ?claimed_app_id,
+            "App ID could not be verified. Rejecting request."
+        );
         return Err(Error::SecurityError);
     }
     // Now we can trust these app detail parameters.
