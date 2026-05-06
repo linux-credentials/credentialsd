@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2026-02-03 10:40+0100\n"
+"POT-Creation-Date: 2026-03-20 11:40+0100\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: en_US\n"
@@ -13,7 +13,7 @@ msgstr ""
 
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in:2
 #: data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:8
-#: src/gui/view_model/gtk/mod.rs:385
+#: src/gui/view_model/gtk/mod.rs:417
 msgid "Credential Manager"
 msgstr "Credential Manager"
 
@@ -94,18 +94,43 @@ msgid "Choose credential"
 msgstr "Choose credential"
 
 #: data/resources/ui/window.ui:214
+msgid "Set a PIN"
+msgstr "Set a PIN"
+
+#: data/resources/ui/window.ui:221
+msgid "Please choose a new PIN for your device."
+msgstr "Please choose a new PIN for your device."
+
+#: data/resources/ui/window.ui:228
+msgid "New PIN"
+msgstr "New PIN"
+
+#: data/resources/ui/window.ui:235
+msgid "Confirm PIN"
+msgstr "Confirm PIN"
+
+#: data/resources/ui/window.ui:246 data/resources/ui/window.ui:320
+msgid "Close"
+msgstr "Close"
+
+#: data/resources/ui/window.ui:252
+msgid "Continue"
+msgstr "Continue"
+
+#: data/resources/ui/window.ui:274
 msgid "Complete"
 msgstr "Complete"
 
-#: data/resources/ui/window.ui:220
+#: data/resources/ui/window.ui:280
 msgid "Done!"
 msgstr "Done!"
 
-#: data/resources/ui/window.ui:231
+#: data/resources/ui/window.ui:291
 msgid "Something went wrong."
 msgstr "Something went wrong."
 
-#: data/resources/ui/window.ui:244 src/gui/view_model/mod.rs:290
+#: data/resources/ui/window.ui:304 src/gui/view_model/mod.rs:305
+#: src/gui/view_model/mod.rs:362
 msgid ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
@@ -113,35 +138,64 @@ msgstr ""
 "Something went wrong while retrieving a credential. Please try again later "
 "or use a different authenticator."
 
-#: src/gui/view_model/gtk/mod.rs:147
+#: data/resources/ui/window.ui:326
+msgid "Set PIN on device"
+msgstr "Set PIN on device"
+
+#: src/gui/view_model/gtk/mod.rs:156
 msgid "Enter your PIN. One attempt remaining."
 msgid_plural "Enter your PIN. %d attempts remaining."
 msgstr[0] "Enter your PIN. One attempt remaining."
 msgstr[1] "Enter your PIN. %d attempts remaining."
 
-#: src/gui/view_model/gtk/mod.rs:153
+#: src/gui/view_model/gtk/mod.rs:162
 msgid "Enter your PIN."
 msgstr "Enter your PIN."
 
-#: src/gui/view_model/gtk/mod.rs:163
+#: src/gui/view_model/gtk/mod.rs:172
 msgid "Touch your device again. One attempt remaining."
 msgid_plural "Touch your device again. %d attempts remaining."
 msgstr[0] "Touch your device again. One attempt remaining."
 msgstr[1] "Touch your device again. %d attempts remaining."
 
-#: src/gui/view_model/gtk/mod.rs:169
+#: src/gui/view_model/gtk/mod.rs:178
 msgid "Touch your device."
 msgstr "Touch your device."
 
-#: src/gui/view_model/gtk/mod.rs:174
+#: src/gui/view_model/gtk/mod.rs:183
 msgid "Touch your device"
 msgstr "Touch your device"
 
-#: src/gui/view_model/gtk/mod.rs:177
+#: src/gui/view_model/gtk/mod.rs:191
+msgid ""
+"This server requires your device to have additional protection like a PIN, "
+"which is not set. Please set a PIN for this device and try again."
+msgstr ""
+"This server requires your device to have additional protection like a PIN, "
+"which is not set. Please set a PIN for this device and try again."
+
+#: src/gui/view_model/gtk/mod.rs:195
+msgid ""
+"The entered PIN violates the PIN-policy of this device (likely too short). "
+"Please try again."
+msgstr ""
+"The entered PIN violates the PIN-policy of this device (likely too short). "
+"Please try again."
+
+#: src/gui/view_model/gtk/mod.rs:198
+#, fuzzy
+msgid ""
+"The entered PIN violates the PIN-policy of this device (PIN too long). "
+"Please try again."
+msgstr ""
+"The entered PIN violates the PIN-policy of this device (likely too long). "
+"Please try again."
+
+#: src/gui/view_model/gtk/mod.rs:205
 msgid "Scan the QR code with your device to begin authentication."
 msgstr "Scan the QR code with your device to begin authentication."
 
-#: src/gui/view_model/gtk/mod.rs:187
+#: src/gui/view_model/gtk/mod.rs:215
 msgid ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
@@ -149,15 +203,15 @@ msgstr ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
 
-#: src/gui/view_model/gtk/mod.rs:195
+#: src/gui/view_model/gtk/mod.rs:223
 msgid "Device connected. Follow the instructions on your device"
 msgstr "Device connected. Follow the instructions on your device"
 
-#: src/gui/view_model/gtk/mod.rs:321
+#: src/gui/view_model/gtk/mod.rs:349
 msgid "Insert your security key."
 msgstr "Insert your security key."
 
-#: src/gui/view_model/gtk/mod.rs:340
+#: src/gui/view_model/gtk/mod.rs:368
 msgid "Multiple devices found. Please select with which to proceed."
 msgstr "Multiple devices found. Please select with which to proceed."
 
@@ -185,17 +239,17 @@ msgstr "A security key or card (NFC)"
 msgid "A security key (USB)"
 msgstr "A security key (USB)"
 
-#: src/gui/view_model/mod.rs:75
+#: src/gui/view_model/mod.rs:70
 msgid "unknown application"
 msgstr "unknown application"
 
 #. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
-#: src/gui/view_model/mod.rs:80
+#: src/gui/view_model/mod.rs:86
 msgid "Create a passkey for %s1"
 msgstr "Create a passkey for %s1"
 
 #. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
-#: src/gui/view_model/mod.rs:84
+#: src/gui/view_model/mod.rs:90
 msgid "Use a passkey for %s1"
 msgstr "Use a passkey for %s1"
 
@@ -203,7 +257,7 @@ msgstr "Use a passkey for %s1"
 #. TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
 #. TRANSLATORS: %i1 is the process ID of the requesting application
 #. TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
-#: src/gui/view_model/mod.rs:96
+#: src/gui/view_model/mod.rs:102
 msgid ""
 "<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a "
 "credential to register at \"%s1\". Only proceed if you trust this process."
@@ -215,7 +269,7 @@ msgstr ""
 #. TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
 #. TRANSLATORS: %i1 is the process ID of the requesting application
 #. TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
-#: src/gui/view_model/mod.rs:103
+#: src/gui/view_model/mod.rs:109
 msgid ""
 "<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential "
 "to sign in to \"%s1\". Only proceed if you trust this process."
@@ -223,15 +277,15 @@ msgstr ""
 "<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential "
 "to sign in to \"%s1\". Only proceed if you trust this process."
 
-#: src/gui/view_model/mod.rs:227
+#: src/gui/view_model/mod.rs:239
 msgid "Failed to select credential from device."
 msgstr "Failed to select credential from device."
 
-#: src/gui/view_model/mod.rs:281
+#: src/gui/view_model/mod.rs:299 src/gui/view_model/mod.rs:356
 msgid "No matching credentials found on this authenticator."
 msgstr "No matching credentials found on this authenticator."
 
-#: src/gui/view_model/mod.rs:284
+#: src/gui/view_model/mod.rs:302 src/gui/view_model/mod.rs:359
 msgid ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
@@ -239,19 +293,11 @@ msgstr ""
 "No more PIN attempts allowed. Try removing your device and plugging it back "
 "in."
 
-#: src/gui/view_model/mod.rs:287
-msgid ""
-"This server requires your device to have additional protection like a PIN, "
-"which is not set. Please set a PIN for this device and try again."
-msgstr ""
-"This server requires your device to have additional protection like a PIN, "
-"which is not set. Please set a PIN for this device and try again."
-
-#: src/gui/view_model/mod.rs:293
+#: src/gui/view_model/mod.rs:308 src/gui/view_model/mod.rs:365
 msgid "This credential is already registered on this authenticator."
 msgstr "This credential is already registered on this authenticator."
 
-#: src/gui/view_model/mod.rs:395
+#: src/gui/view_model/mod.rs:413
 msgid "Something went wrong. Try again later or use a different authenticator."
 msgstr ""
 "Something went wrong. Try again later or use a different authenticator."

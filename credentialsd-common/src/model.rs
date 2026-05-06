@@ -134,9 +134,11 @@ pub enum ViewUpdate {
     UsbNeedsPin { attempts_left: Option<u32> },
     UsbNeedsUserVerification { attempts_left: Option<u32> },
     UsbNeedsUserPresence,
+    UsbPinNotSet { error: Option<PinNotSetError> },
 
     NfcNeedsPin { attempts_left: Option<u32> },
     NfcNeedsUserVerification { attempts_left: Option<u32> },
+    NfcPinNotSet { error: Option<PinNotSetError> },
 
     HybridNeedsQrCode(String),
     HybridConnecting,
@@ -145,6 +147,35 @@ pub enum ViewUpdate {
     Completed,
     Cancelled,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PinNotSetError {
+    /// PIN too short
+    PinTooShort,
+    /// PIN too long
+    PinTooLong,
+    /// PIN violates PinPolicy
+    PinPolicyViolation,
+}
+
+impl PinNotSetError {
+    pub fn to_string(&self) -> String {
+        match self {
+            PinNotSetError::PinTooShort => String::from("Pin too short"),
+            PinNotSetError::PinTooLong => String::from("Pin too long"),
+            PinNotSetError::PinPolicyViolation => String::from("Pin policy violation"),
+        }
+    }
+
+    pub fn from_string(error: &str) -> Option<PinNotSetError> {
+        match error {
+            "Pin too short" => Some(PinNotSetError::PinTooShort),
+            "Pin too long" => Some(PinNotSetError::PinTooLong),
+            "Pin policy violation" => Some(PinNotSetError::PinPolicyViolation),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -194,6 +225,11 @@ pub enum UsbState {
         attempts_left: Option<u32>,
     },
 
+    /// The device needs the PIN to be entered.
+    PinNotSet {
+        error: Option<PinNotSetError>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification {
         attempts_left: Option<u32>,
@@ -232,6 +268,9 @@ pub enum NfcState {
 
     /// The device needs the PIN to be entered.
     NeedsPin { attempts_left: Option<u32> },
+
+    /// The device needs the PIN to be entered.
+    PinNotSet { error: Option<PinNotSetError> },
 
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
@@ -273,8 +312,6 @@ pub enum Error {
     /// Note that this is different than exhausting the PIN count that fully
     /// locks out the device.
     PinAttemptsExhausted,
-    /// The RP requires user verification, but the device has no PIN/Biometrics set.
-    PinNotSet,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -286,7 +323,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
-            Self::PinNotSet => f.write_str("PinNotSet"),
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
