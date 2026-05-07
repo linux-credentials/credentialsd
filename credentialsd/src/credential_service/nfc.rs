@@ -14,7 +14,10 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, Error};
+use credentialsd_common::{
+    model::{Credential, Error},
+    server::BackgroundEvent,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -357,7 +360,7 @@ pub enum NfcState {
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
-    SelectCredential {
+    SelectingCredential {
         creds: Vec<Credential>,
         cred_tx: mpsc::Sender<String>,
     },
@@ -388,7 +391,7 @@ impl From<NfcStateInternal> for NfcState {
             NfcStateInternal::Completed(_) => NfcState::Completed,
             // NfcStateInternal::UserCancelled => NfcState:://UserCancelled,
             NfcStateInternal::SelectCredential { response, cred_tx } => {
-                NfcState::SelectCredential {
+                NfcState::SelectingCredential {
                     creds: response
                         .assertions
                         .iter()
@@ -445,13 +448,41 @@ impl From<&NfcState> for credentialsd_common::model::NfcState {
                     attempts_left: *attempts_left,
                 }
             }
-            NfcState::SelectCredential { creds, .. } => {
+            NfcState::SelectingCredential { creds, .. } => {
                 credentialsd_common::model::NfcState::SelectingCredential {
                     creds: creds.to_owned(),
                 }
             }
             NfcState::Completed => credentialsd_common::model::NfcState::Completed,
             NfcState::Failed(err) => credentialsd_common::model::NfcState::Failed(err.to_owned()),
+        }
+    }
+}
+
+impl From<&NfcState> for BackgroundEvent {
+    fn from(value: &NfcState) -> Self {
+        match value {
+            NfcState::Idle => BackgroundEvent::NfcIdle,
+            NfcState::Waiting => BackgroundEvent::NfcWaiting,
+            NfcState::Connected => BackgroundEvent::NfcConnected,
+            NfcState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
+                attempts_left: *attempts_left,
+            },
+            NfcState::NeedsUserVerification { attempts_left } => {
+                BackgroundEvent::NeedsUserVerification {
+                    attempts_left: *attempts_left,
+                }
+            }
+            NfcState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
+                creds: creds.to_owned().into_iter().map(|c| c.into()).collect(),
+            },
+            NfcState::Completed => BackgroundEvent::CeremonyCompleted,
+            NfcState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
+            NfcState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::PinNotSet) => BackgroundEvent::ErrorPinNotSet,
+            NfcState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }

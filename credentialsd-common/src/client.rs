@@ -3,8 +3,8 @@ use std::pin::Pin;
 use futures_lite::Stream;
 
 use crate::{
-    model::{BackgroundEvent, Device},
-    server::RequestId,
+    model::Device,
+    server::{BackgroundEvent, RequestId},
 };
 
 /// Used for communication from trusted UI to credential service
