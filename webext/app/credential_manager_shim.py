@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from asyncio import Future
 import asyncio
 import base64
 import codecs
@@ -7,18 +8,22 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
+import secrets
 import signal
 import struct
 import sys
 from typing import Optional
 
-from dbus_next.aio import MessageBus
 from dbus_next import Variant
+from dbus_next.aio import MessageBus
+from dbus_next.constants import MessageType
+from dbus_next.message import Message
 
 logging.basicConfig(
     filename="/tmp/credential_manager_shim.log", encoding="utf-8", level=logging.DEBUG
 )
 
+APP_ID = "@APP_ID@"
 DBUS_DOC_FILE = "@DBUS_DOC_FILE@"
 
 
@@ -70,6 +75,61 @@ def b64_decode(s) -> bytes:
     return base64.urlsafe_b64decode(s + padding)
 
 
+class PortalRequest[T]:
+    def __init__(self, token: str, fut: Future):
+        self.token: str = token
+        self._fut: Future = fut
+
+    async def wait(self) -> T:
+        return await self._fut
+
+
+def create_portal_request_message_handler(bus: MessageBus) -> PortalRequest:
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    if not bus.connected or bus.unique_name is None:
+        raise Exception("Bus is not connected")
+    unique_name = bus.unique_name[1:].replace(".", "_")
+    token = secrets.token_hex(16)
+    object_path = f"/org/freedesktop/portal/desktop/request/{unique_name}/{token}"
+
+    def message_handler(msg: Message):
+        if future.done():
+            return False
+
+        message_matches = (
+            msg.path == object_path
+            and msg.message_type == MessageType.SIGNAL
+            and msg.destination == bus.unique_name
+            and msg.interface == "org.freedesktop.portal.Request"
+            and msg.member == "Response"
+        )
+        if not message_matches:
+            return False
+
+        [code, value] = msg.body
+        if code == 0:
+            future.set_result(value)
+        elif code == 1:
+            future.set_exception(Exception("Portal request cancelled"))
+            raise
+        elif code == 2 and "error" in value:
+            future.set_exception(
+                Exception(f"Portal returned an error: {value['error'].value}")
+            )
+        else:
+            future.set_exception(Exception("Portal returned an unknown error"))
+        return True
+
+    def when_done(_fut):
+        bus.remove_message_handler(message_handler)
+
+    future.add_done_callback(when_done)
+    bus.add_message_handler(message_handler)
+    logging.debug(f"Listening for {object_path}")
+    return PortalRequest(token, future)
+
+
 class MajorType(Enum):
     PositiveInteger = (0,)
     NegativeInteger = (1,)
@@ -111,7 +171,7 @@ class CborParser:
             argument = struct.unpack(">Q", buf[1 : 1 + argument_len])[0]
         elif additional_info == 31:
             # Indefinite length for types 2-5
-            argument = None
+            argument: Optional[int] = None
             argument_len = 0
         match buf[0] >> 5:
             case 0:
@@ -291,23 +351,24 @@ class AuthenticatorData:
 
 async def create_passkey(interface, options, origin, top_origin):
     logging.debug("Creating passkey")
-    is_same_origin = origin == top_origin
     req_json = json.dumps(options)
     logging.debug(req_json)
+    request_event = create_portal_request_message_handler(interface.bus)
     req = {
-        "type": Variant("s", "publicKey"),
-        "origin": Variant("s", origin),
-        "is_same_origin": Variant("b", is_same_origin),
-        "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
+        "handle_token": Variant("s", request_event.token),
+        "public_key": Variant("s", req_json),
     }
+    if top_origin != origin:
+        req["top_origin"] = Variant("s", top_origin)
     logging.debug("Sending request to D-Bus API")
-    rsp = await interface.call_create_credential(["", req])
-    if rsp["type"].value != "public-key":
+    _rsp = await interface.call_create_credential("", origin, "publicKey", req)
+    result = await request_event.wait()
+    if result["type"].value != "public-key":
         raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
+            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
         )
     response_json = json.loads(
-        rsp["public_key"].value["registration_response_json"].value
+        result["public_key"].value["registration_response_json"].value
     )
     attestation = cbor_loads(b64_decode(response_json["response"]["attestationObject"]))
     auth_data_view = attestation["authData"]
@@ -339,7 +400,7 @@ async def get_passkey(interface, options, origin, top_origin):
     rsp = await interface.call_get_credential(["", req])
     if rsp["type"].value != "public-key":
         raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {rsp['type'.value]}"
+            f"Invalid credential type received: expected 'public-key', received {rsp['type'].value}"
         )
 
     response_json = json.loads(
@@ -356,16 +417,31 @@ async def run(cmd, options, origin, top_origin):
 
     logging.info(os.getcwd())
 
+    msg = Message(
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.host.portal.Registry",
+        "Register",
+        signature="sa{sv}",
+        body=[
+            APP_ID,
+            {},
+        ],
+    )
+    await bus.call(msg)
+
     with open(DBUS_DOC_FILE, "r") as f:
         introspection = f.read()
 
     proxy_object = bus.get_proxy_object(
-        "xyz.iinuwa.credentialsd.Credentials",
-        "/xyz/iinuwa/credentialsd/Credentials",
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
         introspection,
     )
 
-    interface = proxy_object.get_interface("xyz.iinuwa.credentialsd.Credentials1")
+    interface = proxy_object.get_interface(
+        "org.freedesktop.portal.experimental.Credential"
+    )
     logging.debug(f"Connected to interface at {interface.path}")
 
     if cmd == "create":
@@ -398,6 +474,7 @@ async def run(cmd, options, origin, top_origin):
 
 quit = asyncio.Event()
 
+
 async def main():
     logging.info("starting credential_manager_shim")
     while not quit.is_set():
@@ -417,5 +494,6 @@ async def main():
             logging.debug("Sent error message")
     logging.info("quitting credential_manager_shim")
 
-signal.signal(signal.SIGTERM, lambda _, __ : quit.set())
+
+signal.signal(signal.SIGTERM, lambda _, __: quit.set())
 asyncio.run(main())
