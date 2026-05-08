@@ -641,6 +641,9 @@ async fn handle_usb_updates(
                     tracing::error!("Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}", err);
                 }
             }
+            UvUpdate::PinNotSet(_) => {
+                tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
+            }
         }
     }
     debug!("USB update channel closed.");

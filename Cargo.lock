@@ -2069,8 +2069,9 @@ dependencies = [
 
 [[package]]
 name = "libwebauthn"
-version = "0.2.2"
-source = "git+https://github.com/linux-credentials/libwebauthn.git?rev=b306a527e5b20bef3126a0ade020ae8269785b4e#b306a527e5b20bef3126a0ade020ae8269785b4e"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2f74ddf06fefa81809987cb138dc265bcd50131bdce8f9d4ddc7e409a5c7167"
 dependencies = [
  "aes",
  "apdu",

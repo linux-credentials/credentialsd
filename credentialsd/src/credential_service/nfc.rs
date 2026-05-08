@@ -530,6 +530,9 @@ async fn handle_nfc_updates(
             UvUpdate::PresenceRequired => {
                 tracing::debug!("Authenticator requested user presence, but that makes no sense for NFC. Skipping");
             }
+            UvUpdate::PinNotSet(_) => {
+                tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
+            }
         }
     }
     debug!("NFC update channel closed.");
