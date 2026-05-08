@@ -114,17 +114,15 @@ impl GatewayService {
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response = create_credential_response_try_from_ctap2(
-                    &cred_response,
-                    &make_cred_request,
-                )
-                .map_err(|err| {
-                    tracing::error!(
-                        "Failed to parse credential response from authenticator: {err}"
-                    );
-                    // Using NotAllowedError as a catch-all error.
-                    WebAuthnError::NotAllowedError
-                })?;
+                let public_key_response =
+                    create_credential_response_try_from_ctap2(&cred_response, &make_cred_request)
+                        .map_err(|err| {
+                        tracing::error!(
+                            "Failed to parse credential response from authenticator: {err}"
+                        );
+                        // Using NotAllowedError as a catch-all error.
+                        WebAuthnError::NotAllowedError
+                    })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
@@ -172,17 +170,15 @@ impl GatewayService {
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
-                let public_key_response = get_credential_response_try_from_ctap2(
-                    &cred_response,
-                    &get_cred_request,
-                )
-                .map_err(|err| {
-                    tracing::error!(
-                        "Failed to parse credential response from authenticator: {err}"
-                    );
-                    // Using NotAllowedError as a catch-all error.
-                    WebAuthnError::NotAllowedError
-                })?;
+                let public_key_response =
+                    get_credential_response_try_from_ctap2(&cred_response, &get_cred_request)
+                        .map_err(|err| {
+                            tracing::error!(
+                                "Failed to parse credential response from authenticator: {err}"
+                            );
+                            // Using NotAllowedError as a catch-all error.
+                            WebAuthnError::NotAllowedError
+                        })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
