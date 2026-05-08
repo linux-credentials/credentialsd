@@ -169,9 +169,9 @@ pub(super) fn get_credential_request_try_into_ctap2(
 
     let mut get_assertion_request = GetAssertionRequest::from_json(&rp_id, &options.request_json)
         .map_err(|err| {
-            tracing::info!("Failed to parse GetAssertion request JSON: {err}");
-            WebAuthnError::TypeError
-        })?;
+        tracing::info!("Failed to parse GetAssertion request JSON: {err}");
+        WebAuthnError::TypeError
+    })?;
 
     // TODO(libwebauthn#185)
     get_assertion_request.origin = origin.to_string();
