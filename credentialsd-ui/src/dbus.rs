@@ -12,7 +12,7 @@ use zbus::{
     names::{BusName, OwnedUniqueName},
     object_server::SignalEmitter,
     proxy,
-    zvariant::ObjectPath,
+    zvariant::{ObjectPath, Optional},
 };
 
 use credentialsd_common::{
@@ -123,7 +123,7 @@ pub struct CredentialPortalBackend {
 
 #[derive(Debug, Clone)]
 pub(crate) struct UiContext {
-    parent_window: WindowHandle,
+    parent_window: Option<WindowHandle>,
     origin: String,
     r#type: Operation,
     request_id: RequestId,
@@ -142,7 +142,7 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
-        parent_window: WindowHandle,
+        parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
         request_id: RequestId,
@@ -161,7 +161,7 @@ impl CredentialPortalBackend {
             request_id
         ));
         let ui_context = UiContext {
-            parent_window,
+            parent_window: parent_window.into(),
             origin,
             r#type,
             request_id,
@@ -250,7 +250,7 @@ impl FlowObject {
                     pid: self.ui_context.app_pid,
                 },
                 initial_devices: self.ui_context.devices.clone(),
-                window_handle: Some(self.ui_context.parent_window.clone()).into(),
+                window_handle: self.ui_context.parent_window.clone().into(),
             },
             Arc::new(AsyncMutex::new(flow_control_client)),
         );
