@@ -85,7 +85,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
     ) -> Result<CreateCredentialResponse, WebAuthnError> {
-        let _request_environment = validate_request(&context)?;
+        let request_environment = validate_request(&context)?;
 
         if let ("publicKey", Some(_)) = (request.r#type.as_ref(), &request.public_key) {
             // TODO: assert that RP ID is bound to origin:
@@ -95,7 +95,7 @@ impl GatewayService {
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (make_cred_request, client_data_json) =
-                create_credential_request_try_into_ctap2(&request)
+                create_credential_request_try_into_ctap2(&request, &request_environment)
                     .inspect_err(|_| {
                         tracing::error!(
                             "Could not parse passkey creation request. Rejecting request."
@@ -143,7 +143,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
     ) -> Result<GetCredentialResponse, WebAuthnError> {
-        let _request_environment = validate_request(&context)?;
+        let request_environment = validate_request(&context)?;
 
         if request.public_key.is_some() {
             // Setup request
@@ -155,10 +155,12 @@ impl GatewayService {
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let (get_cred_request, client_data_json) =
-                get_credential_request_try_into_ctap2(&request).map_err(|e| {
-                    tracing::error!("Could not parse passkey assertion request: {e:?}");
-                    WebAuthnError::TypeError
-                })?;
+                get_credential_request_try_into_ctap2(&request, &request_environment).map_err(
+                    |e| {
+                        tracing::error!("Could not parse passkey assertion request: {e:?}");
+                        WebAuthnError::TypeError
+                    },
+                )?;
             let cred_request = CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request);
 
             let response = self

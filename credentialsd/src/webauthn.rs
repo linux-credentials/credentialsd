@@ -510,6 +510,23 @@ impl Display for Origin {
     }
 }
 
+impl TryFrom<&Origin> for RelyingPartyId {
+    type Error = OriginParseError;
+
+    /// Derives the relying party ID (effective domain) from an origin.
+    ///
+    /// AppId origins have no effective domain and must be mapped to an rpId
+    /// out-of-band, so this conversion fails for them.
+    fn try_from(origin: &Origin) -> Result<Self, Self::Error> {
+        match origin {
+            Origin::Https { host, .. } => {
+                RelyingPartyId::try_from(host.as_str()).map_err(|_| OriginParseError::InvalidHost)
+            }
+            Origin::AppId(_) => Err(OriginParseError::InvalidScheme),
+        }
+    }
+}
+
 impl FromStr for Origin {
     type Err = OriginParseError;
 
