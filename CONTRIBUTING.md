@@ -194,7 +194,7 @@ make sure that your changes can build and pass all tests, as well as running the
 formatting and linting tools [mentioned above](#code-formatting-and-linting).
 
 You should also follow the install instructions in [`BUILDING.md`](/BUILDING.md)
-and execute authentication flows in a browser to ensure that everything
+and execute authentication ceremonies in a browser to ensure that everything
 still works as it should.
 
 # Translations

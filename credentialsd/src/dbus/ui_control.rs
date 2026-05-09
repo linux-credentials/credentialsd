@@ -37,7 +37,7 @@ pub trait UiController {
         app_pid: u32,
         app_path: String,
         options: PortalBackendOptions,
-    ) -> impl Future<Output = std::result::Result<Flow, Box<dyn Error>>> + Send;
+    ) -> impl Future<Output = std::result::Result<Ceremony, Box<dyn Error>>> + Send;
 }
 
 #[proxy(
@@ -74,12 +74,12 @@ trait UiControlService2 {
 }
 
 #[derive(Clone, Debug)]
-pub struct Flow {
-    proxy: Arc<FlowObjectProxy<'static>>,
+pub struct Ceremony {
+    proxy: Arc<CeremonyObjectProxy<'static>>,
     ui_events_rx: Arc<AsyncMutex<Receiver<BackendRequest>>>,
 }
 
-impl Flow {
+impl Ceremony {
     pub async fn receive_ui_event(&self) -> Option<BackendRequest> {
         self.ui_events_rx.lock().await.recv().await
     }
@@ -99,10 +99,10 @@ impl Flow {
 }
 #[proxy(
     gen_blocking = false,
-    interface = "org.freedesktop.impl.portal.experimental.Credential.FlowObject",
+    interface = "org.freedesktop.impl.portal.experimental.Credential.Ceremony",
     default_service = "xyz.iinuwa.credentialsd.UiControl"
 )]
-trait FlowObject {
+trait CeremonyObject {
     async fn start(&self) -> fdo::Result<()>;
     async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()>;
 
@@ -133,12 +133,12 @@ impl UiControlServiceClient {
     async fn request_proxy(
         &self,
         request_id: RequestId,
-    ) -> Result<FlowObjectProxy<'_>, zbus::Error> {
+    ) -> Result<CeremonyObjectProxy<'_>, zbus::Error> {
         let object_path = ObjectPath::from_string_unchecked(format!(
             "/org/freedesktop/portal/Credential/{}",
             request_id
         ));
-        FlowObjectProxy::new(&self.conn, object_path).await
+        CeremonyObjectProxy::new(&self.conn, object_path).await
     }
 }
 
@@ -163,7 +163,7 @@ impl UiController for UiControlServiceClient {
         app_pid: u32,
         app_path: String,
         options: PortalBackendOptions,
-    ) -> Result<Flow, Box<dyn Error>> {
+    ) -> Result<Ceremony, Box<dyn Error>> {
         let path = self
             .proxy2()
             .await?
@@ -181,7 +181,7 @@ impl UiController for UiControlServiceClient {
             )
             .await?;
         tracing::debug!(?path, "Path initialized");
-        let flow_object = FlowObjectProxy::new(&self.conn, path).await?;
+        let flow_object = CeremonyObjectProxy::new(&self.conn, path).await?;
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
         let ui_event_stream = flow_object.receive_user_interacted().await?;
         tokio::task::spawn(async move {
@@ -189,7 +189,7 @@ impl UiController for UiControlServiceClient {
         });
         // Mark as ready to receive messages.
         flow_object.start().await?;
-        Ok(Flow {
+        Ok(Ceremony {
             proxy: Arc::new(flow_object),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
         })
@@ -235,7 +235,7 @@ pub mod test {
         Mutex as AsyncMutex, Notify,
     };
 
-    use crate::dbus::ui_control::Flow;
+    use crate::dbus::ui_control::Ceremony;
 
     use super::UiController;
 
@@ -270,7 +270,7 @@ pub mod test {
             _app_pid: u32,
             _app_path: String,
             _options: PortalBackendOptions,
-        ) -> Result<Flow, Box<dyn Error>> {
+        ) -> Result<Ceremony, Box<dyn Error>> {
             unimplemented!()
         }
     }

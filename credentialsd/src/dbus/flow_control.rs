@@ -27,7 +27,7 @@ use zbus::{
 };
 
 use crate::credential_service::ManageDevice;
-use crate::dbus::ui_control::Flow;
+use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::{hybrid::HybridState, nfc::NfcState, UsbState},
@@ -247,7 +247,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
 }
 
 fn forward_background_event_stream(
-    flow: Flow,
+    flow: Ceremony,
     mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
 ) {
     tokio::spawn(async move {
