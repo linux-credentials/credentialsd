@@ -399,14 +399,22 @@ async def get_passkey(interface, options, origin, top_origin):
     }
 
     logging.debug("Sending request to D-Bus API")
-    rsp = await interface.call_get_credential(["", req])
-    if rsp["type"].value != "public-key":
+    request_event = create_portal_request_message_handler(interface.bus)
+    req = {
+        "handle_token": Variant("s", request_event.token),
+        "public_key": Variant("s", req_json),
+    }
+    if top_origin != origin:
+        req["top_origin"] = Variant("s", top_origin)
+    _rsp = await interface.call_get_credential("", origin, req)
+    result = await request_event.wait()
+    if result["type"].value != "public-key":
         raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {rsp['type'].value}"
+            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
         )
 
     response_json = json.loads(
-        rsp["public_key"].value["authentication_response_json"].value
+        result["public_key"].value["authentication_response_json"].value
     )
     return response_json
 
