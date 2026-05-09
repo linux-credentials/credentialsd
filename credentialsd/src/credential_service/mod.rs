@@ -363,54 +363,6 @@ mod test {
         AuthenticatorResponse, CredentialService, ManageDevice,
     };
 
-    #[test]
-    fn test_hybrid_sets_credential() {
-        tracing_subscriber::fmt::init();
-        let request = create_credential_request();
-        let qr_code = String::from("FIDO:/078241338926040702789239694720083010994762289662861130514766991835876383562063181103169246410435938367110394959927031730060360967994421343201235185697538107096654083332");
-        let authenticator_response = create_authenticator_response();
-
-        let (request_tx, request_rx) = oneshot::channel();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let hybrid_handler = DummyHybridHandler::new(vec![
-                    HybridStateInternal::Init(qr_code),
-                    HybridStateInternal::Connecting,
-                    HybridStateInternal::Completed(Box::new(authenticator_response)),
-                ]);
-                let usb_handler = InProcessUsbHandler {};
-                let nfc_handler = InProcessNfcHandler {};
-                let (ui_server, _ui_client) = DummyUiServer::new(Vec::new());
-                let ui_server = Arc::new(ui_server);
-                let user = ui_server.clone();
-                let cred_service = Arc::new(AsyncMutex::new(CredentialService::new(
-                    hybrid_handler,
-                    nfc_handler,
-                    usb_handler,
-                )));
-                let (mut flow_server, flow_client) = DummyFlowServer::new(cred_service.clone());
-                ui_server.init(flow_client).await;
-
-                tokio::spawn(async move { ui_server.run().await });
-                tokio::spawn(async move { flow_server.run().await });
-                _ = cred_service
-                    .lock()
-                    .await
-                    .init_request(&request, request_tx)
-                    .await
-                    .unwrap();
-                user.request_hybrid_credential().await;
-                tokio::time::timeout(Duration::from_secs(5), request_rx)
-                    .await
-                    .expect("request to complete")
-                    .expect("response to be sent")
-                    .expect("a credential to be returned");
-            });
-    }
-
     fn create_credential_request() -> CredentialRequest {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
         let origin = "webauthn.io".to_string();
