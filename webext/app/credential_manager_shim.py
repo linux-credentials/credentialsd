@@ -16,6 +16,7 @@ from typing import Optional
 
 from dbus_next import Variant
 from dbus_next.aio import MessageBus
+from dbus_next.proxy_object import BaseProxyInterface
 from dbus_next.constants import MessageType
 from dbus_next.message import Message
 
@@ -25,6 +26,7 @@ logging.basicConfig(
 
 APP_ID = "@APP_ID@"
 DBUS_DOC_FILE = "@DBUS_DOC_FILE@"
+INTERFACE: Optional[BaseProxyInterface] = None
 
 
 def getMessage():
@@ -409,8 +411,11 @@ async def get_passkey(interface, options, origin, top_origin):
     return response_json
 
 
-async def run(cmd, options, origin, top_origin):
-    logging.debug("Executing command")
+async def get_interface():
+    global INTERFACE
+    if INTERFACE and INTERFACE.bus.connected:
+        return INTERFACE
+
     bus = await MessageBus().connect()
     logging.debug("Connected to bus")
     import os
@@ -438,11 +443,17 @@ async def run(cmd, options, origin, top_origin):
         "/org/freedesktop/portal/desktop",
         introspection,
     )
-
     interface = proxy_object.get_interface(
         "org.freedesktop.portal.experimental.Credential"
     )
+    INTERFACE = interface
     logging.debug(f"Connected to interface at {interface.path}")
+    return INTERFACE
+
+
+async def run(cmd, options, origin, top_origin):
+    logging.debug("Executing command")
+    interface = await get_interface()
 
     if cmd == "create":
         if "publicKey" in options:
@@ -477,6 +488,7 @@ quit = asyncio.Event()
 
 async def main():
     logging.info("starting credential_manager_shim")
+
     while not quit.is_set():
         logging.debug("starting event loop message")
         receivedMessage = getMessage()
