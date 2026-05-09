@@ -90,7 +90,8 @@ pub struct Credential {
 #[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
 pub struct CredentialSelectedOptions {}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type, Value)]
+#[zvariant(signature = "dict")]
 pub struct Device {
     pub id: String,
     pub transport: Transport,
@@ -197,7 +198,7 @@ pub struct PortalBackendOptions {
     pub rp_id: Optional<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type, Value)]
 #[zvariant(signature = "s")]
 pub enum Transport {
     Ble,

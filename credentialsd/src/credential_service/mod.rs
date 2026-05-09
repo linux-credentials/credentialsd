@@ -399,6 +399,7 @@ where
                 if cancellation_token.is_cancelled() {
                     return Poll::Ready(None);
                 }
+                tracing::trace!("Received HybridEvent: {state:?}");
                 match &state {
                     HybridStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
@@ -589,6 +590,7 @@ fn complete_request(
     ctx: &Mutex<Option<RequestContext>>,
     response: Result<CredentialResponse, CredentialServiceError>,
 ) {
+    tracing::trace!("Completing request");
     match ctx.lock().unwrap().take() {
         Some(ctx) => {
             ctx.cancellation.cancel();

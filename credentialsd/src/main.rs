@@ -4,10 +4,11 @@ mod gateway;
 mod model;
 mod webauthn;
 
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 use credential_service::nfc::InProcessNfcHandler;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use zbus::zvariant::OwnedObjectPath;
 
 use crate::{
     credential_service::{
@@ -48,6 +49,27 @@ async fn run() -> Result<(), Box<dyn Error>> {
         credential_service,
     )
     .await?;
+
+    print!("Starting credentialsd service...");
+    let credentialsd = {
+        let svc = CredentialService::new(
+            InternalHybridHandler::new(),
+            InProcessNfcHandler {},
+            InProcessUsbHandler {},
+        );
+
+        gateway::Credentialsd {
+            svc: Arc::new(AsyncMutex::new(svc)),
+        }
+    };
+    let object_path: OwnedObjectPath = "/xyz/iinuwa/credentialsd/Manager"
+        .try_into()
+        .expect("valid object path");
+    dbus_conn
+        .object_server()
+        .at(object_path, credentialsd)
+        .await?;
+    println!(" ✅");
 
     println!("Waiting for messages...");
     tokio::signal::ctrl_c()

@@ -18,6 +18,8 @@ use zbus::{
     zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
 };
 
+pub use dbus::Credentialsd;
+
 use crate::{
     dbus::CredentialRequestController,
     model::{ClientDetails, CredentialRequest, CredentialResponse},
@@ -392,7 +394,7 @@ pub struct CreateCredentialRequest {
     pub public_key: Option<CreatePublicKeyCredentialRequest>,
 }
 
-#[derive(SerializeDict, Type)]
+#[derive(Clone, SerializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreateCredentialResponse {
     #[zvariant(rename = "type")]
@@ -414,7 +416,7 @@ pub struct CreatePublicKeyCredentialRequest {
     pub request_json: String,
 }
 
-#[derive(SerializeDict, Type)]
+#[derive(Clone, SerializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreatePublicKeyCredentialResponse {
     pub registration_response_json: String,
