@@ -482,10 +482,33 @@ async def run(cmd, options, origin, top_origin):
                 f"Could not get unknown credential type: {options.keys()[0]}"
             )
     elif cmd == "getClientCapabilities":
-        rsp = await interface.call_get_client_capabilities()
-        response = {}
-        for name, val in rsp.items():
-            response[name] = val.value
+        conditional_create = await interface.get_conditional_create()
+        conditional_get = await interface.get_conditional_get()
+        hybrid_transport = await interface.get_hybrid_transport()
+        passkey_platform_authenticator = (
+            await interface.get_passkey_platform_authenticator()
+        )
+        user_verifying_platform_authenticator = (
+            await interface.get_user_verifying_platform_authenticator()
+        )
+        related_origins = await interface.get_related_origins()
+        signal_all_accepted_credentials = (
+            await interface.get_signal_all_accepted_credentials()
+        )
+        signal_current_user_details = await interface.get_signal_current_user_details()
+        signal_unknown_credential = await interface.get_signal_unknown_credential()
+
+        response = {
+            "conditional_create": conditional_create,
+            "conditional_get": conditional_get,
+            "hybrid_transport": hybrid_transport,
+            "passkey_platform_authenticator": passkey_platform_authenticator,
+            "user_verifying_platform_authenticator": user_verifying_platform_authenticator,
+            "related_origins": related_origins,
+            "signal_all_accepted_credentials": signal_all_accepted_credentials,
+            "signal_current_user_details": signal_current_user_details,
+            "signal_unknown_credential": signal_unknown_credential,
+        }
         return response
     else:
         raise Exception(f"unknown cmd: {cmd}")
