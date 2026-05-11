@@ -2,207 +2,108 @@
 //!
 //! Types shared between components within this service belong in credentialsd_common::model.
 
-use std::{collections::HashMap, time::Duration};
-
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
 use credentialsd_common::{
-    model::{Operation, WebAuthnError},
+    model::WebAuthnError,
     server::{
         CreateCredentialRequest, CreatePublicKeyCredentialResponse, GetCredentialRequest,
         GetPublicKeyCredentialResponse,
     },
 };
 
-use crate::{
-    cose::CoseKeyAlgorithmIdentifier,
-    model::{GetAssertionResponseInternal, MakeCredentialResponseInternal},
-    webauthn::{
-        self, CredentialProtectionExtension, Ctap2PublicKeyCredentialDescriptor,
-        Ctap2PublicKeyCredentialRpEntity, Ctap2PublicKeyCredentialUserEntity,
-        GetAssertionHmacOrPrfInput, GetAssertionLargeBlobExtension, GetAssertionRequest,
-        GetAssertionRequestExtensions, GetPublicKeyCredentialUnsignedExtensionsResponse,
-        MakeCredentialHmacOrPrfInput, MakeCredentialRequest, MakeCredentialsRequestExtensions,
-        NavigationContext, Origin, PublicKeyCredentialParameters, ResidentKeyRequirement,
-        UserVerificationRequirement,
-    },
+use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
+use crate::webauthn::{
+    self, GetAssertionRequest, GetPublicKeyCredentialUnsignedExtensionsResponse,
+    MakeCredentialRequest, NavigationContext, Origin, RelyingPartyId, WebAuthnIDL,
 };
 
-// Helper functions for translating D-Bus types into internal types
-pub(super) fn create_credential_request_try_into_ctap2(
-    request: &CreateCredentialRequest,
-    origin: &NavigationContext,
-) -> std::result::Result<(MakeCredentialRequest, String), WebAuthnError> {
-    if request.public_key.is_none() {
-        return Err(WebAuthnError::NotSupportedError);
-    }
-    let options = request.public_key.as_ref().ok_or_else(|| {
-        tracing::info!("Invalid request: missing public_key");
+/// Reads the rpId from a create-credential request JSON (`rp.id`).
+///
+/// Used as a fallback when the origin is an AppId and the effective domain
+/// cannot be derived from the origin alone.
+// TODO(libwebauthn#185)
+fn peek_make_credential_rp_id(request_json: &str) -> Result<RelyingPartyId, WebAuthnError> {
+    let value = serde_json::from_str::<serde_json::Value>(request_json).map_err(|err| {
+        tracing::info!("Invalid request JSON: {err}");
         WebAuthnError::TypeError
     })?;
-
-    let request_value =
-        serde_json::from_str::<serde_json::Value>(&options.request_json).map_err(|err| {
-            tracing::info!("Invalid request JSON: {err}");
-            WebAuthnError::TypeError
-        })?;
-    let json = request_value.as_object().ok_or_else(|| {
-        tracing::info!("Invalid request JSON: not an object");
-        WebAuthnError::TypeError
-    })?;
-    let challenge = json
-        .get("challenge")
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| {
-            tracing::info!("JSON missing `challenge` field.");
-            WebAuthnError::TypeError
-        })?
-        .to_owned();
-    let rp = json
+    let rp_id_str = value
         .get("rp")
-        .and_then(|val| {
-            serde_json::from_str::<Ctap2PublicKeyCredentialRpEntity>(&val.to_string()).ok()
-        })
+        .and_then(|rp| rp.get("id"))
+        .and_then(|id| id.as_str())
         .ok_or_else(|| {
-            tracing::info!("JSON missing `rp` field");
-            WebAuthnError::TypeError
+            tracing::info!("RP ID required if using app ID as origin");
+            WebAuthnError::SecurityError
         })?;
-    let mut user =
-        json.get("user")
-            .ok_or_else(|| {
-                tracing::info!("JSON missing `user` field.");
-                WebAuthnError::TypeError
-            })
-            .and_then(|val| {
-                serde_json::from_str::<Ctap2PublicKeyCredentialUserEntity>(&val.to_string())
-                    .map_err(|e| {
-                        tracing::info!("JSON missing `user` field: {e}");
-                        WebAuthnError::TypeError
-                    })
-            })?;
-    user.id = URL_SAFE_NO_PAD
-        .decode(user.id)
-        .map_err(|_| {
-            tracing::info!("user ID is not a valid base64url string");
-            WebAuthnError::TypeError
-        })?
-        .into();
-    let other_options =
-        serde_json::from_str::<webauthn::MakeCredentialOptions>(&request_value.to_string())
-            .map_err(|e| {
-                tracing::info!("Received invalid request JSON: {e}");
-                WebAuthnError::TypeError
-            })?;
-    let (resident_key, user_verification) =
-        if let Some(authenticator_selection) = other_options.authenticator_selection {
-            let resident_key = match authenticator_selection.resident_key.as_deref() {
-                Some("required") => Some(ResidentKeyRequirement::Required),
-                Some("preferred") => Some(ResidentKeyRequirement::Preferred),
-                Some("discouraged") => Some(ResidentKeyRequirement::Discouraged),
-                Some(_) => None,
-                // legacy webauthn-1 member
-                None if authenticator_selection.require_resident_key == Some(true) => {
-                    Some(ResidentKeyRequirement::Required)
-                }
-                None => None,
-            };
-
-            let user_verification = authenticator_selection
-                .user_verification
-                .map(|uv| match uv.as_ref() {
-                    "required" => UserVerificationRequirement::Required,
-                    "preferred" => UserVerificationRequirement::Preferred,
-                    "discouraged" => UserVerificationRequirement::Discouraged,
-                    _ => todo!("This should be fixed in the future"),
-                })
-                .unwrap_or(UserVerificationRequirement::Preferred);
-
-            (resident_key, user_verification)
-        } else {
-            (None, UserVerificationRequirement::Preferred)
-        };
-    let extensions = if let Some(incoming_extensions) = other_options.extensions {
-        let extensions = MakeCredentialsRequestExtensions {
-            cred_props: incoming_extensions.cred_props,
-            cred_blob: incoming_extensions
-                .cred_blob
-                .and_then(|x| URL_SAFE_NO_PAD.decode(x).ok()),
-            min_pin_length: incoming_extensions.min_pin_length,
-            cred_protect: match incoming_extensions.credential_protection_policy {
-                Some(cred_prot_policy) => Some(CredentialProtectionExtension {
-                    policy: cred_prot_policy,
-                    enforce_policy: incoming_extensions
-                        .enforce_credential_protection_policy
-                        .unwrap_or_default(),
-                }),
-                None => None,
-            },
-            large_blob: incoming_extensions
-                .large_blob
-                .map(|x| x.support.unwrap_or_default())
-                .unwrap_or_default(),
-            hmac_or_prf: if incoming_extensions.prf.is_some() {
-                // CTAP currently doesn't support PRF queries at credentials.create()
-                // So we ignore any potential value set in the request and only mark this
-                // credential to activate HMAC for future PRF queries using credentials.get()
-                MakeCredentialHmacOrPrfInput::Prf
-            } else {
-                // MakeCredentialHmacOrPrfInput::Hmac is not used directly by webauthn
-                MakeCredentialHmacOrPrfInput::None
-            },
-        };
-        Some(extensions)
-    } else {
-        None
-    };
-
-    let credential_parameters = match request_value.clone().get("pubKeyCredParams") {
-        // https://www.w3.org/TR/webauthn-3/#sctn-createCredential Section 5.1.3.10
-        // Default to ES256 and RS256 if no params are given.
-        None => Ok(vec![
-            PublicKeyCredentialParameters {
-                alg: CoseKeyAlgorithmIdentifier::ES256.into(),
-            },
-            PublicKeyCredentialParameters {
-                alg: CoseKeyAlgorithmIdentifier::RS256.into(),
-            },
-        ]),
-        Some(val) => serde_json::from_str::<Vec<PublicKeyCredentialParameters>>(&val.to_string())
-            .map_err(|e| {
-                tracing::info!("Request JSON missing or invalid `pubKeyCredParams` key: {e}.");
-                WebAuthnError::TypeError
-            }),
-    }?;
-    let algorithms = credential_parameters
-        .iter()
-        .filter_map(|p| p.try_into().ok())
-        .collect();
-    let exclude = other_options.excluded_credentials.map(|v| {
-        v.iter()
-            .map(|e| e.try_into())
-            .filter_map(|e| e.ok())
-            .collect()
-    });
-    let client_data_json = webauthn::format_client_data_json(Operation::Create, &challenge, origin);
-    let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
-    Ok((
-        MakeCredentialRequest {
-            hash: client_data_hash,
-            origin: origin.origin().to_string(),
-
-            relying_party: rp,
-            user,
-            resident_key,
-            user_verification,
-            algorithms,
-            exclude,
-            extensions,
-            timeout: other_options.timeout.unwrap_or(Duration::from_secs(300)),
-        },
-        client_data_json,
-    ))
+    RelyingPartyId::try_from(rp_id_str).map_err(|_| {
+        tracing::info!("Invalid relying party ID");
+        WebAuthnError::TypeError
+    })
 }
 
+/// Reads the rpId from a get-credential request JSON (`rpId`).
+///
+/// Used as a fallback when the origin is an AppId and the effective domain
+/// cannot be derived from the origin alone.
+// TODO(libwebauthn#185)
+fn peek_get_assertion_rp_id(request_json: &str) -> Result<RelyingPartyId, WebAuthnError> {
+    let value = serde_json::from_str::<serde_json::Value>(request_json).map_err(|err| {
+        tracing::info!("Invalid request JSON: {err}");
+        WebAuthnError::TypeError
+    })?;
+    let rp_id_str = value
+        .get("rpId")
+        .and_then(|id| id.as_str())
+        .ok_or_else(|| {
+            tracing::info!("RP ID required if using app ID as origin");
+            WebAuthnError::SecurityError
+        })?;
+    RelyingPartyId::try_from(rp_id_str).map_err(|_| {
+        tracing::info!("Invalid relying party ID");
+        WebAuthnError::TypeError
+    })
+}
+
+/// Parses a WebAuthn create credential request from D-Bus into a CTAP2 MakeCredentialRequest.
+///
+/// Uses libwebauthn's `WebAuthnIDL::from_json()` for parsing. The relying party ID is derived
+/// from the request's origin; libwebauthn validates that any rpId in the JSON matches it.
+pub(super) fn create_credential_request_try_into_ctap2(
+    request: &CreateCredentialRequest,
+    request_environment: &NavigationContext,
+) -> std::result::Result<(MakeCredentialRequest, String), WebAuthnError> {
+    let options = request.public_key.as_ref().ok_or_else(|| {
+        tracing::info!("Invalid request: missing public_key");
+        WebAuthnError::NotSupportedError
+    })?;
+
+    let origin = request_environment.origin();
+    let rp_id = match origin {
+        Origin::Https { .. } => RelyingPartyId::try_from(origin).map_err(|err| {
+            tracing::info!("Cannot derive relying party ID from origin: {err}");
+            WebAuthnError::SecurityError
+        })?,
+        Origin::AppId(_) => peek_make_credential_rp_id(&options.request_json)?,
+    };
+
+    let mut make_cred_request = MakeCredentialRequest::from_json(&rp_id, &options.request_json)
+        .map_err(|err| {
+            tracing::info!("Failed to parse MakeCredential request JSON: {err}");
+            WebAuthnError::TypeError
+        })?;
+
+    // TODO(libwebauthn#185)
+    make_cred_request.origin = origin.to_string();
+    make_cred_request.cross_origin = Some(matches!(
+        request_environment,
+        NavigationContext::CrossOrigin(_)
+    ));
+
+    let client_data_json = make_cred_request.client_data_json();
+
+    Ok((make_cred_request, client_data_json))
+}
+
+/// Serializes a CTAP2 MakeCredentialResponse to WebAuthn JSON format.
 pub(super) fn create_credential_response_try_from_ctap2(
     response: &MakeCredentialResponseInternal,
     client_data_json: String,
@@ -228,7 +129,7 @@ pub(super) fn create_credential_response_try_from_ctap2(
         response.ctap.enterprise_attestation.unwrap_or(false),
     )
     .map_err(|_| "Failed to create attestation object".to_string())?;
-    // TODO: do we need to check that the client_data_hash is the same?
+
     let registration_response_json = webauthn::CreatePublicKeyCredentialResponse::new(
         attested_credential.credential_id.clone(),
         attestation_object,
@@ -244,116 +145,47 @@ pub(super) fn create_credential_response_try_from_ctap2(
     Ok(response)
 }
 
+/// Parses a WebAuthn get credential request from D-Bus into a CTAP2 GetAssertionRequest.
+///
+/// Uses libwebauthn's `WebAuthnIDL::from_json()` for parsing. The relying party ID is derived
+/// from the request's origin; libwebauthn validates that any rpId in the JSON matches it.
 pub(super) fn get_credential_request_try_into_ctap2(
     request: &GetCredentialRequest,
-    request_env: &NavigationContext,
+    request_environment: &NavigationContext,
 ) -> std::result::Result<(GetAssertionRequest, String), WebAuthnError> {
-    if request.public_key.is_none() {
-        return Err(WebAuthnError::NotSupportedError);
-    }
-    let options: webauthn::GetCredentialOptions = request
-        .public_key
-        .as_ref()
-        .ok_or_else(|| {
-            tracing::info!("Invalid request: no \"publicKey\" options specified.");
-            WebAuthnError::TypeError
-        })
-        .and_then(|o| {
-            serde_json::from_str(&o.request_json).map_err(|e| {
-                tracing::info!("Received invalid request JSON: {:?}", e);
-                WebAuthnError::TypeError
-            })
-        })?;
-    let mut allow: Vec<Ctap2PublicKeyCredentialDescriptor> = options
-        .allow_credentials
-        .iter()
-        .filter_map(|cred| {
-            if cred.cred_type == "public-key" {
-                cred.try_into().ok()
-            } else {
-                None
-            }
-        })
-        .collect();
-    // TODO: The allow is returning an empty list instead of either None or a list of transports.
-    // This should be investigated, but this is just a UI hint and isn't necessary to pass to the authenticator.
-    // Just removing it for now.
-    for c in allow.iter_mut() {
-        c.transports = None;
-    }
+    let options = request.public_key.as_ref().ok_or_else(|| {
+        tracing::info!("Invalid request: no \"publicKey\" options specified.");
+        WebAuthnError::NotSupportedError
+    })?;
 
-    let client_data_json =
-        webauthn::format_client_data_json(Operation::Get, &options.challenge, request_env);
-    let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
-    // TODO: actually calculate correct effective domain, and use fallback to related origin requests to fill this in. For now, just default to origin.
-    let user_verification = match options
-        .user_verification
-        .unwrap_or_else(|| String::from("preferred"))
-        .as_ref()
-    {
-        "required" => UserVerificationRequirement::Required,
-        "preferred" => UserVerificationRequirement::Preferred,
-        "discouraged" => UserVerificationRequirement::Discouraged,
-        _ => {
-            tracing::info!("Invalid user verification requirement specified by client.");
-            return Err(WebAuthnError::TypeError);
-        }
-    };
-    let relying_party_id = match (options.rp_id, request_env.origin()) {
-        (Some(rp_id), _) => rp_id,
-        (None, Origin::Https { host, .. }) => host.to_string(),
-        (None, Origin::AppId(_)) => {
-            tracing::info!("RP ID required if using app ID as origin");
-            return Err(WebAuthnError::SecurityError);
-        }
+    let origin = request_environment.origin();
+    let rp_id = match origin {
+        Origin::Https { .. } => RelyingPartyId::try_from(origin).map_err(|err| {
+            tracing::info!("Cannot derive relying party ID from origin: {err}");
+            WebAuthnError::SecurityError
+        })?,
+        Origin::AppId(_) => peek_get_assertion_rp_id(&options.request_json)?,
     };
 
-    let extensions = if let Some(incoming_extensions) = options.extensions {
-        let extensions = GetAssertionRequestExtensions {
-            cred_blob: incoming_extensions.get_cred_blob,
-            hmac_or_prf: incoming_extensions
-                .prf
-                .and_then(|x| {
-                    x.eval.map(|eval| {
-                        let eval = Some(eval.decode());
-                        let mut eval_by_credential = HashMap::new();
-                        if let Some(incoming_eval) = x.eval_by_credential {
-                            for (key, val) in incoming_eval.iter() {
-                                eval_by_credential.insert(key.clone(), val.decode());
-                            }
-                        }
-                        GetAssertionHmacOrPrfInput::Prf {
-                            eval,
-                            eval_by_credential,
-                        }
-                    })
-                })
-                .unwrap_or_default(),
-            large_blob: incoming_extensions
-                .large_blob
-                // TODO: Implement GetAssertionLargeBlobExtension::Write, once libwebauthn supports it
-                .filter(|x| x.read == Some(true))
-                .map(|_| GetAssertionLargeBlobExtension::Read)
-                .unwrap_or(GetAssertionLargeBlobExtension::None),
-        };
-        Some(extensions)
-    } else {
-        None
-    };
+    let mut get_assertion_request = GetAssertionRequest::from_json(&rp_id, &options.request_json)
+        .map_err(|err| {
+        tracing::info!("Failed to parse GetAssertion request JSON: {err}");
+        WebAuthnError::TypeError
+    })?;
 
-    Ok((
-        GetAssertionRequest {
-            hash: client_data_hash,
-            relying_party_id,
-            user_verification,
-            allow,
-            extensions,
-            timeout: options.timeout.unwrap_or(Duration::from_secs(300)),
-        },
-        client_data_json,
-    ))
+    // TODO(libwebauthn#185)
+    get_assertion_request.origin = origin.to_string();
+    get_assertion_request.cross_origin = Some(matches!(
+        request_environment,
+        NavigationContext::CrossOrigin(_)
+    ));
+
+    let client_data_json = get_assertion_request.client_data_json();
+
+    Ok((get_assertion_request, client_data_json))
 }
 
+/// Serializes a CTAP2 GetAssertionResponse to WebAuthn JSON format.
 pub(super) fn get_credential_response_try_from_ctap2(
     response: &GetAssertionResponseInternal,
     client_data_json: String,
@@ -364,12 +196,6 @@ pub(super) fn get_credential_response_try_from_ctap2(
         .to_response_bytes()
         .map_err(|err| format!("Failed to parse authenticator data: {err}"))?;
 
-    // We can't just do this here, because we need encode all byte arrays for the JS-communication:
-    // let unsigned_extensions = response
-    //     .ctap
-    //     .unsigned_extensions_output
-    //     .as_ref()
-    //     .map(|extensions| serde_json::to_string(&extensions).unwrap());
     let unsigned_extensions = response
         .ctap
         .unsigned_extensions_output

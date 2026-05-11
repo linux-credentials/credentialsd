@@ -39,8 +39,11 @@ impl InProcessNfcHandler {
         prev_nfc_state: &NfcStateInternal,
     ) -> Result<NfcStateInternal, Error> {
         match libwebauthn::transport::nfc::get_nfc_device().await {
-            Ok(None) => Ok(NfcStateInternal::Waiting),
-            Ok(Some(hid_device)) => Ok(NfcStateInternal::Connected(hid_device)),
+            Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
+            Ok(None) => {
+                let state = NfcStateInternal::Waiting;
+                Ok(state)
+            }
             Err(err) => {
                 *failures += 1;
                 if *failures == 5 {
@@ -526,6 +529,9 @@ async fn handle_nfc_updates(
             }
             UvUpdate::PresenceRequired => {
                 tracing::debug!("Authenticator requested user presence, but that makes no sense for NFC. Skipping");
+            }
+            UvUpdate::PinNotSet(_) => {
+                tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
             }
         }
     }

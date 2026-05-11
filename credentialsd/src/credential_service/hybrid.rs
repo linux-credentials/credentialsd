@@ -51,7 +51,13 @@ impl HybridHandler for InternalHybridHandler {
                     QrCodeOperationHint::GetAssertionRequest
                 }
             };
-            let mut device = CableQrCodeDevice::new_transient(hint);
+            let mut device = match CableQrCodeDevice::new_transient(hint) {
+                Ok(device) => device,
+                Err(err) => {
+                    tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                    return;
+                }
+            };
             let qr_code = device.qr_code.to_string();
             if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
                 tracing::error!("Failed to send caBLE update: {:?}", err);

@@ -381,6 +381,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 mod test {
     use std::{sync::Arc, time::Duration};
 
+    use base64::Engine as _;
     use libwebauthn::{
         ops::webauthn::{
             MakeCredentialRequest, ResidentKeyRequirement, UserVerificationRequirement,
@@ -396,9 +397,7 @@ mod test {
         credential_service::usb::InProcessUsbHandler,
         dbus::test::{DummyFlowServer, DummyUiServer},
         model::CredentialRequest,
-        webauthn::{self, NavigationContext},
     };
-    use credentialsd_common::model::Operation;
 
     use super::{
         hybrid::{test::DummyHybridHandler, HybridStateInternal},
@@ -456,13 +455,15 @@ mod test {
 
     fn create_credential_request() -> CredentialRequest {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
-        let origin = NavigationContext::SameOrigin("https://webauthn.io".parse().unwrap());
-        let client_data_json =
-            webauthn::format_client_data_json(Operation::Create, challenge, &origin);
-        let client_data_hash = webauthn::create_client_data_hash(&client_data_json);
+        let origin = "webauthn.io".to_string();
+        let is_cross_origin = false;
+        let challenge_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(challenge)
+            .expect("valid base64url challenge");
         let make_request = MakeCredentialRequest {
-            hash: client_data_hash,
-            origin: "https://webauthn.io".to_string(),
+            challenge: challenge_bytes,
+            origin: origin.clone(),
+            cross_origin: Some(is_cross_origin),
             relying_party: Ctap2PublicKeyCredentialRpEntity {
                 id: "webauthn.io".to_string(),
                 name: Some("webauthn.io".to_string()),
