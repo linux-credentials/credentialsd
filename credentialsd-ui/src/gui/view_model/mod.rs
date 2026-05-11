@@ -13,17 +13,15 @@ use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::{
-    client::FlowController,
-    model::{Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate},
+use credentialsd_common::model::{
+    Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate,
 };
 
+use crate::client::FlowControlClient;
+
 #[derive(Debug)]
-pub(crate) struct ViewModel<F>
-where
-    F: FlowController + Send,
-{
-    flow_controller: Arc<AsyncMutex<F>>,
+pub(crate) struct ViewModel {
+    flow_controller: Arc<AsyncMutex<FlowControlClient>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     title: String,
@@ -44,10 +42,10 @@ where
     // hybrid_linked_state: HybridState,
 }
 
-impl<F: FlowController + Send> ViewModel<F> {
+impl ViewModel {
     pub(crate) fn new(
         request: ViewRequest,
-        flow_controller: Arc<AsyncMutex<F>>,
+        flow_controller: Arc<AsyncMutex<FlowControlClient>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
@@ -79,11 +77,11 @@ impl<F: FlowController + Send> ViewModel<F> {
 
     async fn update_title(&mut self) {
         let mut title = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Create a passkey for %s1")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Use a passkey for %s1")
             }
@@ -92,14 +90,14 @@ impl<F: FlowController + Send> ViewModel<F> {
         title = title.replace("%s1", &self.rp_id);
 
         let mut subtitle = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application
                 // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
                 gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application
@@ -160,15 +158,15 @@ impl<F: FlowController + Send> ViewModel<F> {
         match device.transport {
             Transport::Usb => {
                 let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_usb_credential().await.unwrap();
+                (*cred_service).discover_usb_authenticators().await.unwrap();
             }
             Transport::Nfc => {
                 let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_nfc_credential().await.unwrap();
+                (*cred_service).discover_nfc_authenticators().await.unwrap();
             }
             Transport::HybridQr => {
-                let mut cred_service = self.flow_controller.lock().await;
-                cred_service.get_hybrid_credential().await.unwrap();
+                let cred_service = self.flow_controller.lock().await;
+                cred_service.discover_hybrid_authenticators().await.unwrap();
             }
             _ => {
                 todo!()
@@ -234,9 +232,12 @@ impl<F: FlowController + Send> ViewModel<F> {
                 Event::Background(BackgroundEvent::UsbConnected) => {
                     info!("Found USB device")
                 }
-
+                // TODO: Add this event
+                // Event::Background(BackgroundEvent::DevicesUpdated(devices)) => {
+                //     self.update_devices(devices).await
+                // }
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
-                    // TODO: UsbNeedsPin just needs to be NeedsPing
+                    // TODO: UsbNeedsPin just needs to be NeedsPin
                     self.tx_update
                         .send(ViewUpdate::UsbNeedsPin { attempts_left })
                         .await

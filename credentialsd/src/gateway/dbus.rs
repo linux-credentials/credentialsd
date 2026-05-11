@@ -292,7 +292,7 @@ impl CredentialPortalGateway {
             Err(err) => return Err(err).into(),
         };
 
-        tracing::debug!(
+        tracing::trace!(
             ?context,
             %request_json,
             ?parent_window,
