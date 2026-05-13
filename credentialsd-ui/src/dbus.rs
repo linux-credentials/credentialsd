@@ -172,20 +172,20 @@ impl CredentialPortalBackend {
             app_path,
             options,
         };
-        let flow_object = FlowObject {
+        let ceremony = CeremonyObject {
             ui_context,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
             ui_events_forwarder_task: None,
             bg_events_tx: None,
         };
-        object_server.at(object_path.clone(), flow_object).await?;
+        object_server.at(object_path.clone(), ceremony).await?;
         tracing::debug!("Received UI launch request");
         Ok(object_path)
     }
 }
 
-pub struct FlowObject {
+pub struct CeremonyObject {
     ui_context: UiContext,
     pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
     pub return_address: OwnedUniqueName,
@@ -193,9 +193,9 @@ pub struct FlowObject {
     bg_events_tx: Option<Sender<BackgroundEvent>>,
 }
 
-#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.FlowObject")]
-impl FlowObject {
-    /// Start the UI flow with an initial set of available credential interfaces.
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.Ceremony")]
+impl CeremonyObject {
+    /// Start the UI ceremony with an initial set of available credential interfaces.
     /// Call this method after subscribing to the signals.
     async fn start(
         &mut self,
@@ -218,7 +218,7 @@ impl FlowObject {
                 if emitter.user_interacted(&ui_event).await.is_err() {
                     tracing::error!("Failed to send UI event signal.");
                     // TODO: we need to cancel the request here, so we need a
-                    // channel back to the flow object to send the cancellation.
+                    // channel back to the ceremony object to send the cancellation.
                     break;
                 }
             }
@@ -284,7 +284,7 @@ impl FlowObject {
         }
         if let Some(path) = header.path() {
             // TODO: Send clean up task to GUI thread.
-            object_server.remove::<FlowObject, _>(path).await?;
+            object_server.remove::<CeremonyObject, _>(path).await?;
         }
         Ok(())
     }
