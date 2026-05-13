@@ -5,7 +5,7 @@ use async_std::{
 };
 use credentialsd_common::{
     client::FlowController,
-    model::{BackendRequest, RequestId},
+    model::{RequestId, UserInteractedEvent},
     server::BackgroundEvent,
 };
 use futures_lite::StreamExt;
@@ -129,34 +129,35 @@ impl FlowController for DbusCredentialClient {
 
 #[derive(Debug)]
 pub struct FlowControlClient {
-    pub tx: Sender<BackendRequest>,
+    pub tx: Sender<UserInteractedEvent>,
     pub rx: AsyncMutex<Option<Receiver<BackgroundEvent>>>,
 }
 
 impl FlowControlClient {
     pub async fn discover_hybrid_authenticators(&self) -> Result<(), ()> {
-        self.send(BackendRequest::StartHybridDiscovery).await
+        self.send(UserInteractedEvent::HybridDiscoveryRequested)
+            .await
     }
 
     pub async fn discover_nfc_authenticators(&mut self) -> Result<(), ()> {
-        self.send(BackendRequest::StartNfcDiscovery).await
+        self.send(UserInteractedEvent::NfcDiscoveryRequested).await
     }
 
     pub async fn discover_usb_authenticators(&mut self) -> Result<(), ()> {
-        self.send(BackendRequest::StartUsbDiscovery).await
+        self.send(UserInteractedEvent::UsbDiscoveryRequested).await
     }
 
     pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-        self.send(BackendRequest::EnterClientPin(pin)).await
+        self.send(UserInteractedEvent::ClientPinEntered(pin)).await
     }
 
     pub async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
-        self.send(BackendRequest::SelectCredential(credential_id))
+        self.send(UserInteractedEvent::CredentialSelected(credential_id))
             .await
     }
 
     pub async fn cancel_request(&self) -> Result<(), ()> {
-        self.send(BackendRequest::CancelRequest).await
+        self.send(UserInteractedEvent::RequestCancelled).await
     }
 
     /// Returns a channel for background events.
@@ -167,7 +168,7 @@ impl FlowControlClient {
         })
     }
 
-    async fn send(&self, request: BackendRequest) -> Result<(), ()> {
+    async fn send(&self, request: UserInteractedEvent) -> Result<(), ()> {
         match self.tx.send(request).await {
             Ok(_) => Ok(()),
             Err(_) => Err(()),

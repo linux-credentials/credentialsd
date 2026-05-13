@@ -6,8 +6,8 @@ use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    BackendRequest, Device, Error as CredentialServiceError, Operation, PortalBackendOptions,
-    RequestId, RequestingApplication, WebAuthnError,
+    Device, Error as CredentialServiceError, Operation, PortalBackendOptions, RequestId,
+    RequestingApplication, UserInteractedEvent, WebAuthnError,
 };
 use credentialsd_common::server::{BackgroundEvent, ViewRequest, WindowHandle};
 use futures_lite::{Stream, StreamExt};
@@ -164,7 +164,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         let cred_selector_tx = Arc::new(Mutex::new(None));
         while let Some(ui_request) = flow.receive_ui_event().await {
             match ui_request {
-                BackendRequest::StartHybridDiscovery => {
+                UserInteractedEvent::HybridDiscoveryRequested => {
                     let stream = svc
                         .lock()
                         .await
@@ -174,7 +174,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                     let flow = flow.clone();
                     forward_background_event_stream(flow, stream);
                 }
-                BackendRequest::StartNfcDiscovery => {
+                UserInteractedEvent::NfcDiscoveryRequested => {
                     let stream = svc
                         .lock()
                         .await
@@ -184,7 +184,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                     let flow = flow.clone();
                     forward_background_event_stream(flow, stream);
                 }
-                BackendRequest::StartUsbDiscovery => {
+                UserInteractedEvent::UsbDiscoveryRequested => {
                     let client_pin_tx = client_pin_tx.clone();
                     let cred_selector_tx = cred_selector_tx.clone();
                     let stream =
@@ -207,7 +207,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                     let flow = flow.clone();
                     forward_background_event_stream(flow, stream);
                 }
-                BackendRequest::EnterClientPin(pin) => {
+                UserInteractedEvent::ClientPinEntered(pin) => {
                     let tx = { client_pin_tx.lock().unwrap().take() };
                     if let Some(tx) = tx {
                         if tx.send(pin).await.is_err() {
@@ -219,7 +219,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         );
                     }
                 }
-                BackendRequest::SelectCredential(id) => {
+                UserInteractedEvent::CredentialSelected(id) => {
                     let tx = { cred_selector_tx.lock().unwrap().take() };
                     if let Some(tx) = tx {
                         if tx.send(id).await.is_err() {
@@ -231,7 +231,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         );
                     }
                 }
-                BackendRequest::CancelRequest => {
+                UserInteractedEvent::RequestCancelled => {
                     tracing::debug!(%request_id, "Cancelling request");
                     svc.lock().await.cancel_request(request_id).await;
                 }

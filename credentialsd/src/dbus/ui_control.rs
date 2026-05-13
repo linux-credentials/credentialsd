@@ -14,7 +14,7 @@ use zbus::{
 };
 
 use credentialsd_common::{
-    model::{BackendRequest, Device, Operation, PortalBackendOptions, RequestId},
+    model::{Device, Operation, PortalBackendOptions, RequestId, UserInteractedEvent},
     server::{BackgroundEvent, ViewRequest, WindowHandle},
 };
 
@@ -76,11 +76,11 @@ trait UiControlService2 {
 #[derive(Clone, Debug)]
 pub struct Ceremony {
     proxy: Arc<CeremonyObjectProxy<'static>>,
-    ui_events_rx: Arc<AsyncMutex<Receiver<BackendRequest>>>,
+    ui_events_rx: Arc<AsyncMutex<Receiver<UserInteractedEvent>>>,
 }
 
 impl Ceremony {
-    pub async fn receive_ui_event(&self) -> Option<BackendRequest> {
+    pub async fn receive_ui_event(&self) -> Option<UserInteractedEvent> {
         self.ui_events_rx.lock().await.recv().await
     }
 
@@ -109,7 +109,7 @@ trait CeremonyObject {
     async fn cancel(&self) -> fdo::Result<()>;
 
     #[zbus(signal)]
-    async fn user_interacted(&self, update: BackendRequest) -> zbus::Result<()>;
+    async fn user_interacted(&self, update: UserInteractedEvent) -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -198,7 +198,7 @@ impl UiController for UiControlServiceClient {
 
 async fn forward_ui_events(
     mut ui_event_stream: UserInteractedStream,
-    tx: mpsc::Sender<BackendRequest>,
+    tx: mpsc::Sender<UserInteractedEvent>,
 ) -> Result<(), Box<dyn Error>> {
     tracing::debug!("Listening for events from UI");
     while let Some(signal) = ui_event_stream.next().await {

@@ -266,37 +266,39 @@ pub enum NfcState {
     Failed(Error),
 }
 
-pub enum BackendRequest {
+pub enum UserInteractedEvent {
     /// Start Hybrid discovery
-    StartHybridDiscovery,
+    HybridDiscoveryRequested,
 
     /// Start NFC discovery
-    StartNfcDiscovery,
+    NfcDiscoveryRequested,
 
     /// Start USB discovery
-    StartUsbDiscovery,
+    UsbDiscoveryRequested,
 
     /// Send client PIN
-    EnterClientPin(String),
+    ClientPinEntered(String),
 
     /// Select a credential by credential ID
-    SelectCredential(String),
+    CredentialSelected(String),
 
-    CancelRequest,
+    RequestCancelled,
 }
 
-impl std::fmt::Debug for BackendRequest {
+impl std::fmt::Debug for UserInteractedEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::StartHybridDiscovery => write!(f, "StartHybridDiscovery"),
-            Self::StartNfcDiscovery => write!(f, "StartNfcDiscovery"),
-            Self::StartUsbDiscovery => write!(f, "StartUsbDiscovery"),
-            Self::EnterClientPin(_) => f
+            Self::HybridDiscoveryRequested => write!(f, "StartHybridDiscovery"),
+            Self::NfcDiscoveryRequested => write!(f, "StartNfcDiscovery"),
+            Self::UsbDiscoveryRequested => write!(f, "StartUsbDiscovery"),
+            Self::ClientPinEntered(_) => f
                 .debug_tuple("EnterClientPin")
                 .field(&"******".to_string())
                 .finish(),
-            Self::SelectCredential(arg0) => f.debug_tuple("SelectCredential").field(arg0).finish(),
-            Self::CancelRequest => write!(f, "CancelRequest"),
+            Self::CredentialSelected(arg0) => {
+                f.debug_tuple("SelectCredential").field(arg0).finish()
+            }
+            Self::RequestCancelled => write!(f, "CancelRequest"),
         }
     }
 }
