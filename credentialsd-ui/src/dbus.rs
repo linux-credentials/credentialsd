@@ -18,7 +18,8 @@ use zbus::{
 use credentialsd_common::{
     client::FlowController,
     model::{
-        BackendRequest, Device, Operation, PortalBackendOptions, RequestId, RequestingApplication,
+        Device, Operation, PortalBackendOptions, RequestId, RequestingApplication,
+        UserInteractedEvent,
     },
     server::{BackgroundEvent, ViewRequest, WindowHandle},
 };
@@ -89,16 +90,20 @@ impl UiControlService {
             while let Ok(msg) = fc_rx.recv().await {
                 // UI doesn't get an error if these fail...
                 let result = match &msg {
-                    BackendRequest::StartHybridDiscovery => client.get_hybrid_credential().await,
-                    BackendRequest::StartNfcDiscovery => client.get_nfc_credential().await,
-                    BackendRequest::StartUsbDiscovery => client.get_usb_credential().await,
-                    BackendRequest::EnterClientPin(pin) => {
+                    UserInteractedEvent::HybridDiscoveryRequested => {
+                        client.get_hybrid_credential().await
+                    }
+                    UserInteractedEvent::NfcDiscoveryRequested => client.get_nfc_credential().await,
+                    UserInteractedEvent::UsbDiscoveryRequested => client.get_usb_credential().await,
+                    UserInteractedEvent::ClientPinEntered(pin) => {
                         client.enter_client_pin(pin.to_string()).await
                     }
-                    BackendRequest::SelectCredential(cred_id) => {
+                    UserInteractedEvent::CredentialSelected(cred_id) => {
                         client.select_credential(cred_id.to_string()).await
                     }
-                    BackendRequest::CancelRequest => client.cancel_request(request.id).await,
+                    UserInteractedEvent::RequestCancelled => {
+                        client.cancel_request(request.id).await
+                    }
                 };
                 if let Err(err) = result {
                     tracing::error!("Failed to send {msg:?} to frontend: {err:?}");
@@ -292,6 +297,6 @@ impl CeremonyObject {
     #[zbus(signal)]
     async fn user_interacted(
         emitter: SignalEmitter<'_>,
-        event: &BackendRequest,
+        event: &UserInteractedEvent,
     ) -> zbus::Result<()>;
 }

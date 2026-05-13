@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{BackendRequest, Device, Operation, RequestId, RequestingApplication};
+use crate::model::{Device, Operation, RequestId, RequestingApplication, UserInteractedEvent};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U32, &Signature::Variant],
@@ -49,12 +49,12 @@ const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
 const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
 const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
 
-const BACKEND_REQUEST_START_HYBRID_DISCOVERY: u32 = 0x01;
-const BACKEND_REQUEST_START_USB_DISCOVERY: u32 = 0x02;
-const BACKEND_REQUEST_START_NFC_DISCOVERY: u32 = 0x03;
-const BACKEND_REQUEST_ENTER_CLIENT_PIN: u32 = 0x04;
-const BACKEND_REQUEST_SELECT_CREDENTIAL: u32 = 0x05;
-const BACKEND_REQUEST_CANCEL_REQUEST: u32 = 0x06;
+const USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED: u32 = 0x01;
+const USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED: u32 = 0x02;
+const USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED: u32 = 0x03;
+const USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED: u32 = 0x04;
+const USER_INTERACTED_EVENT_CREDENTIAL_SELECTED: u32 = 0x05;
+const USER_INTERACTED_EVENT_REQUEST_CANCELLED: u32 = 0x06;
 
 /// Flattened enum BackgroundEvent for sending across D-Bus.
 #[derive(Debug, Clone, PartialEq)]
@@ -274,94 +274,6 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
     }
 }
 
-impl Type for BackendRequest {
-    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
-}
-
-impl From<&BackendRequest> for Structure<'_> {
-    fn from(value: &BackendRequest) -> Self {
-        match value {
-            BackendRequest::StartHybridDiscovery => tag_value_to_struct(0x01, None),
-            BackendRequest::StartNfcDiscovery => tag_value_to_struct(0x02, None),
-            BackendRequest::StartUsbDiscovery => tag_value_to_struct(0x03, None),
-            BackendRequest::EnterClientPin(pin) => {
-                tag_value_to_struct(0x04, Some(Value::Str(pin.into())))
-            }
-            BackendRequest::SelectCredential(credential_id) => {
-                tag_value_to_struct(0x05, Some(Value::Str(credential_id.into())))
-            }
-            BackendRequest::CancelRequest => tag_value_to_struct(0x06, None),
-        }
-    }
-}
-
-impl TryFrom<&Structure<'_>> for BackendRequest {
-    type Error = zvariant::Error;
-
-    fn try_from(value: &Structure<'_>) -> Result<Self, Self::Error> {
-        let (tag, value) = parse_tag_value_struct(value)?;
-
-        match tag {
-            0x01 => Ok(BackendRequest::StartHybridDiscovery),
-            0x02 => Ok(BackendRequest::StartNfcDiscovery),
-            0x03 => Ok(BackendRequest::StartUsbDiscovery),
-            0x04 => {
-                let s: Str = value.downcast_ref()?;
-                if s.is_empty() {
-                    return Err(zvariant::Error::invalid_length(
-                        s.len(),
-                        &"a non-empty string",
-                    ));
-                }
-                Ok(BackendRequest::EnterClientPin(s.as_str().to_string()))
-            }
-            0x05 => {
-                let s: Str = value.downcast_ref()?;
-                if s.is_empty() {
-                    return Err(zvariant::Error::invalid_length(
-                        s.len(),
-                        &"a non-empty string",
-                    ));
-                }
-                Ok(BackendRequest::SelectCredential(s.as_str().to_string()))
-            }
-            0x06 => Ok(BackendRequest::CancelRequest),
-            _ => Err(zvariant::Error::Message(format!(
-                "Unknown BackendRequest tag : {tag}"
-            ))),
-        }
-    }
-}
-
-impl Serialize for BackendRequest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let structure: Structure = self.into();
-        structure.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for BackendRequest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let d = Structure::deserializer_for_signature(TAG_VALUE_SIGNATURE).map_err(|err| {
-            D::Error::custom(format!(
-                "could not create deserializer for tag-value struct: {err}"
-            ))
-        })?;
-        let structure = d.deserialize(deserializer)?;
-        (&structure).try_into().map_err(|err| {
-            D::Error::custom(format!(
-                "could not deserialize structure into BackendRequest: {err}"
-            ))
-        })
-    }
-}
-
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreateCredentialRequest {
@@ -504,6 +416,116 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
             r#type: "public-key".to_string(),
             public_key: Some(response),
         }
+    }
+}
+
+impl Type for UserInteractedEvent {
+    const SIGNATURE: &'static Signature = TAG_VALUE_SIGNATURE;
+}
+
+impl From<&UserInteractedEvent> for Structure<'_> {
+    fn from(value: &UserInteractedEvent) -> Self {
+        match value {
+            UserInteractedEvent::HybridDiscoveryRequested => {
+                tag_value_to_struct(USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED, None)
+            }
+            UserInteractedEvent::NfcDiscoveryRequested => {
+                tag_value_to_struct(USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED, None)
+            }
+            UserInteractedEvent::UsbDiscoveryRequested => {
+                tag_value_to_struct(USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED, None)
+            }
+            UserInteractedEvent::ClientPinEntered(pin) => tag_value_to_struct(
+                USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED,
+                Some(Value::Str(pin.into())),
+            ),
+            UserInteractedEvent::CredentialSelected(credential_id) => tag_value_to_struct(
+                USER_INTERACTED_EVENT_CREDENTIAL_SELECTED,
+                Some(Value::Str(credential_id.into())),
+            ),
+            UserInteractedEvent::RequestCancelled => {
+                tag_value_to_struct(USER_INTERACTED_EVENT_REQUEST_CANCELLED, None)
+            }
+        }
+    }
+}
+
+impl TryFrom<&Structure<'_>> for UserInteractedEvent {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Structure<'_>) -> Result<Self, Self::Error> {
+        let (tag, value) = parse_tag_value_struct(value)?;
+
+        match tag {
+            USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED => {
+                Ok(UserInteractedEvent::HybridDiscoveryRequested)
+            }
+            USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED => {
+                Ok(UserInteractedEvent::NfcDiscoveryRequested)
+            }
+            USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED => {
+                Ok(UserInteractedEvent::UsbDiscoveryRequested)
+            }
+            USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(UserInteractedEvent::ClientPinEntered(
+                    s.as_str().to_string(),
+                ))
+            }
+            USER_INTERACTED_EVENT_CREDENTIAL_SELECTED => {
+                let s: Str = value.downcast_ref()?;
+                if s.is_empty() {
+                    return Err(zvariant::Error::invalid_length(
+                        s.len(),
+                        &"a non-empty string",
+                    ));
+                }
+                Ok(UserInteractedEvent::CredentialSelected(
+                    s.as_str().to_string(),
+                ))
+            }
+            USER_INTERACTED_EVENT_REQUEST_CANCELLED => Ok(UserInteractedEvent::RequestCancelled),
+            _ => Err(zvariant::Error::Message(format!(
+                "Unknown {} tag : {tag}",
+                stringify!(UserInteractedEvent)
+            ))),
+        }
+    }
+}
+
+impl Serialize for UserInteractedEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let structure: Structure = self.into();
+        structure.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for UserInteractedEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let d = Structure::deserializer_for_signature(TAG_VALUE_SIGNATURE).map_err(|err| {
+            D::Error::custom(format!(
+                "could not create deserializer for tag-value struct: {err}"
+            ))
+        })?;
+        let structure = d.deserialize(deserializer)?;
+        (&structure).try_into().map_err(|err| {
+            D::Error::custom(format!(
+                "could not deserialize structure into {}: {err}",
+                stringify!(UserInteractedEvent)
+            ))
+        })
     }
 }
 
