@@ -18,11 +18,10 @@ use credentialsd_common::{
     },
 };
 
-use crate::webauthn::AppId;
+use crate::{webauthn::AppId, DBUS_SERVICE_NAME};
 
 use super::{check_origin_from_app, GatewayService, RequestContext};
 
-pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
 pub(super) async fn start_dbus_gateway(
@@ -32,7 +31,7 @@ pub(super) async fn start_dbus_gateway(
         .inspect_err(|err| {
             tracing::error!("Failed to connect to D-Bus session: {err}");
         })?
-        .name(SERVICE_NAME)?
+        .name(DBUS_SERVICE_NAME)?
         .serve_at(
             PORTAL_SERVICE_PATH,
             CredentialPortalGateway {

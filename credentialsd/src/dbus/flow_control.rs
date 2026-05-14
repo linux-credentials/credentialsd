@@ -11,12 +11,11 @@ use credentialsd_common::model::{
 };
 use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use futures_lite::{Stream, StreamExt};
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
-use tokio::sync::{
-    mpsc::{self, Sender},
-    Mutex as AsyncMutex,
-};
-use zbus::connection::{Builder, Connection};
+use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
+use tokio::task::AbortHandle;
+use zbus::connection::Connection;
 
 use crate::credential_service::ManageDevice;
 use crate::dbus::ui_control::Ceremony;
@@ -27,33 +26,23 @@ use crate::{
     model::{CredentialRequest, CredentialResponse},
 };
 
-pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
-
 pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 'static>(
-    device_manager: M,
-) -> zbus::Result<(
-    Connection,
-    Sender<(
+    conn: Connection,
+    mut listener: Receiver<(
         CredentialRequest,
         RequestingApplication,
         Option<WindowHandle>, // Client window handle
         oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     )>,
-)> {
+    device_manager: M,
+) -> zbus::Result<AbortHandle> {
     let svc = Arc::new(AsyncMutex::new(device_manager));
     let svc2 = svc.clone();
-    let conn = Builder::session()?.name(SERVICE_NAME)?.build().await?;
-    let (initiator_tx, mut initiator_rx) = mpsc::channel::<(
-        CredentialRequest,
-        RequestingApplication,
-        Option<WindowHandle>,
-        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    )>(2);
-    let conn2 = conn.clone();
-    tokio::spawn(async move {
-        while let Some((msg, requesting_app, window_handle, tx)) = initiator_rx.recv().await {
+
+    let task = tokio::spawn(async move {
+        while let Some((msg, requesting_app, window_handle, tx)) = listener.recv().await {
             let svc = svc2.clone();
-            let ui_control_client = UiControlServiceClient::new(conn2.clone());
+            let ui_control_client = UiControlServiceClient::new(conn.clone());
             if let Err(_) =
                 tx.send(handle(svc, ui_control_client, msg, requesting_app, window_handle).await)
             {
@@ -63,7 +52,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
             }
         }
     });
-    Ok((conn, initiator_tx))
+    Ok(task.abort_handle())
 }
 
 async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiController + Debug>(
