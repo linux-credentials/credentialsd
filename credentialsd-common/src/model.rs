@@ -46,6 +46,9 @@ pub enum Operation {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct PortalBackendOptions {
+    /// A token that can be used to activate the UI window.
+    pub activation_token: Optional<String>,
+
     /// Top-level origin of the request if different from the origin.
     pub top_origin: Optional<String>,
 

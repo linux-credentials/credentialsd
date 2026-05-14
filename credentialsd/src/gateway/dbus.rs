@@ -69,7 +69,7 @@ impl CredentialPortalGateway {
         claimed_app_display_name: Optional<String>,
     ) -> PortalResult<CreateCredentialResponse, Error> {
         let CreateCredentialPortalOptions {
-            activation_token: _,
+            activation_token,
             top_origin,
             public_key,
         } = options;
@@ -114,7 +114,12 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_create_credential(request, context, parent_window.into())
+            .handle_create_credential(
+                request,
+                context,
+                parent_window.into(),
+                activation_token.into(),
+            )
             .await
             .map_err(Error::from);
 
@@ -133,7 +138,7 @@ impl CredentialPortalGateway {
         claimed_app_display_name: Optional<String>,
     ) -> PortalResult<GetCredentialResponse, Error> {
         let GetCredentialPortalOptions {
-            activation_token: _,
+            activation_token,
             top_origin,
             public_key,
         } = options;
@@ -174,7 +179,12 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_get_credential(request, context, parent_window.into())
+            .handle_get_credential(
+                request,
+                context,
+                parent_window.into(),
+                activation_token.into(),
+            )
             .await
             .map_err(Error::from);
         response.into()

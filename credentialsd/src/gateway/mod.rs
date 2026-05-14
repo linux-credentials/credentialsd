@@ -84,6 +84,7 @@ impl GatewayService {
         request: CreateCredentialRequest,
         context: RequestContext,
         parent_window: Option<WindowHandle>,
+        activation_token: Option<String>,
     ) -> Result<CreateCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -110,7 +111,12 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(context.into(), cred_request, parent_window)
+                .request_credential(
+                    context.into(),
+                    cred_request,
+                    parent_window,
+                    activation_token,
+                )
                 .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
@@ -142,6 +148,7 @@ impl GatewayService {
         request: GetCredentialRequest,
         context: RequestContext,
         parent_window: Option<WindowHandle>,
+        activation_token: Option<String>,
     ) -> Result<GetCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -166,7 +173,12 @@ impl GatewayService {
 
             let response = self
                 .request_controller
-                .request_credential(context.into(), cred_request, parent_window)
+                .request_credential(
+                    context.into(),
+                    cred_request,
+                    parent_window,
+                    activation_token,
+                )
                 .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
