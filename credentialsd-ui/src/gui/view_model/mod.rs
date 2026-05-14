@@ -13,9 +13,7 @@ use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::model::{
-    Device, Error, HybridState, NfcState, Operation, Transport, UsbState, ViewUpdate,
-};
+use credentialsd_common::model::{Device, HybridState, Operation, Transport, ViewUpdate};
 
 use crate::client::FlowControlClient;
 
