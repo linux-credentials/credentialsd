@@ -10,7 +10,7 @@ use std::{
 };
 
 use credentialsd_common::{
-    model::{GetClientCapabilitiesResponse, RequestingApplication, WebAuthnError},
+    model::{RequestingApplication, WebAuthnError},
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
         GetCredentialResponse, WindowHandle,
@@ -192,20 +192,6 @@ impl GatewayService {
             Err(WebAuthnError::TypeError)
         }
     }
-
-    fn handle_get_client_capabilities(&self) -> GetClientCapabilitiesResponse {
-        GetClientCapabilitiesResponse {
-            conditional_create: false,
-            conditional_get: false,
-            hybrid_transport: true,
-            passkey_platform_authenticator: true,
-            user_verifying_platform_authenticator: false,
-            related_origins: false,
-            signal_all_accepted_credentials: false,
-            signal_current_user_details: false,
-            signal_unknown_credential: false,
-        }
-    }
 }
 
 /// Verifies that the calling client is able to request credentials for the
@@ -229,41 +215,6 @@ fn validate_request(context: &RequestContext) -> Result<NavigationContext, WebAu
         }
     };
     Ok(request_environment)
-}
-
-fn get_app_info_from_pid(pid: u32) -> Option<RequestingApplication> {
-    // Get binary path via PID from /proc file-system
-    // TODO: To be REALLY sure, we may want to look at /proc/PID/exe instead. It is a symlink to
-    //       the actual binary, giving a full path instead of only the command name.
-    //       This should in theory be "more secure", but also may disconcert novice users with no
-    //       technical background.
-    let command_name = match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
-        Ok(c) => c.trim().to_string(),
-        Err(e) => {
-            tracing::error!(
-                "Failed to read /proc/{pid}/comm, so we don't know the command name of peer: {e:?}"
-            );
-            return None;
-        }
-    };
-    tracing::debug!("Request is from: {command_name}");
-
-    let exe_path = match std::fs::read_link(format!("/proc/{pid}/exe")) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(
-                "Failed to follow link of /proc/{pid}/exe, so we don't know the executable path of peer: {e:?}"
-            );
-            return None;
-        }
-    };
-    tracing::debug!("Request is from: {exe_path:?}");
-
-    Some(RequestingApplication {
-        name: Some(command_name).into(),
-        path_or_app_id: exe_path.to_string_lossy().to_string(),
-        pid,
-    })
 }
 
 async fn should_trust_app_id(pid: u32) -> bool {

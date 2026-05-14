@@ -9,22 +9,17 @@ use tokio::sync::{
 };
 use zbus::{
     fdo, proxy,
-    zvariant::{ObjectPath, Optional, OwnedObjectPath},
+    zvariant::{Optional, OwnedObjectPath},
     Connection,
 };
 
 use credentialsd_common::{
     model::{Device, Operation, PortalBackendOptions, RequestId, UserInteractedEvent},
-    server::{BackgroundEvent, ViewRequest, WindowHandle},
+    server::{BackgroundEvent, WindowHandle},
 };
 
 /// Used by the credential service to control the UI.
 pub trait UiController {
-    fn launch_ui(
-        &self,
-        request: ViewRequest,
-    ) -> impl Future<Output = std::result::Result<(), Box<dyn Error>>> + Send;
-
     fn initialize(
         &self,
         parent_window: Option<WindowHandle>,
@@ -38,17 +33,6 @@ pub trait UiController {
         app_path: String,
         options: PortalBackendOptions,
     ) -> impl Future<Output = std::result::Result<Ceremony, Box<dyn Error>>> + Send;
-}
-
-#[proxy(
-    gen_blocking = false,
-    interface = "xyz.iinuwa.credentialsd.UiControl1",
-    default_service = "xyz.iinuwa.credentialsd.UiControl",
-    default_path = "/xyz/iinuwa/credentialsd/UiControl"
-)]
-trait UiControlService {
-    fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
-    fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
 }
 
 #[proxy(
@@ -122,35 +106,12 @@ impl UiControlServiceClient {
         Self { conn }
     }
 
-    async fn proxy(&self) -> Result<UiControlServiceProxy<'_>, zbus::Error> {
-        UiControlServiceProxy::new(&self.conn).await
-    }
-
     async fn proxy2(&self) -> Result<UiControlService2Proxy<'_>, zbus::Error> {
         UiControlService2Proxy::new(&self.conn).await
-    }
-
-    async fn request_proxy(
-        &self,
-        request_id: RequestId,
-    ) -> Result<CeremonyObjectProxy<'_>, zbus::Error> {
-        let object_path = ObjectPath::from_string_unchecked(format!(
-            "/org/freedesktop/portal/Credential/{}",
-            request_id
-        ));
-        CeremonyObjectProxy::new(&self.conn, object_path).await
     }
 }
 
 impl UiController for UiControlServiceClient {
-    async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
-        self.proxy()
-            .await?
-            .launch_ui(request)
-            .await
-            .map_err(|err| err.into())
-    }
-
     async fn initialize(
         &self,
         parent_window: Option<WindowHandle>,
@@ -245,19 +206,6 @@ pub mod test {
     }
 
     impl UiController for DummyUiClient {
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
-            tracing::debug!(
-                target: "DummyUiClient",
-                "Sending launch_ui() request"
-            );
-            self.tx.send(request).await.unwrap();
-            tracing::debug!(
-                target: "DummyUiClient",
-                "Finish launch_ui() request"
-            );
-            Ok(())
-        }
-
         async fn initialize(
             &self,
             _parent_window: Option<WindowHandle>,

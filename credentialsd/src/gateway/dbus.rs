@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display, os::fd::AsRawFd, sync::Arc};
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    fdo, interface,
+    interface,
     message::Header,
     names::{BusName, UniqueName},
     zvariant::{DeserializeDict, Optional, Type, Value},
@@ -11,21 +11,17 @@ use zbus::{
 };
 
 use credentialsd_common::{
-    model::{GetClientCapabilitiesResponse, RequestingApplication, WebAuthnError},
+    model::WebAuthnError,
     server::{
         CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
         GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WindowHandle,
     },
 };
 
-use crate::webauthn::{AppId, Origin};
+use crate::{webauthn::AppId, DBUS_SERVICE_NAME};
 
-use super::{
-    check_origin_from_app, get_app_info_from_pid, GatewayService, RequestContext, RequestKind,
-};
+use super::{check_origin_from_app, GatewayService, RequestContext};
 
-pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
-pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/Credentials";
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
 pub(super) async fn start_dbus_gateway(
@@ -35,13 +31,7 @@ pub(super) async fn start_dbus_gateway(
         .inspect_err(|err| {
             tracing::error!("Failed to connect to D-Bus session: {err}");
         })?
-        .name(SERVICE_NAME)?
-        .serve_at(
-            SERVICE_PATH,
-            CredentialGateway {
-                gateway_service: svc.clone(),
-            },
-        )?
+        .name(DBUS_SERVICE_NAME)?
         .serve_at(
             PORTAL_SERVICE_PATH,
             CredentialPortalGateway {
@@ -50,131 +40,6 @@ pub(super) async fn start_dbus_gateway(
         )?
         .build()
         .await
-}
-
-/// Struct to hold state for the privileged D-Bus interface.
-struct CredentialGateway {
-    /// Service responsible for processing credential requests.
-    gateway_service: Arc<AsyncMutex<GatewayService>>,
-}
-
-/// These are public methods that can be called by arbitrary clients to begin a
-/// credential flow.
-///
-/// The D-Bus interface is responsible for authorizing the client and collecting
-/// the contextual information about the client to pass onto the GatewayService
-/// for evaluation.
-#[interface(name = "xyz.iinuwa.credentialsd.Credentials1")]
-impl CredentialGateway {
-    async fn create_credential(
-        &self,
-        #[zbus(header)] header: Header<'_>,
-        #[zbus(connection)] connection: &Connection,
-        parent_window: Optional<WindowHandle>,
-        request: CreateCredentialRequest,
-    ) -> Result<CreateCredentialResponse, Error> {
-        let context = extract_client_details(
-            header,
-            connection,
-            request.origin.as_ref().cloned(),
-            request.is_same_origin.unwrap_or_default(),
-        )
-        .await?;
-
-        let response = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_create_credential(request, context, parent_window.into())
-            .await?;
-        Ok(response)
-    }
-
-    async fn get_credential(
-        &self,
-        #[zbus(header)] header: Header<'_>,
-        #[zbus(connection)] connection: &Connection,
-        parent_window: Optional<WindowHandle>,
-        request: GetCredentialRequest,
-    ) -> Result<GetCredentialResponse, Error> {
-        let context = extract_client_details(
-            header,
-            connection,
-            request.origin.as_ref().cloned(),
-            request.is_same_origin.unwrap_or_default(),
-        )
-        .await?;
-
-        let response = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_get_credential(request, context, parent_window.into())
-            .await?;
-        Ok(response)
-    }
-
-    async fn get_client_capabilities(&self) -> fdo::Result<GetClientCapabilitiesResponse> {
-        let capabilities = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_get_client_capabilities();
-        Ok(capabilities)
-    }
-}
-
-/// Returns contextual details about the client and the request needed for
-/// authorization.
-async fn extract_client_details(
-    header: Header<'_>,
-    connection: &Connection,
-    origin: Option<String>,
-    is_same_origin: bool,
-) -> Result<RequestContext, Error> {
-    let top_origin = if is_same_origin {
-        None
-    } else {
-        // TODO: Once we modify the models to convey the top-origin in cross origin requests to the UI, we can remove this error message.
-        // We should still reject cross-origin requests for conditionally-mediated requests.
-        tracing::warn!("Client attempted to issue cross-origin request for credentials, which are not supported by this platform.");
-        return Err(WebAuthnError::NotAllowedError.into());
-    };
-    /*
-    let top_origin =
-        top_origin.as_ref()
-        .map(|o| o.parse::<Origin>())
-        .transpose()
-        .map_err(|err| {
-            tracing::warn!(%err, "Invalid top origin specified: {:?}", client_details.top_origin);
-            WebAuthnError::SecurityError
-        })?;
-    */
-
-    let Some(origin) = origin.as_ref().cloned() else {
-        tracing::warn!(
-            "Caller requested implicit origin, which is not yet implemented. Rejecting request."
-        );
-        return Err(Error::SecurityError);
-    };
-    let origin = origin.parse::<Origin>().map_err(|err| {
-        tracing::warn!(%err, "Invalid origin specified: {:?}", origin);
-        WebAuthnError::SecurityError
-    })?;
-
-    // Find out where this request is coming from (which application is requesting this)
-    let requesting_app = query_connection_peer_binary(header, connection)
-        .await
-        .ok_or_else(|| {
-            tracing::error!("Could not retrieve client details from D-Bus connection");
-            Error::SecurityError
-        })?;
-    Ok(RequestContext {
-        app_id: "xyz.iinuwa.credentialsd.CredentialGateway".parse().unwrap(), // hardcoding this for now; this will be obsolete soon
-        app_name: requesting_app.name.as_ref().unwrap().clone(),
-        pid: requesting_app.pid,
-        request_kind: RequestKind::Privileged { origin, top_origin },
-    })
 }
 
 /// Struct to hold state for the portal D-Bus interface.
@@ -580,71 +445,4 @@ async fn query_peer_pid_via_fdinfo(
     };
 
     Some(pid)
-}
-
-async fn query_peer_pid_via_dbus(
-    connection: &Connection,
-    sender_unique_name: &UniqueName<'_>,
-) -> Option<u32> {
-    // Use the connection to query the D-Bus daemon for more info
-    let proxy = match zbus::Proxy::new(
-        connection,
-        "org.freedesktop.DBus",
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus",
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
-            return None;
-        }
-    };
-
-    // Get the Process ID (PID) of the peer
-    let pid_result = match proxy
-        .call_method("GetConnectionUnixProcessID", &(sender_unique_name))
-        .await
-    {
-        Ok(pid) => pid,
-        Err(e) => {
-            tracing::error!("Failed to get peer PID via DBus: {e:?}");
-            return None;
-        }
-    };
-    let pid: u32 = match pid_result.body().deserialize() {
-        Ok(pid) => pid,
-        Err(e) => {
-            tracing::error!("Retrieved peer PID is not an integer: {e:?}");
-            return None;
-        }
-    };
-    Some(pid)
-}
-
-async fn query_connection_peer_binary(
-    header: Header<'_>,
-    connection: &Connection,
-) -> Option<RequestingApplication> {
-    // Get the sender's unique bus name
-    let sender_unique_name = header.sender()?;
-
-    tracing::debug!("Received request from sender: {}", sender_unique_name);
-
-    // Get the senders PID.
-    //
-    // First, try to get the PID via the more secure fdinfo
-    let mut pid = query_peer_pid_via_fdinfo(connection, sender_unique_name).await;
-    // If that fails, we fall back to asking dbus directly for the peers PID
-    if pid.is_none() {
-        pid = query_peer_pid_via_dbus(connection, sender_unique_name).await;
-    }
-
-    let Some(pid) = pid else {
-        tracing::error!("Failed to determine peers PID. Skipping application details query.");
-        return None;
-    };
-
-    get_app_info_from_pid(pid)
 }
