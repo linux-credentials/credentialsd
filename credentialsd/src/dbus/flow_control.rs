@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
 use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
+use zbus::zvariant::OwnedObjectPath;
 
 use crate::credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice};
 use crate::dbus::ui_control::Ceremony;
@@ -123,8 +124,15 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         pid: app_pid,
     } = requesting_app;
     let app_name = Option::from(app_name).unwrap_or_else(|| "TODO: Require app name".to_string());
+    let handle: OwnedObjectPath = format!(
+        "/org/freedesktop/portal/desktop/request/CREDENTIALSD_{}",
+        rand::random::<u32>()
+    )
+    .try_into()
+    .expect("valid object path");
     let flow = match ui_control_client
         .initialize(
+            handle,
             window_handle,
             origin,
             operation,

@@ -9,7 +9,7 @@ use tokio::sync::{
 };
 use zbus::{
     fdo, proxy,
-    zvariant::{Optional, OwnedObjectPath},
+    zvariant::{ObjectPath, Optional, OwnedObjectPath},
     Connection,
 };
 
@@ -22,6 +22,7 @@ use credentialsd_common::{
 pub trait UiController {
     fn initialize(
         &self,
+        handle: OwnedObjectPath,
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -44,6 +45,7 @@ pub trait UiController {
 trait UiControlService2 {
     fn initialize(
         &self,
+        handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -54,7 +56,7 @@ trait UiControlService2 {
         app_pid: u32,
         app_path: String,
         options: PortalBackendOptions,
-    ) -> fdo::Result<OwnedObjectPath>;
+    ) -> fdo::Result<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +116,7 @@ impl UiControlServiceClient {
 impl UiController for UiControlServiceClient {
     async fn initialize(
         &self,
+        handle: OwnedObjectPath,
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -125,10 +128,17 @@ impl UiController for UiControlServiceClient {
         app_path: String,
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
-        let path = self
-            .proxy2()
+        let ceremony = CeremonyObjectProxy::new(&self.conn, handle.clone()).await?;
+        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
+        let from_ui_tx2 = from_ui_tx.clone();
+        let ui_event_stream = ceremony.receive_user_interacted().await?;
+        tokio::task::spawn(async move {
+            _ = forward_ui_events(ui_event_stream, from_ui_tx2).await;
+        });
+        self.proxy2()
             .await?
             .initialize(
+                handle.as_ref(),
                 parent_window.into(),
                 origin,
                 r#type,
@@ -141,17 +151,11 @@ impl UiController for UiControlServiceClient {
                 options,
             )
             .await?;
-        tracing::debug!(?path, "Path initialized");
-        let flow_object = CeremonyObjectProxy::new(&self.conn, path).await?;
-        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
-        let ui_event_stream = flow_object.receive_user_interacted().await?;
-        tokio::task::spawn(async move {
-            _ = forward_ui_events(ui_event_stream, from_ui_tx).await;
-        });
+        tracing::debug!(path = ?handle, "Path initialized");
         // Mark as ready to receive messages.
-        flow_object.start().await?;
+        ceremony.start().await?;
         Ok(Ceremony {
-            proxy: Arc::new(flow_object),
+            proxy: Arc::new(ceremony),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
         })
     }
@@ -195,6 +199,7 @@ pub mod test {
         mpsc::{self, Receiver, Sender},
         Mutex as AsyncMutex, Notify,
     };
+    use zbus::zvariant::OwnedObjectPath;
 
     use crate::dbus::ui_control::Ceremony;
 
@@ -208,6 +213,7 @@ pub mod test {
     impl UiController for DummyUiClient {
         async fn initialize(
             &self,
+            _handle: OwnedObjectPath,
             _parent_window: Option<WindowHandle>,
             _origin: String,
             _type: Operation,

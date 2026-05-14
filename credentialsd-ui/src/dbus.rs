@@ -48,6 +48,7 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -62,10 +63,6 @@ impl CredentialPortalBackend {
         let Some(sender) = header.sender() else {
             return Err(fdo::Error::BadAddress("Sender not found".to_string()));
         };
-        let object_path = ObjectPath::from_string_unchecked(format!(
-            "/org/freedesktop/portal/Credential/{}",
-            request_id
-        ));
         let ui_context = UiContext {
             parent_window: parent_window.into(),
             origin,
@@ -78,16 +75,22 @@ impl CredentialPortalBackend {
             app_path,
             options,
         };
+        let ui_events_forwarder_task = Arc::new(AsyncMutex::new(None));
         let ceremony = CeremonyObject {
             ui_context,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
-            ui_events_forwarder_task: None,
+            ui_events_forwarder_task: ui_events_forwarder_task.clone(),
             bg_events_tx: None,
         };
-        object_server.at(object_path.clone(), ceremony).await?;
+
+        let request = CeremonyRequest {
+            ui_events_forwarder_task,
+        };
+        object_server.at(handle.clone(), ceremony).await?;
+        object_server.at(handle.clone(), request).await?;
         tracing::debug!("Received UI launch request");
-        Ok(object_path)
+        Ok(handle.into_owned())
     }
 }
 
@@ -95,7 +98,7 @@ pub struct CeremonyObject {
     ui_context: UiContext,
     pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
     pub return_address: OwnedUniqueName,
-    ui_events_forwarder_task: Option<JoinHandle<()>>,
+    ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     bg_events_tx: Option<Sender<BackgroundEvent>>,
 }
 
@@ -129,7 +132,10 @@ impl CeremonyObject {
                 }
             }
         });
-        self.ui_events_forwarder_task = Some(ui_events_task);
+        self.ui_events_forwarder_task
+            .lock()
+            .await
+            .insert(ui_events_task);
 
         // Assuming this is a PublicKey request, require the rp_id
         let rp_id = self
@@ -180,24 +186,32 @@ impl CeremonyObject {
         return Err(fdo::Error::Failed("Failed to handle event".to_string()));
     }
 
-    async fn cancel(
-        &mut self,
-        #[zbus(header)] header: Header<'_>,
-        #[zbus(object_server)] object_server: &ObjectServer,
-    ) -> fdo::Result<()> {
-        if let Some(task) = self.ui_events_forwarder_task.take() {
-            task.cancel().await;
-        }
-        if let Some(path) = header.path() {
-            // TODO: Send clean up task to GUI thread.
-            object_server.remove::<CeremonyObject, _>(path).await?;
-        }
-        Ok(())
-    }
-
     #[zbus(signal)]
     async fn user_interacted(
         emitter: SignalEmitter<'_>,
         event: &UserInteractedEvent,
     ) -> zbus::Result<()>;
+}
+
+struct CeremonyRequest {
+    ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.Request")]
+impl CeremonyRequest {
+    async fn close(
+        &mut self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        if let Some(task) = self.ui_events_forwarder_task.lock().await.take() {
+            task.cancel().await;
+        }
+        if let Some(path) = header.path() {
+            // TODO: Send clean up task to GUI thread.
+            object_server.remove::<CeremonyObject, _>(path).await?;
+            object_server.remove::<CeremonyRequest, _>(path).await?;
+        }
+        Ok(())
+    }
 }
