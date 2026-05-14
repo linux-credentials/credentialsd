@@ -9,7 +9,7 @@ use tokio::sync::{
 };
 use zbus::{
     fdo, proxy,
-    zvariant::{Optional, OwnedObjectPath},
+    zvariant::{ObjectPath, Optional, OwnedObjectPath},
     Connection,
 };
 
@@ -44,6 +44,7 @@ pub trait UiController {
 trait UiControlService2 {
     fn initialize(
         &self,
+        handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -125,10 +126,26 @@ impl UiController for UiControlServiceClient {
         app_path: String,
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
-        let path = self
+        let expected_path: OwnedObjectPath =
+            options.handle.as_ref().cloned().unwrap_or_else(|| {
+                OwnedObjectPath::try_from(format!(
+                    "/org/freedesktop/portal/request/{}",
+                    rand::random::<u32>()
+                ))
+                .expect("valid object path")
+            });
+        let ceremony = CeremonyObjectProxy::new(&self.conn, expected_path.clone()).await?;
+        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
+        let from_ui_tx2 = from_ui_tx.clone();
+        let ui_event_stream = ceremony.receive_user_interacted().await?;
+        tokio::task::spawn(async move {
+            _ = forward_ui_events(ui_event_stream, from_ui_tx2).await;
+        });
+        let exported_path = self
             .proxy2()
             .await?
             .initialize(
+                expected_path.as_ref(),
                 parent_window.into(),
                 origin,
                 r#type,
@@ -141,17 +158,25 @@ impl UiController for UiControlServiceClient {
                 options,
             )
             .await?;
-        tracing::debug!(?path, "Path initialized");
-        let flow_object = CeremonyObjectProxy::new(&self.conn, path).await?;
-        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
-        let ui_event_stream = flow_object.receive_user_interacted().await?;
-        tokio::task::spawn(async move {
-            _ = forward_ui_events(ui_event_stream, from_ui_tx).await;
-        });
-        // Mark as ready to receive messages.
-        flow_object.start().await?;
+        if exported_path != expected_path {
+            tracing::debug!(
+                "Ceremony object exported on unexpected path: we may have missed some messages."
+            );
+            let ceremony = CeremonyObjectProxy::new(&self.conn, exported_path.clone()).await?;
+            let stream = ceremony.receive_user_interacted().await?;
+            tokio::task::spawn(async move {
+                _ = forward_ui_events(stream, from_ui_tx).await;
+            });
+            tracing::debug!(path = ?exported_path, "Path initialized");
+            // Mark as ready to receive messages.
+            ceremony.start().await?;
+        } else {
+            tracing::debug!(path = ?expected_path, "Path initialized");
+            // Mark as ready to receive messages.
+            ceremony.start().await?;
+        }
         Ok(Ceremony {
-            proxy: Arc::new(flow_object),
+            proxy: Arc::new(ceremony),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
         })
     }

@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zvariant::{Optional, SerializeDict, Type};
+use zvariant::{Optional, OwnedObjectPath, SerializeDict, Type};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -46,6 +46,10 @@ pub enum Operation {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct PortalBackendOptions {
+    /// A path that will be used to export the org.freedesktop.portal.Request
+    /// and org.freedesktop.impl.portal.Credential.Ceremony objects.
+    pub handle: Optional<OwnedObjectPath>,
+
     /// A token that can be used to activate the UI window.
     pub activation_token: Optional<String>,
 
