@@ -4,7 +4,7 @@ mod gateway;
 mod model;
 mod webauthn;
 
-use std::{error::Error, sync::Arc};
+use std::error::Error;
 
 use credential_service::nfc::InProcessNfcHandler;
 
@@ -30,7 +30,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!(" ✅");
 
     print!("Starting D-Bus UI -> Credential control service...");
-    let ui_controller = UiControlServiceClient::new(dbus_client_conn);
     let credential_service = CredentialService::new(
         InternalHybridHandler::new(),
         InProcessNfcHandler {},

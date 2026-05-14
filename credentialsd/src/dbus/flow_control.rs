@@ -2,40 +2,31 @@
 //! the credential request through the trusted UI.
 
 use std::sync::Mutex;
-use std::{collections::VecDeque, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    Device, Error as CredentialServiceError, Operation, PortalBackendOptions, RequestId,
-    RequestingApplication, UserInteractedEvent, WebAuthnError,
+    Error as CredentialServiceError, Operation, PortalBackendOptions, RequestingApplication,
+    UserInteractedEvent, WebAuthnError,
 };
-use credentialsd_common::server::{BackgroundEvent, ViewRequest, WindowHandle};
+use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::oneshot;
-use tokio::{
-    sync::{
-        mpsc::{self, Sender},
-        Mutex as AsyncMutex,
-    },
-    task::AbortHandle,
+use tokio::sync::{
+    mpsc::{self, Sender},
+    Mutex as AsyncMutex,
 };
-use zbus::{
-    connection::{Builder, Connection},
-    fdo, interface,
-    object_server::{InterfaceRef, SignalEmitter},
-    ObjectServer,
-};
+use zbus::connection::{Builder, Connection};
 
 use crate::credential_service::ManageDevice;
 use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
-    credential_service::{hybrid::HybridState, nfc::NfcState, UsbState},
+    credential_service::UsbState,
     dbus::ui_control::UiController,
     model::{CredentialRequest, CredentialResponse},
 };
 
-pub const SERVICE_PATH: &str = "/xyz/iinuwa/credentialsd/FlowControl";
 pub const SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.FlowControl";
 
 pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 'static>(
@@ -51,22 +42,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
 )> {
     let svc = Arc::new(AsyncMutex::new(device_manager));
     let svc2 = svc.clone();
-    let conn = Builder::session()?
-        .name(SERVICE_NAME)?
-        .serve_at(
-            SERVICE_PATH,
-            FlowControlDbusService {
-                signal_state: Arc::new(AsyncMutex::new(SignalState::Idle)),
-                svc,
-                pin_tx: Arc::new(AsyncMutex::new(None)),
-                cred_tx: Arc::new(AsyncMutex::new(None)),
-                usb_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
-                nfc_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
-                hybrid_event_forwarder_task: Arc::new(AsyncMutex::new(None)),
-            },
-        )?
-        .build()
-        .await?;
+    let conn = Builder::session()?.name(SERVICE_NAME)?.build().await?;
     let (initiator_tx, mut initiator_rx) = mpsc::channel::<(
         CredentialRequest,
         RequestingApplication,
@@ -259,273 +235,6 @@ fn forward_background_event_stream(
             }
         }
     });
-}
-
-struct FlowControlService<M: ManageDevice> {
-    svc: Arc<AsyncMutex<M>>,
-    signal_state: Arc<AsyncMutex<SignalState>>,
-    pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
-    cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
-    usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-    hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-}
-
-impl<M: ManageDevice> FlowControlService<M> {
-    fn send_update(&self) {}
-}
-
-struct FlowControlDbusService<M: ManageDevice> {
-    svc: Arc<AsyncMutex<M>>,
-
-    signal_state: Arc<AsyncMutex<SignalState>>,
-
-    cred_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
-    pin_tx: Arc<AsyncMutex<Option<Sender<String>>>>,
-
-    hybrid_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-    nfc_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-    usb_event_forwarder_task: Arc<AsyncMutex<Option<AbortHandle>>>,
-}
-
-/// The following methods are for communication between the [trusted]
-/// UI and the credential service, and should not be called by arbitrary
-/// clients.
-#[interface(
-    name = "xyz.iinuwa.credentialsd.FlowControl1",
-    proxy(
-        gen_blocking = false,
-        default_path = "/xyz/iinuwa/credentialsd/FlowControl",
-        default_service = "xyz.iinuwa.credentialsd.FlowControl",
-    )
-)]
-impl<M> FlowControlDbusService<M>
-where
-    M: ManageDevice + Debug + Send + Sync + 'static,
-{
-    async fn subscribe(
-        &self,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> fdo::Result<()> {
-        let mut signal_state = self.signal_state.lock().await;
-        match *signal_state {
-            SignalState::Idle => {}
-            SignalState::Pending(ref mut pending) => {
-                for msg in pending.iter_mut() {
-                    emitter.state_changed(msg.clone()).await?;
-                }
-            }
-            SignalState::Active => {}
-        };
-        *signal_state = SignalState::Active;
-        Ok(())
-    }
-
-    async fn get_available_public_key_devices(&self) -> fdo::Result<Vec<Device>> {
-        let devices = self
-            .svc
-            .lock()
-            .await
-            .get_available_public_key_devices()
-            .await
-            .map_err(|_| fdo::Error::Failed("Failed to retrieve available devices".to_string()))?;
-        let dbus_devices: Vec<Device> = devices.into_iter().map(Device::from).collect();
-
-        Ok(dbus_devices)
-    }
-
-    async fn get_hybrid_credential(
-        &self,
-        #[zbus(object_server)] object_server: &ObjectServer,
-    ) -> fdo::Result<()> {
-        let svc = self.svc.lock().await;
-        let mut stream = svc.get_hybrid_credential().await;
-        let signal_state = self.signal_state.clone();
-        let object_server = object_server.clone();
-        let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
-                object_server.interface(SERVICE_PATH).await;
-
-            let emitter = match interface {
-                Ok(ref i) => i.signal_emitter(),
-                Err(err) => {
-                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
-                    return;
-                }
-            };
-            while let Some(state) = stream.next().await {
-                let event = (&state).into();
-                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
-                    tracing::error!("Failed to send state update to UI: {err}");
-                    break;
-                };
-                match state {
-                    HybridState::Completed | HybridState::Failed => {
-                        break;
-                    }
-                    _ => {}
-                };
-            }
-        })
-        .abort_handle();
-        if let Some(prev_task) = self.hybrid_event_forwarder_task.lock().await.replace(task) {
-            prev_task.abort();
-        }
-        Ok(())
-    }
-
-    async fn get_usb_credential(
-        &self,
-        #[zbus(object_server)] object_server: &ObjectServer,
-    ) -> fdo::Result<()> {
-        let mut stream = self.svc.lock().await.get_usb_credential().await;
-        let usb_pin_tx = self.pin_tx.clone();
-        let usb_cred_tx = self.cred_tx.clone();
-        let signal_state = self.signal_state.clone();
-        let object_server = object_server.clone();
-        let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
-                object_server.interface(SERVICE_PATH).await;
-
-            let emitter = match interface {
-                Ok(ref i) => i.signal_emitter(),
-                Err(err) => {
-                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
-                    return;
-                }
-            };
-            while let Some(state) = stream.next().await {
-                let event = (&state).into();
-                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
-                    tracing::error!("Failed to send state update to UI: {err}");
-                    break;
-                };
-                match state {
-                    UsbState::NeedsPin { pin_tx, .. } => {
-                        let mut usb_pin_tx = usb_pin_tx.lock().await;
-                        let _ = usb_pin_tx.insert(pin_tx);
-                    }
-                    UsbState::SelectingCredential { cred_tx, .. } => {
-                        let mut usb_cred_tx = usb_cred_tx.lock().await;
-                        let _ = usb_cred_tx.insert(cred_tx);
-                    }
-                    UsbState::Completed | UsbState::Failed(_) => {
-                        break;
-                    }
-                    _ => {}
-                };
-            }
-        })
-        .abort_handle();
-        if let Some(prev_task) = self.usb_event_forwarder_task.lock().await.replace(task) {
-            prev_task.abort();
-        }
-        Ok(())
-    }
-
-    async fn get_nfc_credential(
-        &self,
-        #[zbus(object_server)] object_server: &ObjectServer,
-    ) -> fdo::Result<()> {
-        let mut stream = self.svc.lock().await.get_nfc_credential().await;
-        let nfc_pin_tx = self.pin_tx.clone();
-        let nfc_cred_tx = self.cred_tx.clone();
-        let signal_state = self.signal_state.clone();
-        let object_server = object_server.clone();
-        let task = tokio::spawn(async move {
-            let interface: zbus::Result<InterfaceRef<FlowControlDbusService<M>>> =
-                object_server.interface(SERVICE_PATH).await;
-
-            let emitter = match interface {
-                Ok(ref i) => i.signal_emitter(),
-                Err(err) => {
-                    tracing::error!("Failed to get connection to D-Bus to send signals: {err}");
-                    return;
-                }
-            };
-            while let Some(state) = stream.next().await {
-                let event = (&state).into();
-                if let Err(err) = send_state_update(emitter, &signal_state, event).await {
-                    tracing::error!("Failed to send state update to UI: {err}");
-                    break;
-                };
-                match state {
-                    NfcState::NeedsPin { pin_tx, .. } => {
-                        let mut nfc_pin_tx = nfc_pin_tx.lock().await;
-                        let _ = nfc_pin_tx.insert(pin_tx);
-                    }
-                    NfcState::SelectingCredential { cred_tx, .. } => {
-                        let mut nfc_cred_tx = nfc_cred_tx.lock().await;
-                        let _ = nfc_cred_tx.insert(cred_tx);
-                    }
-                    NfcState::Completed | NfcState::Failed(_) => {
-                        break;
-                    }
-                    _ => {}
-                };
-            }
-        })
-        .abort_handle();
-        if let Some(prev_task) = self.nfc_event_forwarder_task.lock().await.replace(task) {
-            prev_task.abort();
-        }
-        Ok(())
-    }
-
-    async fn enter_client_pin(&self, pin: String) -> fdo::Result<()> {
-        if let Some(pin_tx) = self.pin_tx.lock().await.take() {
-            pin_tx.send(pin).await.unwrap();
-        }
-        Ok(())
-    }
-
-    async fn select_credential(&self, credential_id: String) -> fdo::Result<()> {
-        if let Some(cred_tx) = self.cred_tx.lock().await.take() {
-            cred_tx.send(credential_id).await.unwrap();
-        }
-        Ok(())
-    }
-
-    async fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()> {
-        self.svc.lock().await.cancel_request(request_id).await;
-        Ok(())
-    }
-
-    #[zbus(signal)]
-    async fn state_changed(
-        emitter: &SignalEmitter<'_>,
-        update: BackgroundEvent,
-    ) -> zbus::Result<()>;
-}
-async fn send_state_update(
-    emitter: &SignalEmitter<'_>,
-    signal_state: &Arc<AsyncMutex<SignalState>>,
-    update: BackgroundEvent,
-) -> fdo::Result<()> {
-    let mut signal_state = signal_state.lock().await;
-    match *signal_state {
-        SignalState::Idle => {
-            let pending = VecDeque::from([update]);
-            *signal_state = SignalState::Pending(pending);
-        }
-        SignalState::Pending(ref mut pending) => {
-            pending.push_back(update);
-        }
-        SignalState::Active => {
-            emitter.state_changed(update).await?;
-        }
-    };
-    Ok(())
-}
-
-enum SignalState {
-    /// No state
-    Idle,
-    /// Waiting for client to signal that it's ready to receive events.
-    /// Holds a cache of events to send once the client connects.
-    Pending(VecDeque<BackgroundEvent>),
-    /// Client is actively receiving messages.
-    Active,
 }
 
 /// Coordinates between user and various devices connected to the machine to
