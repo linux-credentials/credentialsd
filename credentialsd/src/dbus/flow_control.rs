@@ -25,27 +25,44 @@ use crate::{
     dbus::ui_control::UiController,
     model::{CredentialRequest, CredentialResponse},
 };
+pub struct UiRequestContext {
+    request: CredentialRequest,
+    app: RequestingApplication,
+    /// Client window handle
+    window_handle: Option<WindowHandle>,
+    activation_token: Option<String>,
+    response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+}
 
 pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 'static>(
     conn: Connection,
-    mut listener: Receiver<(
-        CredentialRequest,
-        RequestingApplication,
-        Option<WindowHandle>, // Client window handle
-        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    )>,
+    mut listener: Receiver<UiRequestContext>,
     device_manager: M,
 ) -> zbus::Result<AbortHandle> {
     let svc = Arc::new(AsyncMutex::new(device_manager));
     let svc2 = svc.clone();
 
     let task = tokio::spawn(async move {
-        while let Some((msg, requesting_app, window_handle, tx)) = listener.recv().await {
+        while let Some(ui_request_ctx) = listener.recv().await {
             let svc = svc2.clone();
             let ui_control_client = UiControlServiceClient::new(conn.clone());
-            if let Err(_) =
-                tx.send(handle(svc, ui_control_client, msg, requesting_app, window_handle).await)
-            {
+            let UiRequestContext {
+                request,
+                app,
+                window_handle,
+                activation_token,
+                response_channel,
+            } = ui_request_ctx;
+            let response = handle(
+                svc,
+                ui_control_client,
+                request,
+                app,
+                window_handle,
+                activation_token,
+            )
+            .await;
+            if let Err(_) = response_channel.send(response) {
                 tracing::error!(
                     "Received response to credential request, but failed to forward it to gateway"
                 );
@@ -61,6 +78,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     msg: CredentialRequest,
     requesting_app: RequestingApplication,
     window_handle: Option<WindowHandle>,
+    activation_token: Option<String>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
     let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
@@ -112,6 +130,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             // TODO: Make path and app ID separate.
             path_or_app_id,
             PortalBackendOptions {
+                activation_token: activation_token.into(),
                 top_origin: top_origin.into(),
                 rp_id: Some(rp_id).into(),
             },
@@ -235,29 +254,32 @@ pub trait CredentialRequestController {
         requesting_app: RequestingApplication,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
+        activation_token: Option<String>,
     ) -> Result<CredentialResponse, WebAuthnError>;
 }
 
 pub struct CredentialRequestControllerClient {
-    pub initiator: Sender<(
-        CredentialRequest,
-        RequestingApplication, // Application name sending the request
-        Option<WindowHandle>,  // Client window handle,
-        oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    )>,
+    pub initiator: Sender<UiRequestContext>,
 }
 
 #[async_trait]
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
-        requesting_app: RequestingApplication,
+        app: RequestingApplication,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
+        activation_token: Option<String>,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
         self.initiator
-            .send((request, requesting_app, window_handle, tx))
+            .send(UiRequestContext {
+                request,
+                app,
+                window_handle,
+                activation_token,
+                response_channel: tx,
+            })
             .await
             .unwrap();
         let response = rx.await.map_err(|_| {
