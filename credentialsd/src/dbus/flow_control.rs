@@ -117,6 +117,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         pid: app_pid,
     } = requesting_app;
     let app_name = Option::from(app_name).unwrap_or_else(|| "TODO: Require app name".to_string());
+    let handle_token = format!("CREDENTIALSD_{}", rand::random::<u32>());
     let flow = match ui_control_client
         .initialize(
             window_handle,
@@ -130,6 +131,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             // TODO: Make path and app ID separate.
             path_or_app_id,
             PortalBackendOptions {
+                handle_token: Some(handle_token).into(),
                 activation_token: activation_token.into(),
                 top_origin: top_origin.into(),
                 rp_id: Some(rp_id).into(),
