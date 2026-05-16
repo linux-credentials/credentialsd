@@ -756,6 +756,7 @@ dependencies = [
  "credentialsd-common",
  "futures-lite",
  "gio",
+ "libc",
  "libwebauthn",
  "nfc1",
  "rand 0.9.2",
@@ -787,11 +788,13 @@ dependencies = [
  "gdk4-wayland",
  "gettext-rs",
  "gtk4",
+ "libc",
  "qrcode",
  "serde",
  "tracing",
  "tracing-subscriber",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]
@@ -2044,9 +2047,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.182"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libdbus-sys"

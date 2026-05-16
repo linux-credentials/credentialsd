@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zvariant::{Optional, SerializeDict, Type};
+use zvariant::{Optional, OwnedFd, SerializeDict, Type};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -279,8 +279,9 @@ pub enum UserInteractedEvent {
     /// Start USB discovery
     UsbDiscoveryRequested,
 
-    /// Send client PIN
-    ClientPinEntered(String),
+    /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    ClientPinEntered(OwnedFd),
 
     /// Select a credential by credential ID
     CredentialSelected(String),

@@ -11,6 +11,7 @@ async-trait = "0.1.89"
 base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
 futures-lite.workspace = true
+libc.workspace = true
 libwebauthn = { version = "0.3.0", features = ["libnfc","pcsc"] }
 # TODO: split nfc and pcsc into separate features
 # Also, 0.6.1 fails to build with non-vendored library.
