@@ -1,8 +1,13 @@
 //! This module implements the service to allow the user to control the flow of
 //! the credential request through the trusted UI.
 
-use std::sync::Mutex;
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    io::{self, ErrorKind},
+    mem::MaybeUninit,
+    os::{fd::AsRawFd, raw::c_void},
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
@@ -11,6 +16,7 @@ use credentialsd_common::model::{
 };
 use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use futures_lite::{Stream, StreamExt};
+use libc::{MAP_SHARED, PROT_READ, PROT_WRITE};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
@@ -191,7 +197,16 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                     let flow = flow.clone();
                     forward_background_event_stream(flow, stream);
                 }
-                UserInteractedEvent::ClientPinEntered(pin) => {
+                UserInteractedEvent::ClientPinEntered(pin_fd) => {
+                    let pin_fd = std::os::fd::OwnedFd::from(pin_fd);
+                    let pin = match read_secret(pin_fd.into()) {
+                        Ok(pin) => pin,
+                        // TODO: need to send an error to the UI, cancel the request and terminate the loop.
+                        Err(err) => {
+                            tracing::error!(%err, "Failed to read client PIN. Stopping event loop. TODO: cancel the request");
+                            break;
+                        }
+                    };
                     let tx = { client_pin_tx.lock().unwrap().take() };
                     if let Some(tx) = tx {
                         if tx.send(pin).await.is_err() {
@@ -297,6 +312,60 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         // For now, just squashing.
         response.map_err(|_| WebAuthnError::NotAllowedError)
     }
+}
+
+fn read_secret(pin_fd: std::os::fd::OwnedFd) -> Result<String, std::io::Error> {
+    // Get pin length
+    let len = {
+        let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+        let res = unsafe { libc::fstat(pin_fd.as_raw_fd(), stat_buf.as_mut_ptr()) };
+        if res == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let stat_buf = unsafe { stat_buf.assume_init() };
+        usize::try_from(stat_buf.st_size)
+            .map_err(|_| io::Error::new(ErrorKind::FileTooLarge, "pin is too large"))?
+    };
+
+    // map the memory from the file descriptor
+    let ptr = unsafe {
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            4096,
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED,
+            pin_fd.as_raw_fd(),
+            0,
+        );
+        if ptr == usize::MAX as *mut c_void {
+            return Err(std::io::Error::last_os_error());
+        }
+        ptr as *const u8
+    };
+
+    // Copy the bytes.
+    let buf = unsafe {
+        // let len = ptr.read() as usize;
+        let mut buf: Vec<u8> = Vec::with_capacity(len);
+        ptr.copy_to_nonoverlapping(buf.as_mut_ptr().cast(), len);
+        buf.set_len(len);
+        buf
+    };
+
+    // Clean up mapping
+    unsafe {
+        if libc::munmap(ptr as *mut c_void, 4096) == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    drop(pin_fd);
+
+    String::from_utf8(buf).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid UTF-8 data found in buffer",
+        )
+    })
 }
 
 #[cfg(test)]

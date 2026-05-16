@@ -7,7 +7,7 @@ use serde::{
     de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, NoneValue, Optional, OwnedValue,
+    self, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional, OwnedFd, OwnedValue,
     SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
@@ -435,9 +435,9 @@ impl From<&UserInteractedEvent> for Structure<'_> {
             UserInteractedEvent::UsbDiscoveryRequested => {
                 tag_value_to_struct(USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED, None)
             }
-            UserInteractedEvent::ClientPinEntered(pin) => tag_value_to_struct(
+            UserInteractedEvent::ClientPinEntered(pin_fd) => tag_value_to_struct(
                 USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED,
-                Some(Value::Str(pin.into())),
+                Some(Value::Fd(pin_fd.into())),
             ),
             UserInteractedEvent::CredentialSelected(credential_id) => tag_value_to_struct(
                 USER_INTERACTED_EVENT_CREDENTIAL_SELECTED,
@@ -467,16 +467,9 @@ impl TryFrom<&Structure<'_>> for UserInteractedEvent {
                 Ok(UserInteractedEvent::UsbDiscoveryRequested)
             }
             USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED => {
-                let s: Str = value.downcast_ref()?;
-                if s.is_empty() {
-                    return Err(zvariant::Error::invalid_length(
-                        s.len(),
-                        &"a non-empty string",
-                    ));
-                }
-                Ok(UserInteractedEvent::ClientPinEntered(
-                    s.as_str().to_string(),
-                ))
+                let fd = value.downcast_ref::<Fd>()?;
+                let owned_fd = fd.try_to_owned()?;
+                Ok(UserInteractedEvent::ClientPinEntered(owned_fd.into()))
             }
             USER_INTERACTED_EVENT_CREDENTIAL_SELECTED => {
                 let s: Str = value.downcast_ref()?;

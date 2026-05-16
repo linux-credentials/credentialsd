@@ -16,8 +16,10 @@ futures-lite = "2.6.0"
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_6"] }
 gdk-wayland = { version = "0.10.3", package = "gdk4-wayland", optional = true }
+libc.workspace = true
 qrcode = "0.14.1"
 serde.workspace = true
 tracing.workspace = true
 tracing-subscriber = "0.3.19"
+zeroize = { version = "1.8.2" }
 zbus = { workspace = true, default-features = false, features = ["async-io"]}
