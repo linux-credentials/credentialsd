@@ -24,17 +24,8 @@ pub struct FlowControlClient {
 }
 
 impl FlowControlClient {
-    pub async fn discover_hybrid_authenticators(&self) -> Result<(), ()> {
-        self.send(UserInteractedEvent::HybridDiscoveryRequested)
-            .await
-    }
-
-    pub async fn discover_nfc_authenticators(&mut self) -> Result<(), ()> {
-        self.send(UserInteractedEvent::NfcDiscoveryRequested).await
-    }
-
-    pub async fn discover_usb_authenticators(&mut self) -> Result<(), ()> {
-        self.send(UserInteractedEvent::UsbDiscoveryRequested).await
+    pub async fn discover_authenticators(&self) -> Result<(), ()> {
+        self.send(UserInteractedEvent::DiscoveryRequested).await
     }
 
     pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {

@@ -148,12 +148,9 @@ pub enum ViewUpdate {
     WaitingForDevice(Device),
     SelectingDevice,
 
-    UsbNeedsPin { attempts_left: Option<u32> },
-    UsbNeedsUserVerification { attempts_left: Option<u32> },
-    UsbNeedsUserPresence,
-
-    NfcNeedsPin { attempts_left: Option<u32> },
-    NfcNeedsUserVerification { attempts_left: Option<u32> },
+    NeedsPin { attempts_left: Option<u32> },
+    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsUserPresence,
 
     HybridNeedsQrCode(String),
     HybridConnecting,
@@ -270,14 +267,8 @@ pub enum NfcState {
 }
 
 pub enum UserInteractedEvent {
-    /// Start Hybrid discovery
-    HybridDiscoveryRequested,
-
-    /// Start NFC discovery
-    NfcDiscoveryRequested,
-
-    /// Start USB discovery
-    UsbDiscoveryRequested,
+    /// Start discovery
+    DiscoveryRequested,
 
     /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
     /// File descriptor must be memory-mapped to be read.
@@ -292,17 +283,16 @@ pub enum UserInteractedEvent {
 impl std::fmt::Debug for UserInteractedEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::HybridDiscoveryRequested => write!(f, "StartHybridDiscovery"),
-            Self::NfcDiscoveryRequested => write!(f, "StartNfcDiscovery"),
-            Self::UsbDiscoveryRequested => write!(f, "StartUsbDiscovery"),
+            Self::DiscoveryRequested => write!(f, stringify!(DiscoveryRequested)),
             Self::ClientPinEntered(_) => f
-                .debug_tuple("EnterClientPin")
+                .debug_tuple(stringify!(ClientPinEntered))
                 .field(&"******".to_string())
                 .finish(),
-            Self::CredentialSelected(arg0) => {
-                f.debug_tuple("SelectCredential").field(arg0).finish()
-            }
-            Self::RequestCancelled => write!(f, "CancelRequest"),
+            Self::CredentialSelected(arg0) => f
+                .debug_tuple(stringify!(CredentialSelected))
+                .field(arg0)
+                .finish(),
+            Self::RequestCancelled => write!(f, stringify!(RequestCancelled)),
         }
     }
 }

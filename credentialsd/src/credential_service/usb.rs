@@ -42,13 +42,11 @@ impl InProcessUsbHandler {
         prev_usb_state: &UsbStateInternal,
     ) -> Result<UsbStateInternal, Error> {
         match libwebauthn::transport::hid::list_devices().await {
-            Ok(mut hid_devices) => {
+            Ok(hid_devices) => {
                 if hid_devices.is_empty() {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     let state = UsbStateInternal::Waiting;
                     Ok(state)
-                } else if hid_devices.len() == 1 {
-                    Ok(UsbStateInternal::Connected(hid_devices.swap_remove(0)))
                 } else {
                     Ok(UsbStateInternal::SelectingDevice(hid_devices))
                 }

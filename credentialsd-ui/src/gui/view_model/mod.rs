@@ -127,54 +127,9 @@ impl ViewModel {
             .unwrap();
     }
 
-    pub(crate) async fn select_device(&mut self, id: &str) {
-        let device = self.devices.iter().find(|d| d.id == id).unwrap();
-        tracing::debug!("Device selected: {:?}", device);
-
-        // Handle previous device
-        if let Some(prev_device) = self.selected_device.replace(device.clone()) {
-            if *device == prev_device {
-                return;
-            }
-            match prev_device.transport {
-                Transport::Usb => {
-                    todo!("Implement cancellation for USB");
-                }
-                Transport::HybridQr => {
-                    todo!("Implement cancellation for Hybrid QR");
-                }
-                Transport::Nfc => {
-                    todo!("Implement cancellation for NFC");
-                }
-                _ => {
-                    todo!();
-                }
-            };
-        }
-
-        // start discovery for newly selected device
-        match device.transport {
-            Transport::Usb => {
-                let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).discover_usb_authenticators().await.unwrap();
-            }
-            Transport::Nfc => {
-                let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).discover_nfc_authenticators().await.unwrap();
-            }
-            Transport::HybridQr => {
-                let cred_service = self.flow_controller.lock().await;
-                cred_service.discover_hybrid_authenticators().await.unwrap();
-            }
-            _ => {
-                todo!()
-            }
-        }
-
-        self.tx_update
-            .send(ViewUpdate::WaitingForDevice(device.clone()))
-            .await
-            .unwrap();
+    pub(crate) async fn start_discovery(&self) {
+        let cred_service = self.flow_controller.lock().await;
+        (*cred_service).discover_authenticators().await.unwrap();
     }
 
     pub(crate) async fn start_event_loop(&mut self) {
@@ -189,10 +144,7 @@ impl ViewModel {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
                     self.update_devices(self.devices.clone()).await;
-                }
-                Event::View(ViewEvent::DeviceSelected(id)) => {
-                    self.select_device(&id).await;
-                    println!("Selected device {id}");
+                    self.start_discovery().await;
                 }
                 Event::View(ViewEvent::PinEntered(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
@@ -230,26 +182,21 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::UsbConnected) => {
                     info!("Found USB device")
                 }
-                // TODO: Add this event
-                // Event::Background(BackgroundEvent::DevicesUpdated(devices)) => {
-                //     self.update_devices(devices).await
-                // }
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
-                    // TODO: UsbNeedsPin just needs to be NeedsPin
                     self.tx_update
-                        .send(ViewUpdate::UsbNeedsPin { attempts_left })
+                        .send(ViewUpdate::NeedsPin { attempts_left })
                         .await
                         .unwrap();
                 }
                 Event::Background(BackgroundEvent::NeedsUserVerification { attempts_left }) => {
                     self.tx_update
-                        .send(ViewUpdate::UsbNeedsUserVerification { attempts_left })
+                        .send(ViewUpdate::NeedsUserVerification { attempts_left })
                         .await
                         .unwrap();
                 }
                 Event::Background(BackgroundEvent::NeedsUserPresence) => {
                     self.tx_update
-                        .send(ViewUpdate::UsbNeedsUserPresence)
+                        .send(ViewUpdate::NeedsUserPresence)
                         .await
                         .unwrap();
                 }
@@ -353,11 +300,7 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::ErrorCancelled) => {
                     self.hybrid_qr_code_data = None;
                     break;
-                } /*
-                  Event::Background(BackgroundEvent::RequestCancelled(request_id)) => {
-                      break;
-                  }
-                  */
+                }
             };
         }
     }
@@ -366,7 +309,6 @@ impl ViewModel {
 #[derive(Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
-    DeviceSelected(String),
     CredentialSelected(String),
     PinEntered(String),
     UserCancelled,

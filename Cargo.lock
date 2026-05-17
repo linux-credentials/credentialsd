@@ -781,6 +781,7 @@ dependencies = [
  "async-trait",
  "base64",
  "credentialsd-common",
+ "futures",
  "futures-lite",
  "gio",
  "libc",
