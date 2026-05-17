@@ -1,4 +1,32 @@
-.title-header{
+.title-header {
   font-size: 24px;
   font-weight: bold;
+}
+
+.qr-code {
+  border-radius: 48px;
+  margin: 10px;
+}
+
+.border {
+  border: 3px solid red;
+}
+
+.cred-source-header box image {
+  min-width: 16px;
+  margin-right: 8px;
+}
+
+.cred-source-header box label {
+  font-weight: bold;
+}
+
+.cred-source-header>label {
+  margin-left: 24px;
+  padding-left: 0px;
+}
+
+separator {
+  margin-top: 12px;
+  margin-bottom: 12px;
 }

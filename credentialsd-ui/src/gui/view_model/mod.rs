@@ -180,7 +180,14 @@ impl ViewModel {
                 }
 
                 Event::Background(BackgroundEvent::UsbConnected) => {
-                    info!("Found USB device")
+                    info!("Found USB device");
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::Usb,
+                        }))
+                        .await
+                        .unwrap();
                 }
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
                     self.tx_update
@@ -269,7 +276,14 @@ impl ViewModel {
                         .unwrap()
                 }
                 Event::Background(BackgroundEvent::NfcConnected) => {
-                    info!("Found NFC device")
+                    info!("Found NFC device");
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::Nfc,
+                        }))
+                        .await
+                        .unwrap();
                 }
 
                 Event::Background(BackgroundEvent::NfcIdle | BackgroundEvent::NfcWaiting) => {}
@@ -285,6 +299,13 @@ impl ViewModel {
                 }
                 Event::Background(BackgroundEvent::HybridConnecting) => {
                     self.hybrid_qr_code_data = None;
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::HybridQr,
+                        }))
+                        .await
+                        .unwrap();
                     self.tx_update
                         .send(ViewUpdate::HybridConnecting)
                         .await

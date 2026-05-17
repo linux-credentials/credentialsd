@@ -6,6 +6,11 @@ template $CredentialsUiWindow: ApplicationWindow {
 
   Box {
     orientation: vertical;
+    halign: center;
+    width-request: 600;
+    margin-start: 160;
+    margin-end: 160;
+    margin-bottom: 48;
     spacing: 10;
 
     Label {
@@ -16,36 +21,125 @@ template $CredentialsUiWindow: ApplicationWindow {
       ]
     }
 
-    Separator {}
+    Box {
+      orientation: vertical;
+      margin-start: 48;
+      margin-end: 48;
 
-    Label {
-      wrap: true;
-      use-markup: true;
-      label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
+      Label {
+        label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
+        wrap: true;
+        use-markup: true;
+        width-request: 600;
 
-      styles [
-        "subtitle-header",
-      ]
+        styles [
+          "subtitle-header",
+        ]
+      }
     }
 
     Separator {}
 
     Stack stack {
+      halign: center;
+
       StackPage {
-        name: "choose_device";
+        name: "start_page";
         title: _("Choose device");
 
         child: Box {
           orientation: vertical;
+          margin-start: 8;
 
-          Label {
-            label: _("Devices");
+          Box {
+            orientation: vertical;
+            halign: start;
+
+            styles [
+              "cred-source-header",
+            ]
+
+            Box {
+              Image {
+                icon-name: "camera-photo-symbolic";
+
+                accessibility {
+                  labelled-by: mobile_device_label;
+                }
+              }
+
+              Label mobile_device_label {
+                label: _("Use a mobile device");
+              }
+            }
+
+            Label {
+              margin-start: 0;
+              xalign: 0;
+              halign: start;
+              valign: start;
+              hexpand: true;
+              label: _("Scan the QR code using the camera on the device that has the passkey for {%s}");
+              wrap: true;
+            }
+
+            Overlay {
+              halign: center;
+              valign: center;
+              hexpand: false;
+              width-request: 400;
+
+              Picture qr_code_pic {
+                height-request: 100;
+                vexpand: false;
+                halign: center;
+                valign: center;
+                content-fit: scale_down;
+                can-shrink: true;
+                visible: bind template.view-model as <$CredentialManagerViewModel>.qr_code_visible;
+
+                accessibility {
+                  label: "FIDO QR Code";
+                }
+
+                styles [
+                  "qr-code",
+                ]
+              }
+            }
           }
 
-          ScrolledWindow {
-            vexpand: true;
-            max-content-height: 256;
-            child: bind template.view-model as <$CredentialManagerViewModel>.devices;
+          Separator {}
+
+          Box {
+            orientation: vertical;
+            halign: start;
+
+            styles [
+              "cred-source-header",
+            ]
+
+            Box {
+              Image {
+                icon-name: "media-removable-symbolic";
+
+                accessibility {
+                  labelled-by: use_security_key_label;
+                }
+              }
+
+              Label use_security_key_label {
+                label: _("Use your security key");
+              }
+            }
+
+            Label {
+              halign: start;
+              valign: start;
+              xalign: 0;
+              label: _("Insert and activate your security key to use it for (%s)");
+              wrap: true;
+            }
           }
         };
       }
@@ -86,14 +180,6 @@ template $CredentialsUiWindow: ApplicationWindow {
 
           Spinner {
             visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
-          }
-
-          Picture qr_code_pic {
-            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_code_visible;
-
-            accessibility {
-              label: "FIDO QR Code";
-            }
           }
 
           Label {
