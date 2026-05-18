@@ -54,7 +54,8 @@ impl HybridHandler for InternalHybridHandler {
                 }
             };
             let mut device =
-                match CableQrCodeDevice::new_transient(hint, CableTransports::CloudAssistedOnly) {
+                match CableQrCodeDevice::new_transient(hint, CableTransports::CloudAssistedOrLocal)
+                {
                     Ok(device) => device,
                     Err(err) => {
                         tracing::error!("Failed to create caBLE QR code device: {:?}", err);
