@@ -366,14 +366,13 @@ mod test {
     fn create_credential_request() -> CredentialRequest {
         let challenge = "Ox0AXQz7WUER7BGQFzvVrQbReTkS3sepVGj26qfUhhrWSarkDbGF4T4NuCY1aAwHYzOzKMJJ2YRSatetl0D9bQ";
         let origin = "webauthn.io".to_string();
-        let is_cross_origin = false;
         let challenge_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(challenge)
             .expect("valid base64url challenge");
         let make_request = MakeCredentialRequest {
             challenge: challenge_bytes,
             origin: origin.clone(),
-            cross_origin: Some(is_cross_origin),
+            top_origin: None,
             relying_party: Ctap2PublicKeyCredentialRpEntity {
                 id: "webauthn.io".to_string(),
                 name: Some("webauthn.io".to_string()),
@@ -435,7 +434,6 @@ mod test {
             user: None,
             credentials_count: Some(1),
             user_selected: None,
-            large_blob_key: None,
             unsigned_extensions_output: None,
             enterprise_attestation: None,
             attestation_statement: None,
