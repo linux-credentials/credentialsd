@@ -20,28 +20,31 @@ use crate::webauthn::{
     WebAuthnIDLResponse,
 };
 
-fn to_libwebauthn_origin(o: &Origin) -> Result<LibwebauthnOrigin, WebAuthnError> {
-    match o {
-        Origin::Https { .. } => o.to_string().parse().map_err(|err| {
-            tracing::info!("Cannot convert origin to libwebauthn Origin: {err}");
-            WebAuthnError::SecurityError
-        }),
-        // TODO: AppId support is being removed.
-        Origin::AppId(_) => unimplemented!("AppId origins are not supported"),
+impl TryFrom<&Origin> for LibwebauthnOrigin {
+    type Error = WebAuthnError;
+
+    fn try_from(value: &Origin) -> Result<Self, Self::Error> {
+        match value {
+            Origin::Https { .. } => value.to_string().parse().map_err(|err| {
+                tracing::info!("Cannot convert origin to libwebauthn Origin: {err}");
+                WebAuthnError::SecurityError
+            }),
+            // TODO: AppId support is being removed.
+            Origin::AppId(_) => unimplemented!("AppId origins are not supported"),
+        }
     }
 }
 
-fn to_libwebauthn_request_origin(
-    context: &NavigationContext,
-) -> Result<LibwebauthnRequestOrigin, WebAuthnError> {
-    match context {
-        NavigationContext::SameOrigin(o) => {
-            Ok(LibwebauthnRequestOrigin::new(to_libwebauthn_origin(o)?))
+impl TryFrom<&NavigationContext> for LibwebauthnRequestOrigin {
+    type Error = WebAuthnError;
+
+    fn try_from(value: &NavigationContext) -> Result<Self, Self::Error> {
+        match value {
+            NavigationContext::SameOrigin(o) => Ok(LibwebauthnRequestOrigin::new(o.try_into()?)),
+            NavigationContext::CrossOrigin((o, top)) => Ok(
+                LibwebauthnRequestOrigin::new_cross_origin(o.try_into()?, top.try_into()?),
+            ),
         }
-        NavigationContext::CrossOrigin((o, top)) => Ok(LibwebauthnRequestOrigin::new_cross_origin(
-            to_libwebauthn_origin(o)?,
-            to_libwebauthn_origin(top)?,
-        )),
     }
 }
 
@@ -65,7 +68,7 @@ pub(super) fn create_credential_request_try_into_ctap2(
         WebAuthnError::NotSupportedError
     })?;
 
-    let request_origin = to_libwebauthn_request_origin(request_environment)?;
+    let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
 
     let make_cred_request =
@@ -119,7 +122,7 @@ pub(super) fn get_credential_request_try_into_ctap2(
         WebAuthnError::NotSupportedError
     })?;
 
-    let request_origin = to_libwebauthn_request_origin(request_environment)?;
+    let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
 
     let get_assertion_request =
