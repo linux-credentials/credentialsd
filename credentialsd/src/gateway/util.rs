@@ -9,57 +9,49 @@ use credentialsd_common::{
         GetPublicKeyCredentialResponse,
     },
 };
+use libwebauthn::ops::webauthn::idl::origin::{
+    Origin as LibwebauthnOrigin, RequestOrigin as LibwebauthnRequestOrigin,
+};
+use libwebauthn::ops::webauthn::psl::SystemPublicSuffixList;
 
 use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
 use crate::webauthn::{
-    GetAssertionRequest, MakeCredentialRequest, NavigationContext, Origin, RelyingPartyId,
-    WebAuthnIDL, WebAuthnIDLResponse,
+    GetAssertionRequest, MakeCredentialRequest, NavigationContext, Origin, WebAuthnIDL,
+    WebAuthnIDLResponse,
 };
 
-/// Reads the rpId from a create-credential request JSON (`rp.id`).
-///
-/// Used as a fallback when the origin is an AppId and the effective domain
-/// cannot be derived from the origin alone.
-// TODO(libwebauthn#185)
-fn peek_make_credential_rp_id(request_json: &str) -> Result<RelyingPartyId, WebAuthnError> {
-    let value = serde_json::from_str::<serde_json::Value>(request_json).map_err(|err| {
-        tracing::info!("Invalid request JSON: {err}");
-        WebAuthnError::TypeError
-    })?;
-    let rp_id_str = value
-        .get("rp")
-        .and_then(|rp| rp.get("id"))
-        .and_then(|id| id.as_str())
-        .ok_or_else(|| {
-            tracing::info!("RP ID required if using app ID as origin");
-            WebAuthnError::SecurityError
-        })?;
-    RelyingPartyId::try_from(rp_id_str).map_err(|_| {
-        tracing::info!("Invalid relying party ID");
-        WebAuthnError::TypeError
-    })
+impl TryFrom<&Origin> for LibwebauthnOrigin {
+    type Error = WebAuthnError;
+
+    fn try_from(value: &Origin) -> Result<Self, Self::Error> {
+        match value {
+            Origin::Https { .. } => value.to_string().parse().map_err(|err| {
+                tracing::info!("Cannot convert origin to libwebauthn Origin: {err}");
+                WebAuthnError::SecurityError
+            }),
+            // TODO: AppId support is being removed.
+            Origin::AppId(_) => unimplemented!("AppId origins are not supported"),
+        }
+    }
 }
 
-/// Reads the rpId from a get-credential request JSON (`rpId`).
-///
-/// Used as a fallback when the origin is an AppId and the effective domain
-/// cannot be derived from the origin alone.
-// TODO(libwebauthn#185)
-fn peek_get_assertion_rp_id(request_json: &str) -> Result<RelyingPartyId, WebAuthnError> {
-    let value = serde_json::from_str::<serde_json::Value>(request_json).map_err(|err| {
-        tracing::info!("Invalid request JSON: {err}");
-        WebAuthnError::TypeError
-    })?;
-    let rp_id_str = value
-        .get("rpId")
-        .and_then(|id| id.as_str())
-        .ok_or_else(|| {
-            tracing::info!("RP ID required if using app ID as origin");
-            WebAuthnError::SecurityError
-        })?;
-    RelyingPartyId::try_from(rp_id_str).map_err(|_| {
-        tracing::info!("Invalid relying party ID");
-        WebAuthnError::TypeError
+impl TryFrom<&NavigationContext> for LibwebauthnRequestOrigin {
+    type Error = WebAuthnError;
+
+    fn try_from(value: &NavigationContext) -> Result<Self, Self::Error> {
+        match value {
+            NavigationContext::SameOrigin(o) => Ok(LibwebauthnRequestOrigin::new(o.try_into()?)),
+            NavigationContext::CrossOrigin((o, top)) => Ok(
+                LibwebauthnRequestOrigin::new_cross_origin(o.try_into()?, top.try_into()?),
+            ),
+        }
+    }
+}
+
+fn load_system_psl() -> Result<SystemPublicSuffixList, WebAuthnError> {
+    SystemPublicSuffixList::auto().map_err(|err| {
+        tracing::error!("Failed to load system Public Suffix List: {err}");
+        WebAuthnError::NotAllowedError
     })
 }
 
@@ -76,27 +68,16 @@ pub(super) fn create_credential_request_try_into_ctap2(
         WebAuthnError::NotSupportedError
     })?;
 
-    let origin = request_environment.origin();
-    let rp_id = match origin {
-        Origin::Https { .. } => RelyingPartyId::try_from(origin).map_err(|err| {
-            tracing::info!("Cannot derive relying party ID from origin: {err}");
-            WebAuthnError::SecurityError
-        })?,
-        Origin::AppId(_) => peek_make_credential_rp_id(&options.request_json)?,
-    };
+    let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
+    let psl = load_system_psl()?;
 
-    let mut make_cred_request = MakeCredentialRequest::from_json(&rp_id, &options.request_json)
-        .map_err(|err| {
-            tracing::info!("Failed to parse MakeCredential request JSON: {err}");
-            WebAuthnError::TypeError
-        })?;
-
-    // TODO(libwebauthn#185)
-    make_cred_request.origin = origin.to_string();
-    make_cred_request.cross_origin = Some(matches!(
-        request_environment,
-        NavigationContext::CrossOrigin(_)
-    ));
+    let make_cred_request =
+        MakeCredentialRequest::from_json(&request_origin, &psl, &options.request_json).map_err(
+            |err| {
+                tracing::info!("Failed to parse MakeCredential request JSON: {err}");
+                WebAuthnError::TypeError
+            },
+        )?;
 
     Ok(make_cred_request)
 }
@@ -141,27 +122,16 @@ pub(super) fn get_credential_request_try_into_ctap2(
         WebAuthnError::NotSupportedError
     })?;
 
-    let origin = request_environment.origin();
-    let rp_id = match origin {
-        Origin::Https { .. } => RelyingPartyId::try_from(origin).map_err(|err| {
-            tracing::info!("Cannot derive relying party ID from origin: {err}");
-            WebAuthnError::SecurityError
-        })?,
-        Origin::AppId(_) => peek_get_assertion_rp_id(&options.request_json)?,
-    };
+    let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
+    let psl = load_system_psl()?;
 
-    let mut get_assertion_request = GetAssertionRequest::from_json(&rp_id, &options.request_json)
-        .map_err(|err| {
-        tracing::info!("Failed to parse GetAssertion request JSON: {err}");
-        WebAuthnError::TypeError
-    })?;
-
-    // TODO(libwebauthn#185)
-    get_assertion_request.origin = origin.to_string();
-    get_assertion_request.cross_origin = Some(matches!(
-        request_environment,
-        NavigationContext::CrossOrigin(_)
-    ));
+    let get_assertion_request =
+        GetAssertionRequest::from_json(&request_origin, &psl, &options.request_json).map_err(
+            |err| {
+                tracing::info!("Failed to parse GetAssertion request JSON: {err}");
+                WebAuthnError::TypeError
+            },
+        )?;
 
     Ok(get_assertion_request)
 }

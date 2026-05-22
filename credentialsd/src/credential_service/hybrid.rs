@@ -9,7 +9,9 @@ use tokio::sync::mpsc::{self, Sender};
 use tracing::{debug, error};
 
 use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
-use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
+use libwebauthn::transport::cable::qr_code_device::{
+    CableQrCodeDevice, CableTransports, QrCodeOperationHint,
+};
 use libwebauthn::transport::{Channel, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
@@ -51,13 +53,15 @@ impl HybridHandler for InternalHybridHandler {
                     QrCodeOperationHint::GetAssertionRequest
                 }
             };
-            let mut device = match CableQrCodeDevice::new_transient(hint) {
-                Ok(device) => device,
-                Err(err) => {
-                    tracing::error!("Failed to create caBLE QR code device: {:?}", err);
-                    return;
-                }
-            };
+            let mut device =
+                match CableQrCodeDevice::new_transient(hint, CableTransports::CloudAssistedOrLocal)
+                {
+                    Ok(device) => device,
+                    Err(err) => {
+                        tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                        return;
+                    }
+                };
             let qr_code = device.qr_code.to_string();
             if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
                 tracing::error!("Failed to send caBLE update: {:?}", err);
@@ -351,7 +355,6 @@ pub(super) mod test {
                 user: None,
                 credentials_count: Some(1),
                 user_selected: None,
-                large_blob_key: None,
                 unsigned_extensions_output: None,
                 enterprise_attestation: None,
                 attestation_statement: None,
