@@ -1,3 +1,4 @@
+subdir('img')
 subdir('ui')
 
 # Resources

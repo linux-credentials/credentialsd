@@ -106,6 +106,18 @@ template $CredentialsUiWindow: ApplicationWindow {
                   "qr-code",
                 ]
               }
+
+              [overlay]
+              Image {
+                pixel-size: 128;
+                halign: center;
+                valign: center;
+                resource: "/xyz/iinuwa/credentialsd/CredentialsUi/img/passkey-logo.svg";
+
+                accessibility {
+                  label: "FIDO passkey logo";
+                }
+              }
             }
           }
 
