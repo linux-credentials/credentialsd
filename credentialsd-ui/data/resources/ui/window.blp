@@ -1,19 +1,5 @@
 using Gtk 4.0;
 
-menu primary_menu {
-  section {
-    item {
-      label: _("_Preferences");
-      action: "app.preferences";
-    }
-
-    item {
-      label: _("_Keyboard Shortcuts");
-      action: "win.show-help-overlay";
-    }
-  }
-}
-
 template $CredentialsUiWindow: ApplicationWindow {
   [titlebar]
   HeaderBar headerbar {}

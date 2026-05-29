@@ -1,7 +1,6 @@
 data/xyz.iinuwa.credentialsd.CredentialsUi.desktop.in.in
 data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in
 data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in
-data/resources/ui/shortcuts.ui
 data/resources/ui/window.blp
 src/gui/view_model/gtk/mod.rs
 src/gui/view_model/gtk/device.rs
