@@ -165,6 +165,14 @@ template $CredentialsUiWindow: ApplicationWindow {
 
           Image {
             icon-name: "media-removable-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
 
             accessibility {
               labelled-by: security_key_label;
@@ -173,12 +181,20 @@ template $CredentialsUiWindow: ApplicationWindow {
 
           Label security_key_label {
             label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
           }
 
           PasswordEntry usb_nfc_pin_entry {
             activate => $handle_usb_nfc_pin_entered() swapped;
+            show => $handle_usb_nfc_pin_shown() swapped;
             visible: bind template.view-model as <$CredentialManagerViewModel>.usb_nfc_pin_entry_visible;
             placeholder-text: _("Enter your device PIN");
+            can-focus: true;
           }
         };
       }

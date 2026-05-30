@@ -53,6 +53,11 @@ mod imp {
                 }
             ));
         }
+
+        #[template_callback]
+        fn handle_usb_nfc_pin_shown(&self, entry: &gtk::PasswordEntry) {
+            entry.grab_focus();
+        }
     }
 
     impl Default for CredentialsUiWindow {
