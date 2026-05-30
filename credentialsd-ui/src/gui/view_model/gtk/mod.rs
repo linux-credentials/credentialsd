@@ -176,11 +176,14 @@ impl ViewModel {
                                     let texture = view_model.draw_qr_code(&qr_code);
                                     view_model.set_qr_code_paintable(&texture);
                                     view_model.set_qr_code_visible(true);
-                                    view_model.set_qr_spinner_visible(true);
                                 }
                                 ViewUpdate::HybridConnecting => {
                                     view_model.set_qr_code_visible(false);
                                     _ = view_model.qr_code_paintable().take();
+                                    view_model.waiting_for_device(&Device {
+                                        id: "x".to_string(),
+                                        transport: Transport::HybridQr,
+                                    });
                                     view_model.set_prompt(gettext(
                                         "Connecting to your device. Make sure both devices are near each other and have Bluetooth enabled.",
                                     ));

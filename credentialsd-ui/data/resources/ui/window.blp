@@ -178,12 +178,37 @@ template $CredentialsUiWindow: ApplicationWindow {
         child: Box {
           orientation: vertical;
 
-          Spinner {
-            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+          Image {
+            icon-name: "phone-symbolic";
+            icon-size: large;
+            pixel-size: 120;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Mobile device icon";
+            }
           }
 
           Label {
             label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
+          }
+
+          Spinner {
+            height-request: 120;
+            margin-top: 16;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+            spinning: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
           }
         };
       }
@@ -214,8 +239,28 @@ template $CredentialsUiWindow: ApplicationWindow {
         child: Box {
           orientation: vertical;
 
+          Image {
+            icon-name: "check-round-outline-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Success icon";
+            }
+          }
+
           Label {
             label: _("Done!");
+
+            styles [
+              "instructions",
+            ]
           }
         };
       }
