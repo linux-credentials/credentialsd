@@ -44,6 +44,7 @@ impl InProcessUsbHandler {
         match libwebauthn::transport::hid::list_devices().await {
             Ok(mut hid_devices) => {
                 if hid_devices.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                     let state = UsbStateInternal::Waiting;
                     Ok(state)
                 } else if hid_devices.len() == 1 {
