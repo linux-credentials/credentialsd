@@ -1,0 +1,151 @@
+using Gtk 4.0;
+
+template $CredentialsUiWindow: ApplicationWindow {
+  [titlebar]
+  HeaderBar headerbar {}
+
+  Box {
+    orientation: vertical;
+    spacing: 10;
+
+    Label {
+      label: bind template.view-model as <$CredentialManagerViewModel>.title;
+
+      styles [
+        "title-header",
+      ]
+    }
+
+    Separator {}
+
+    Label {
+      wrap: true;
+      use-markup: true;
+      label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
+
+      styles [
+        "subtitle-header",
+      ]
+    }
+
+    Separator {}
+
+    Stack stack {
+      StackPage {
+        name: "choose_device";
+        title: _("Choose device");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: _("Devices");
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            max-content-height: 256;
+            child: bind template.view-model as <$CredentialManagerViewModel>.devices;
+          }
+        };
+      }
+
+      StackPage {
+        name: "usb_or_nfc";
+        title: _("Connect a security key");
+
+        child: Box {
+          orientation: vertical;
+
+          Image {
+            icon-name: "media-removable-symbolic";
+
+            accessibility {
+              labelled-by: security_key_label;
+            }
+          }
+
+          Label security_key_label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+          }
+
+          PasswordEntry usb_nfc_pin_entry {
+            activate => $handle_usb_nfc_pin_entered() swapped;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.usb_nfc_pin_entry_visible;
+            placeholder-text: _("Enter your device PIN");
+          }
+        };
+      }
+
+      StackPage {
+        name: "hybrid_qr";
+        title: _("Scan the QR code to connect your device");
+
+        child: Box {
+          orientation: vertical;
+
+          Spinner {
+            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+          }
+
+          Picture qr_code_pic {
+            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_code_visible;
+
+            accessibility {
+              label: "FIDO QR Code";
+            }
+          }
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+          }
+        };
+      }
+
+      StackPage {
+        name: "choose_credential";
+        title: _("Choose credential");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: _("Choose credential");
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            max-content-height: 256;
+            child: bind template.view-model as <$CredentialManagerViewModel>.credentials;
+          }
+        };
+      }
+
+      StackPage {
+        name: "completed";
+        title: _("Complete");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: _("Done!");
+          }
+        };
+      }
+
+      StackPage {
+        name: "failed";
+        title: _("Something went wrong.");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+          }
+        };
+      }
+    }
+  }
+}

@@ -41,3 +41,10 @@ subdir('systemd')
 subdir('webext')
 
 subdir('demo_client')
+
+# Don't run blueprint-compiler tests
+
+# add_test_setup('skip_subproject_tests',
+#   is_default: true,
+#   exclude_suites: ['blueprint-compiler']
+# )

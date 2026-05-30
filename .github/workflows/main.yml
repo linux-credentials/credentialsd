@@ -36,7 +36,7 @@ jobs:
             curl git build-essential \
             libgtk-4-dev libclang-dev libdbus-1-dev libssl-dev libudev-dev libnfc-dev \
             libpcsclite-dev libxml2-utils \
-            blueprint-compiler desktop-file-utils gettext ninja-build python3-pip \
+            desktop-file-utils gettext ninja-build python3-pip \
             udev zip
 
       - name: Set up mold as default linker
@@ -45,7 +45,32 @@ jobs:
       - name: Install Meson
         run: |
           # Newer version needed for --interactive flag needed below
-          python3 -m pip install --user -v 'meson==1.5.0'
+          python3 -m pip install --user -v 'meson==1.8.5'
+
+      - name: Install blueprint-compiler
+        run: |
+          git clone \
+            -c advice.detachedHead=false \
+            --depth 1 \
+            --branch v0.20.4 \
+            https://gitlab.gnome.org/GNOME/blueprint-compiler.git \
+            ${{ runner.temp }}/blueprint-compiler
+          cd ${{ runner.temp }}/blueprint-compiler
+          # pinned hash of 0.20.4
+          git checkout --detach 31b62c24a72c1670d2d93dcdf2d130f1ae12778e
+          echo "Making zipapp of blueprint-compiler"
+          mkdir build
+          echo "from blueprintcompiler import main; main.main('0.24.0', None, None)" > build/__main__.py
+          cp -vr blueprintcompiler build/
+          cd build
+          zip -r blueprint-compiler.zip __main__.py blueprintcompiler/
+          echo "#!/usr/bin/env python3" | cat - blueprint-compiler.zip > blueprint-compiler
+          chmod +x ./blueprint-compiler
+          rm -rf blueprintcompiler blueprint-compiler.zip
+          mkdir -p ~/.local/bin
+          cp ./blueprint-compiler ~/.local/bin
+          echo ~/.local/bin >> $GITHUB_PATH
+
       - name: Setup meson project
         run: meson setup -Dprofile=development -Dcargo_locked=true build
 
