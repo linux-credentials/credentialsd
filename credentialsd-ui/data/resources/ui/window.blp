@@ -8,8 +8,8 @@ template $CredentialsUiWindow: ApplicationWindow {
     orientation: vertical;
     halign: center;
     width-request: 600;
-    margin-start: 160;
-    margin-end: 160;
+    margin-start: 32;
+    margin-end: 32;
     margin-bottom: 48;
     spacing: 10;
 
@@ -23,14 +23,14 @@ template $CredentialsUiWindow: ApplicationWindow {
 
     Box {
       orientation: vertical;
-      margin-start: 48;
-      margin-end: 48;
+      margin-start: 100;
+      margin-end: 100;
 
       Label {
         label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
         wrap: true;
         use-markup: true;
-        width-request: 600;
+        width-request: 550;
 
         styles [
           "subtitle-header",
@@ -90,7 +90,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               width-request: 400;
 
               Picture qr_code_pic {
-                height-request: 100;
+                height-request: 300;
                 vexpand: false;
                 halign: center;
                 valign: center;
@@ -109,7 +109,7 @@ template $CredentialsUiWindow: ApplicationWindow {
 
               [overlay]
               Image {
-                pixel-size: 128;
+                pixel-size: 96;
                 halign: center;
                 valign: center;
                 // TODO: Figure out why this doesn't work as icon-name: 'passkey-logo';
