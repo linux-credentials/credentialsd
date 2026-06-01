@@ -23,7 +23,7 @@ use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 
-use crate::credential_service::ManageDevice;
+use crate::credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice};
 use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
@@ -154,45 +154,36 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         let cred_selector_tx = Arc::new(Mutex::new(None));
         while let Some(ui_request) = flow.receive_ui_event().await {
             match ui_request {
-                UserInteractedEvent::HybridDiscoveryRequested => {
-                    let stream = svc
-                        .lock()
-                        .await
-                        .get_hybrid_credential()
-                        .await
-                        .map(|state| (&state).into());
-                    let flow = flow.clone();
-                    forward_background_event_stream(flow, stream);
-                }
-                UserInteractedEvent::NfcDiscoveryRequested => {
-                    let stream = svc
-                        .lock()
-                        .await
-                        .get_nfc_credential()
-                        .await
-                        .map(|state| (&state).into());
-                    let flow = flow.clone();
-                    forward_background_event_stream(flow, stream);
-                }
-                UserInteractedEvent::UsbDiscoveryRequested => {
+                UserInteractedEvent::DiscoveryRequested => {
                     let client_pin_tx = client_pin_tx.clone();
                     let cred_selector_tx = cred_selector_tx.clone();
                     let stream =
                         svc.lock()
                             .await
-                            .get_usb_credential()
+                            .start_discovery()
                             .await
-                            .map(move |usb_state| {
-                                match &usb_state {
-                                    UsbState::NeedsPin { pin_tx, .. } => {
+                            .map(move |device_update| {
+                                match &device_update {
+                                    DeviceStateUpdate::Nfc(NfcState::NeedsPin {
+                                        pin_tx, ..
+                                    }) => {
                                         *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
                                     }
-                                    UsbState::SelectingCredential { cred_tx, .. } => {
+
+                                    DeviceStateUpdate::Usb(UsbState::NeedsPin {
+                                        pin_tx, ..
+                                    }) => {
+                                        *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                    }
+                                    DeviceStateUpdate::Usb(UsbState::SelectingCredential {
+                                        cred_tx,
+                                        ..
+                                    }) => {
                                         *cred_selector_tx.lock().unwrap() = Some(cred_tx.clone());
                                     }
                                     _ => {}
                                 }
-                                (&usb_state).into()
+                                device_update.into()
                             });
                     let flow = flow.clone();
                     forward_background_event_stream(flow, stream);
@@ -392,9 +383,7 @@ pub mod test {
     pub enum DummyFlowRequest {
         EnterClientPin(String),
         GetDevices,
-        GetHybridCredential,
-        GetUsbCredential,
-        GetNfcCredential,
+        GetCredential,
         InitStream,
     }
 
@@ -404,9 +393,7 @@ pub mod test {
     pub enum DummyFlowResponse {
         EnterClientPin(Result<(), ()>),
         GetDevices(Vec<Device>),
-        GetHybridCredential,
-        GetUsbCredential,
-        GetNfcCredential,
+        GetCredential,
         InitStream(Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>),
     }
 
@@ -415,9 +402,7 @@ pub mod test {
             match self {
                 Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
                 Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
-                Self::GetHybridCredential => f.debug_tuple("GetHybridCredential").finish(),
-                Self::GetUsbCredential => f.debug_tuple("GetUsbCredential").finish(),
-                Self::GetNfcCredential => f.debug_tuple("GetNfcCredential").finish(),
+                Self::GetCredential => f.debug_tuple("GetCredential").finish(),
                 Self::InitStream(_) => f
                     .debug_tuple("InitStream")
                     .field(&String::from("<BackgroundEventStream>"))
@@ -455,28 +440,10 @@ pub mod test {
             }
         }
 
-        async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
-            if let Ok(DummyFlowResponse::GetHybridCredential) =
-                self.send(DummyFlowRequest::GetHybridCredential).await
+        async fn start_discovery(&mut self) -> Result<(), ()> {
+            if let Ok(DummyFlowResponse::GetCredential) =
+                self.send(DummyFlowRequest::GetCredential).await
             {
-                Ok(())
-            } else {
-                Err(())
-            }
-        }
-
-        async fn get_usb_credential(&mut self) -> Result<(), ()> {
-            let response = self.send(DummyFlowRequest::GetUsbCredential).await.unwrap();
-            if let DummyFlowResponse::GetUsbCredential = response {
-                Ok(())
-            } else {
-                Err(())
-            }
-        }
-
-        async fn get_nfc_credential(&mut self) -> Result<(), ()> {
-            let response = self.send(DummyFlowRequest::GetNfcCredential).await.unwrap();
-            if let DummyFlowResponse::GetNfcCredential = response {
                 Ok(())
             } else {
                 Err(())
@@ -529,26 +496,6 @@ pub mod test {
     }
 
     impl<M: ManageDevice> DummyFlowServer<M> {
-        /*
-        async fn send(&self, request: ManagementRequest) -> Result<ManagementResponse, ()> {
-            let (response_tx, response_rx) = oneshot::channel();
-            self.tx
-                .send((InProcessServerRequest::Management(request), response_tx))
-                .await
-                .unwrap();
-            match response_rx.await {
-                Ok(InProcessServerResponse::Management(response)) => Ok(response),
-                Ok(_) => {
-                    tracing::error!("invalid response received from server");
-                    Err(())
-                }
-                Err(err) => {
-                    tracing::error!("Failed to retrieve response from server: {:?}", err);
-                    Err(())
-                }
-            }
-        }
-        */
         pub fn new(svc: Arc<AsyncMutex<M>>) -> (Self, DummyFlowClient) {
             let (request_tx, request_rx) = mpsc::channel(32);
             let server = Self {
@@ -576,18 +523,9 @@ pub mod test {
                         let rsp = self.get_available_public_key_devices().await.unwrap();
                         DummyFlowResponse::GetDevices(rsp)
                     }
-                    DummyFlowRequest::GetHybridCredential => {
-                        self.get_hybrid_credential().await.unwrap();
-                        DummyFlowResponse::GetHybridCredential
-                    }
-
-                    DummyFlowRequest::GetUsbCredential => {
-                        self.get_usb_credential().await.unwrap();
-                        DummyFlowResponse::GetUsbCredential
-                    }
-                    DummyFlowRequest::GetNfcCredential => {
-                        self.get_nfc_credential().await.unwrap();
-                        DummyFlowResponse::GetNfcCredential
+                    DummyFlowRequest::GetCredential => {
+                        self.start_discovery().await.unwrap();
+                        DummyFlowResponse::GetCredential
                     }
                     DummyFlowRequest::InitStream => {
                         let rsp = self.subscribe().await;
@@ -610,110 +548,8 @@ pub mod test {
             Ok(devices)
         }
 
-        async fn get_hybrid_credential(&mut self) -> Result<(), ()> {
-            let svc = self.svc.lock().await;
-            let mut stream = svc.get_hybrid_credential().await;
-            tracing::debug!(target: "DummyFlowServer", "Subscribing to hybrid credential state changes");
-            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                let task = tokio::spawn(async move {
-                    while let Some(hybrid_state) = stream.next().await {
-                        tracing::debug!(target: "DummyFlowServer", "Received hybrid state change: {hybrid_state:?}");
-                        if let Some(tx) = tx_weak.upgrade() {
-                            tx.send((&hybrid_state).into())
-                                .await
-                                .unwrap();
-                            match hybrid_state {
-                                HybridState::Completed | HybridState::Failed => {
-                                    break;
-                                }
-                                _ => {},
-                            };
-                        }
-                    }
-                })
-                .abort_handle();
-                if let Some(prev_task) = self
-                    .hybrid_event_forwarder_task
-                    .lock()
-                    .unwrap()
-                    .replace(task)
-                {
-                    prev_task.abort();
-                }
-            } else {
-                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up hybrid state stream; some messages may be missed.");
-            }
-            Ok(())
-        }
-
-        async fn get_usb_credential(&mut self) -> Result<(), ()> {
-            let mut stream = self.svc.lock().await.get_usb_credential().await;
-            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                let usb_pin_tx = self.pin_tx.clone();
-                let task = tokio::spawn(async move {
-                    while let Some(state) = stream.next().await {
-                        if let Some(tx) = tx_weak.upgrade() {
-                            if tx.send((&state).into()).await.is_err() {
-                                tracing::debug!("Closing USB background event forwarder");
-                                break;
-                            }
-                            match state {
-                                UsbState::NeedsPin { pin_tx, .. } => {
-                                    let mut usb_pin_tx = usb_pin_tx.lock().await;
-                                    let _ = usb_pin_tx.insert(pin_tx);
-                                }
-                                UsbState::Completed | UsbState::Failed(_) => {
-                                    break;
-                                }
-                                _ => {}
-                            };
-                        }
-                    }
-                })
-                .abort_handle();
-                if let Some(prev_task) = self.usb_event_forwarder_task.lock().unwrap().replace(task)
-                {
-                    prev_task.abort();
-                }
-            } else {
-                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up USB state stream; some messages may be missed.");
-            }
-            Ok(())
-        }
-
-        async fn get_nfc_credential(&mut self) -> Result<(), ()> {
-            let mut stream = self.svc.lock().await.get_nfc_credential().await;
-            if let Some(tx_weak) = self.bg_event_tx.as_ref().map(|t| t.clone().downgrade()) {
-                let nfc_pin_tx = self.pin_tx.clone();
-                let task = tokio::spawn(async move {
-                    while let Some(state) = stream.next().await {
-                        if let Some(tx) = tx_weak.upgrade() {
-                            if tx.send((&state).into()).await.is_err() {
-                                tracing::debug!("Closing NFC background event forwarder");
-                                break;
-                            }
-                            match state {
-                                NfcState::NeedsPin { pin_tx, .. } => {
-                                    let mut nfc_pin_tx = nfc_pin_tx.lock().await;
-                                    let _ = nfc_pin_tx.insert(pin_tx);
-                                }
-                                NfcState::Completed | NfcState::Failed(_) => {
-                                    break;
-                                }
-                                _ => {}
-                            };
-                        }
-                    }
-                })
-                .abort_handle();
-                if let Some(prev_task) = self.nfc_event_forwarder_task.lock().unwrap().replace(task)
-                {
-                    prev_task.abort();
-                }
-            } else {
-                tracing::warn!(target: "DummyFlowServer", "Output stream not initialized before setting up NFC state stream; some messages may be missed.");
-            }
-            Ok(())
+        async fn start_discovery(&mut self) -> Result<(), ()> {
+            unimplemented!();
         }
 
         async fn subscribe(

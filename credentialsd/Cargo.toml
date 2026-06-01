@@ -10,6 +10,7 @@ async-stream = "0.3.6"
 async-trait = "0.1.89"
 base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
+futures = "0.3.32"
 futures-lite.workspace = true
 libc.workspace = true
 libwebauthn = { version = "0.5.1", features = ["nfc-backend-libnfc", "nfc-backend-pcsc"] }

@@ -140,8 +140,7 @@ impl ViewModel {
                                 ViewUpdate::WaitingForDevice(device) => {
                                     view_model.waiting_for_device(&device)
                                 }
-                                ViewUpdate::UsbNeedsPin { attempts_left }
-                                | ViewUpdate::NfcNeedsPin { attempts_left } => {
+                                ViewUpdate::NeedsPin { attempts_left } => {
                                     let prompt = if let Some(left) = attempts_left {
                                         let localized = ngettext(
                                             "Enter your PIN. One attempt remaining.",
@@ -155,8 +154,7 @@ impl ViewModel {
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_nfc_pin_entry_visible(true);
                                 }
-                                ViewUpdate::UsbNeedsUserVerification { attempts_left }
-                                | ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
+                                ViewUpdate::NeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(left) => {
                                             let localized = ngettext(
@@ -170,7 +168,7 @@ impl ViewModel {
                                     };
                                     view_model.set_prompt(prompt);
                                 }
-                                ViewUpdate::UsbNeedsUserPresence => {
+                                ViewUpdate::NeedsUserPresence => {
                                     view_model.set_prompt(gettext("Touch your device"));
                                 }
                                 ViewUpdate::HybridNeedsQrCode(qr_code) => {
@@ -222,52 +220,15 @@ impl ViewModel {
         ));
     }
 
-    fn update_devices(&self, devices: &[Device]) {
-        let vec: Vec<DeviceObject> = devices
-            .iter()
-            .map(|d| {
-                let device_object: DeviceObject = d.into();
-                device_object
-            })
-            .collect();
-        let model = gio::ListStore::new::<DeviceObject>();
-        model.extend_from_slice(&vec);
-        let tx = self.get_sender();
-        let device_list = gtk::ListBox::new();
-        device_list.bind_model(Some(&model), move |item| -> gtk::Widget {
-            let device = item.downcast_ref::<DeviceObject>().unwrap();
-            let transport: Transport = device.transport().try_into().unwrap();
-            let icon_name = match transport {
-                Transport::Ble => "bluetooth-symbolic",
-                Transport::Internal => "computer-symbolic",
-                Transport::HybridQr => "phone-symbolic",
-                Transport::HybridLinked => "phone-symbolic",
-                Transport::Nfc => "network-wireless-symbolic",
-                Transport::Usb => "media-removable-symbolic",
-                // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
-                // _ => "question-symbolic",
-            };
-
-            let b = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .build();
-            let icon = gtk::Image::builder().icon_name(icon_name).build();
-            let label = gtk::Label::builder().label(device.name()).build();
-            b.append(&icon);
-            b.append(&label);
-
-            let button = gtk::Button::builder().name(device.id()).child(&b).build();
-            let tx = tx.clone();
-            button.connect_clicked(move |button| {
-                let id = button.widget_name().to_string();
-                let tx = tx.clone();
-                glib::spawn_future_local(async move {
-                    tx.send(ViewEvent::DeviceSelected(id)).await.unwrap();
-                });
-            });
-            button.into()
-        });
-        self.set_devices(device_list);
+    fn update_devices(&self, _devices: &[Device]) {
+        // TODO: This This is called when a new credential source is available to show it in the UI.
+        // At this time, the list is static, and the UI templates do not read this value.
+        // Eventually, the UI template will need to read the value, when
+        // pre-known credentials (like hybrid linked devices, or passkey
+        // autofill). However, I believe in the current paradigm, we will know all available
+        // credential sources at the beginning of the request, so we won't need
+        // to update these during the request. We may be able to reomve this method altogether.
+        // for now, we're ignoring this value.
     }
 
     fn update_credentials(&self, credentials: &[Credential]) {

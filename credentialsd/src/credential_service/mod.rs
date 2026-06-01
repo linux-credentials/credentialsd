@@ -18,7 +18,10 @@ use libwebauthn::{
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 
-use credentialsd_common::model::{Device, Error as CredentialServiceError, RequestId, Transport};
+use credentialsd_common::{
+    model::{Device, Error as CredentialServiceError, RequestId, Transport},
+    server::BackgroundEvent,
+};
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -59,11 +62,9 @@ pub trait ManageDevice {
     ) -> Result<RequestId, CredentialServiceError>;
     async fn cancel_request(&self, request_id: RequestId);
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
-    async fn get_hybrid_credential(
+    async fn start_discovery(
         &self,
-    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>>;
-    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>>;
-    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>>;
+    ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>;
 }
 
 #[derive(Debug)]
@@ -86,6 +87,54 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
             hybrid_handler: Mutex::new(hybrid_handler),
             nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
+        }
+    }
+}
+
+impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
+    CredentialService<H, N, U>
+{
+    async fn get_hybrid_credential(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.hybrid_handler.lock().unwrap().start(request);
+            let ctx = self.ctx.clone();
+            Box::pin(HybridStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start hybrid credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
+    }
+
+    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.usb_handler.lock().unwrap().start(request);
+            let ctx = self.ctx.clone();
+            Box::pin(UsbStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start usb credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
+        }
+    }
+
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+        let guard = self.ctx.lock().unwrap();
+        if let Some(RequestContext { ref request, .. }) = *guard {
+            let stream = self.nfc_handler.lock().unwrap().start(request);
+            let ctx = self.ctx.clone();
+            Box::pin(NfcStateStream { inner: stream, ctx })
+        } else {
+            tracing::error!(
+                "Attempted to start nfc credential flow, but no request context was found."
+            );
+            todo!("Handle error when context is not set up.")
         }
     }
 }
@@ -158,48 +207,34 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         Ok(devices)
     }
 
-    async fn get_hybrid_credential(
+    async fn start_discovery(
         &self,
-    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.hybrid_handler.lock().unwrap().start(request);
-            let ctx = self.ctx.clone();
-            Box::pin(HybridStateStream { inner: stream, ctx })
-        } else {
-            tracing::error!(
-                "Attempted to start hybrid credential flow, but no request context was found."
-            );
-            todo!("Handle error when context is not set up.")
-        }
-    }
-
-    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.usb_handler.lock().unwrap().start(request);
-            let ctx = self.ctx.clone();
-            Box::pin(UsbStateStream { inner: stream, ctx })
-        } else {
-            tracing::error!(
-                "Attempted to start usb credential flow, but no request context was found."
-            );
-            todo!("Handle error when context is not set up.")
-        }
-    }
-
-    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.nfc_handler.lock().unwrap().start(request);
-            let ctx = self.ctx.clone();
-            Box::pin(NfcStateStream { inner: stream, ctx })
-        } else {
-            tracing::error!(
-                "Attempted to start nfc credential flow, but no request context was found."
-            );
-            todo!("Handle error when context is not set up.")
-        }
+    ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
+        let usb = self
+            .get_usb_credential()
+            .await
+            .map(DeviceStateUpdate::from)
+            .boxed();
+        /*
+        TODO: Some cards that support NFC but not CCID (SoloKey Solo 2 NFC)
+        cause a framing error immediately after establishing a libwebauthn
+        Channel, which causes the whole ceremony to abort without the user
+        intending to. We need to determine some way of working around buggy
+        security keys, while at the same time supporting actual NFC cards and CCID.
+        Maybe we can defer sending "Connected" to the UI until a user presence
+        or verification message is sent.
+        let nfc = self
+            .get_nfc_credential()
+            .await
+            .map(DeviceStateUpdate::from)
+            .boxed();
+        */
+        let hybrid = self
+            .get_hybrid_credential()
+            .await
+            .map(DeviceStateUpdate::from)
+            .boxed();
+        futures::stream::select_all([usb, /* nfc, */ hybrid]).boxed()
     }
 }
 
@@ -306,6 +341,40 @@ where
             }
             Poll::Ready(None) => Poll::Ready(None),
         }
+    }
+}
+
+pub enum DeviceStateUpdate {
+    Hybrid(HybridState),
+    Nfc(NfcState),
+    Usb(UsbState),
+}
+
+impl From<DeviceStateUpdate> for BackgroundEvent {
+    fn from(value: DeviceStateUpdate) -> Self {
+        match value {
+            DeviceStateUpdate::Hybrid(state) => (&state).into(),
+            DeviceStateUpdate::Nfc(state) => (&state).into(),
+            DeviceStateUpdate::Usb(state) => (&state).into(),
+        }
+    }
+}
+
+impl From<HybridState> for DeviceStateUpdate {
+    fn from(value: HybridState) -> Self {
+        Self::Hybrid(value)
+    }
+}
+
+impl From<NfcState> for DeviceStateUpdate {
+    fn from(value: NfcState) -> Self {
+        Self::Nfc(value)
+    }
+}
+
+impl From<UsbState> for DeviceStateUpdate {
+    fn from(value: UsbState) -> Self {
+        Self::Usb(value)
     }
 }
 

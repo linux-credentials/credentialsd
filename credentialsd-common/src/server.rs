@@ -49,9 +49,7 @@ const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
 const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
 const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
 
-const USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED: u32 = 0x01;
-const USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED: u32 = 0x02;
-const USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED: u32 = 0x03;
+const USER_INTERACTED_EVENT_DISCOVERY_REQUESTED: u32 = 0x01;
 const USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED: u32 = 0x04;
 const USER_INTERACTED_EVENT_CREDENTIAL_SELECTED: u32 = 0x05;
 const USER_INTERACTED_EVENT_REQUEST_CANCELLED: u32 = 0x06;
@@ -426,14 +424,8 @@ impl Type for UserInteractedEvent {
 impl From<&UserInteractedEvent> for Structure<'_> {
     fn from(value: &UserInteractedEvent) -> Self {
         match value {
-            UserInteractedEvent::HybridDiscoveryRequested => {
-                tag_value_to_struct(USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED, None)
-            }
-            UserInteractedEvent::NfcDiscoveryRequested => {
-                tag_value_to_struct(USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED, None)
-            }
-            UserInteractedEvent::UsbDiscoveryRequested => {
-                tag_value_to_struct(USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED, None)
+            UserInteractedEvent::DiscoveryRequested => {
+                tag_value_to_struct(USER_INTERACTED_EVENT_DISCOVERY_REQUESTED, None)
             }
             UserInteractedEvent::ClientPinEntered(pin_fd) => tag_value_to_struct(
                 USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED,
@@ -457,14 +449,8 @@ impl TryFrom<&Structure<'_>> for UserInteractedEvent {
         let (tag, value) = parse_tag_value_struct(value)?;
 
         match tag {
-            USER_INTERACTED_EVENT_HYBRID_DISCOVERY_REQUESTED => {
-                Ok(UserInteractedEvent::HybridDiscoveryRequested)
-            }
-            USER_INTERACTED_EVENT_NFC_DISCOVERY_REQUESTED => {
-                Ok(UserInteractedEvent::NfcDiscoveryRequested)
-            }
-            USER_INTERACTED_EVENT_USB_DISCOVERY_REQUESTED => {
-                Ok(UserInteractedEvent::UsbDiscoveryRequested)
+            USER_INTERACTED_EVENT_DISCOVERY_REQUESTED => {
+                Ok(UserInteractedEvent::DiscoveryRequested)
             }
             USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED => {
                 let fd = value.downcast_ref::<Fd>()?;
