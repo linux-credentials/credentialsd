@@ -112,7 +112,8 @@ template $CredentialsUiWindow: ApplicationWindow {
                 pixel-size: 128;
                 halign: center;
                 valign: center;
-                resource: "/xyz/iinuwa/credentialsd/CredentialsUi/img/passkey-logo.svg";
+                // TODO: Figure out why this doesn't work as icon-name: 'passkey-logo';
+                resource: "/xyz/iinuwa/credentialsd/CredentialsUi/icons/scalable/emblems/passkey-logo.svg";
 
                 accessibility {
                   label: "FIDO passkey logo";
@@ -268,7 +269,7 @@ template $CredentialsUiWindow: ApplicationWindow {
           orientation: vertical;
 
           Image {
-            icon-name: "check-round-outline-symbolic";
+            icon-name: "face-smile-symbolic";
             pixel-size: 120;
             icon-size: large;
             height-request: 120;

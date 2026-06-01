@@ -217,13 +217,7 @@ impl CredentialsUi {
         tx: Sender<ViewEvent>,
         rx: Receiver<ViewUpdate>,
     ) -> Self {
-        let app: Self = glib::Object::builder()
-            .property("application-id", APP_ID)
-            .property(
-                "resource-base-path",
-                "/xyz/iinuwa/credentialsd/CredentialUI/",
-            )
-            .build();
+        let app: Self = glib::Object::new();
         app.imp().parent_window.replace(parent_window);
         app.imp().tx.replace(Some(tx));
         app.imp().rx.replace(Some(rx));

@@ -1,4 +1,4 @@
-subdir('img')
+subdir('icons')
 subdir('ui')
 
 # Resources
@@ -9,5 +9,8 @@ resources = gnome.compile_resources(
   source_dir: meson.current_build_dir(),
   install: true,
   install_dir: pkgdatadir,
-  dependencies: blueprint_templates,
+  dependencies: [
+    blueprint_templates,
+    icons,
+  ],
 )

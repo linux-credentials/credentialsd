@@ -5,11 +5,11 @@ use gtk::{gdk, gio, glib};
 use gtk::subclass::prelude::*;
 
 use gdk::Texture;
-use glib::{Properties, clone};
-use gtk::{Picture, prelude::*};
+use glib::{clone, Properties};
+use gtk::{prelude::*, Picture};
 
 use super::application::CredentialsUi;
-use super::{ViewModel, device::DeviceObject};
+use super::{device::DeviceObject, ViewModel};
 use crate::config::{APP_ID, PROFILE};
 use crate::gui::view_model::Transport;
 
