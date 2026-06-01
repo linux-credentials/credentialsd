@@ -67,13 +67,13 @@ function reconstructCredentialResponse(credential) {
     response.attestationObject = base64urlToArrayBuffer(credential.response.attestationObject);
     response.transports = credential.response.transports ? [...credential.response.transports] : [];
     response.authenticatorData = base64urlToArrayBuffer(credential.response.authenticatorData);
-    response.getAuthenticatorData = function() { return this.authenticatorData; };
-    response.getPublicKeyAlgorithm = function() { return credential.response.publicKeyAlgorithm; };
+    response.getAuthenticatorData = function () { return this.authenticatorData; };
+    response.getPublicKeyAlgorithm = function () { return credential.response.publicKeyAlgorithm; };
     if (credential.response.publicKey) {
       response.publicKey = base64urlToArrayBuffer(credential.response.publicKey);
     }
-    response.getPublicKey = function() { return this.publicKey || null; };
-    response.getTransports = function() { return this.transports; };
+    response.getPublicKey = function () { return this.publicKey || null; };
+    response.getTransports = function () { return this.transports; };
 
     if (typeof AuthenticatorAttestationResponse !== 'undefined') {
       Object.setPrototypeOf(response, AuthenticatorAttestationResponse.prototype);
@@ -131,10 +131,10 @@ function reconstructCredentialResponse(credential) {
 
   obj.response = response;
   obj.clientExtensionResults = extensions;
-  obj.getClientExtensionResults = function() { return this.clientExtensionResults; };
+  obj.getClientExtensionResults = function () { return this.clientExtensionResults; };
   obj.type = 'public-key';
 
-  obj.toJSON = function() {
+  obj.toJSON = function () {
     const json = {};
     json.id = this.id;
     json.rawId = this.id;
@@ -170,8 +170,8 @@ if (navigator.credentials) {
   const originalCreate = navigator.credentials.create?.bind(navigator.credentials);
   const originalGet = navigator.credentials.get?.bind(navigator.credentials);
 
-  navigator.credentials.create = function(options) {
-    if (!options || !options.publicKey) {
+  navigator.credentials.create = function (options) {
+    if (!options || !options.publicKey || options.mediation == 'conditional') {
       if (originalCreate) return originalCreate(options);
       return Promise.reject(new DOMException('Not supported', 'NotSupportedError'));
     }
@@ -191,8 +191,8 @@ if (navigator.credentials) {
     return promise.then(reconstructCredentialResponse);
   };
 
-  navigator.credentials.get = function(options) {
-    if (!options || !options.publicKey) {
+  navigator.credentials.get = function (options) {
+    if (!options || !options.publicKey || options.mediation == 'conditional') {
       if (originalGet) return originalGet(options);
       return Promise.reject(new DOMException('Not supported', 'NotSupportedError'));
     }
@@ -214,11 +214,11 @@ if (navigator.credentials) {
 }
 
 if (typeof PublicKeyCredential !== 'undefined') {
-  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = async function() {
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = async function () {
     return true;
   };
 
-  PublicKeyCredential.getClientCapabilities = function() {
+  PublicKeyCredential.getClientCapabilities = function () {
     console.log('[credentialsd] intercepting PublicKeyCredential.getClientCapabilities');
     const { requestId, promise } = startRequest();
 
