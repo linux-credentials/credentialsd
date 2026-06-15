@@ -97,6 +97,7 @@ impl GatewayService {
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let make_cred_request =
                 create_credential_request_try_into_ctap2(&request, &request_environment)
+                    .await
                     .inspect_err(|_| {
                         tracing::error!(
                             "Could not parse passkey creation request. Rejecting request."
@@ -162,12 +163,12 @@ impl GatewayService {
             //    - query for related origins, if supported
             //    - fail if not supported, or if RP ID doesn't match any related origins.
             let get_cred_request =
-                get_credential_request_try_into_ctap2(&request, &request_environment).map_err(
-                    |e| {
+                get_credential_request_try_into_ctap2(&request, &request_environment)
+                    .await
+                    .map_err(|e| {
                         tracing::error!("Could not parse passkey assertion request: {e:?}");
                         WebAuthnError::TypeError
-                    },
-                )?;
+                    })?;
             let cred_request =
                 CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
 

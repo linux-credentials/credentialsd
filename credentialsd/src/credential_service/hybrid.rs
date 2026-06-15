@@ -12,7 +12,7 @@ use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
 use libwebauthn::transport::cable::qr_code_device::{
     CableQrCodeDevice, CableTransports, QrCodeOperationHint,
 };
-use libwebauthn::transport::{Channel, Device};
+use libwebauthn::transport::{Channel, ChannelSettings, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
 use credentialsd_common::model::Error;
@@ -68,7 +68,7 @@ impl HybridHandler for InternalHybridHandler {
                 return;
             };
             tokio::spawn(async move {
-                let mut channel = match device.channel().await {
+                let mut channel = match device.channel(ChannelSettings::default()).await {
                     Ok(channel) => channel,
                     Err(e) => {
                         tracing::error!("Failed to open hybrid channel: {:?}", e);

@@ -6,7 +6,7 @@ use futures_lite::Stream;
 use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
     proto::CtapError,
-    transport::{nfc::device::NfcDevice, Channel, Device},
+    transport::{nfc::device::NfcDevice, Channel, ChannelSettings, Device},
     webauthn::{Error as WebAuthnError, WebAuthn},
     UvUpdate,
 };
@@ -204,7 +204,7 @@ async fn handle_events(
     signal_tx: &Sender<Result<NfcUvMessage, Error>>,
 ) {
     let device_debug = device.to_string();
-    match device.channel().await {
+    match device.channel(ChannelSettings::default()).await {
         Err(err) => {
             tracing::error!("Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}", err);
         }

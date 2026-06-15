@@ -13,11 +13,11 @@ use libwebauthn::ops::webauthn::idl::origin::{
     Origin as LibwebauthnOrigin, RequestOrigin as LibwebauthnRequestOrigin,
 };
 use libwebauthn::ops::webauthn::psl::SystemPublicSuffixList;
+use libwebauthn::ops::webauthn::{OriginValidation, RelatedOrigins, RequestSettings};
 
 use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
 use crate::webauthn::{
-    GetAssertionRequest, MakeCredentialRequest, NavigationContext, Origin, WebAuthnIDL,
-    WebAuthnIDLResponse,
+    GetAssertionRequest, MakeCredentialRequest, NavigationContext, Origin, WebAuthnIDLResponse,
 };
 
 impl TryFrom<&Origin> for LibwebauthnOrigin {
@@ -55,11 +55,17 @@ fn load_system_psl() -> Result<SystemPublicSuffixList, WebAuthnError> {
     })
 }
 
+fn request_settings(psl: &SystemPublicSuffixList) -> RequestSettings<'_> {
+    RequestSettings {
+        origin: OriginValidation::Validate {
+            public_suffix_list: psl,
+            related_origins: RelatedOrigins::Disabled,
+        },
+    }
+}
+
 /// Parses a WebAuthn create credential request from D-Bus into a CTAP2 MakeCredentialRequest.
-///
-/// Uses libwebauthn's `WebAuthnIDL::from_json()` for parsing. The relying party ID is derived
-/// from the request's origin; libwebauthn validates that any rpId in the JSON matches it.
-pub(super) fn create_credential_request_try_into_ctap2(
+pub(super) async fn create_credential_request_try_into_ctap2(
     request: &CreateCredentialRequest,
     request_environment: &NavigationContext,
 ) -> std::result::Result<MakeCredentialRequest, WebAuthnError> {
@@ -70,14 +76,15 @@ pub(super) fn create_credential_request_try_into_ctap2(
 
     let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
+    let settings = request_settings(&psl);
 
     let make_cred_request =
-        MakeCredentialRequest::from_json(&request_origin, &psl, &options.request_json).map_err(
-            |err| {
+        MakeCredentialRequest::prepare(&request_origin, &options.request_json, &settings)
+            .await
+            .map_err(|err| {
                 tracing::info!("Failed to parse MakeCredential request JSON: {err}");
                 WebAuthnError::TypeError
-            },
-        )?;
+            })?;
 
     Ok(make_cred_request)
 }
@@ -110,10 +117,7 @@ pub(super) fn create_credential_response_try_from_ctap2(
 }
 
 /// Parses a WebAuthn get credential request from D-Bus into a CTAP2 GetAssertionRequest.
-///
-/// Uses libwebauthn's `WebAuthnIDL::from_json()` for parsing. The relying party ID is derived
-/// from the request's origin; libwebauthn validates that any rpId in the JSON matches it.
-pub(super) fn get_credential_request_try_into_ctap2(
+pub(super) async fn get_credential_request_try_into_ctap2(
     request: &GetCredentialRequest,
     request_environment: &NavigationContext,
 ) -> std::result::Result<GetAssertionRequest, WebAuthnError> {
@@ -124,14 +128,15 @@ pub(super) fn get_credential_request_try_into_ctap2(
 
     let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
+    let settings = request_settings(&psl);
 
     let get_assertion_request =
-        GetAssertionRequest::from_json(&request_origin, &psl, &options.request_json).map_err(
-            |err| {
+        GetAssertionRequest::prepare(&request_origin, &options.request_json, &settings)
+            .await
+            .map_err(|err| {
                 tracing::info!("Failed to parse GetAssertion request JSON: {err}");
                 WebAuthnError::TypeError
-            },
-        )?;
+            })?;
 
     Ok(get_assertion_request)
 }
