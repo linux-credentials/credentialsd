@@ -204,7 +204,12 @@ async fn handle_events(
     signal_tx: &Sender<Result<NfcUvMessage, Error>>,
 ) {
     let device_debug = device.to_string();
-    match device.channel(ChannelSettings::default()).await {
+    match device
+        .channel(ChannelSettings {
+            persistent_token_store: Some(super::persistent_token_store()),
+        })
+        .await
+    {
         Err(err) => {
             tracing::error!("Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}", err);
         }

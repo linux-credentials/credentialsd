@@ -5,12 +5,13 @@ pub mod usb;
 use std::{
     fmt::Debug,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     task::Poll,
 };
 
 use async_trait::async_trait;
 use futures_lite::{FutureExt, Stream, StreamExt};
+use libwebauthn::pin::persistent_token::{MemoryPersistentTokenStore, PersistentTokenStore};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
@@ -34,6 +35,14 @@ use self::{
 };
 
 pub use usb::UsbState;
+
+/// Process-wide in-memory store so a security key's pinUvAuthToken is reused across ceremonies.
+fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
+    static STORE: OnceLock<Arc<MemoryPersistentTokenStore>> = OnceLock::new();
+    STORE
+        .get_or_init(|| Arc::new(MemoryPersistentTokenStore::new()))
+        .clone()
+}
 
 #[derive(Debug)]
 struct RequestContext {
