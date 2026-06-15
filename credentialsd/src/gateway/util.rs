@@ -13,7 +13,10 @@ use libwebauthn::ops::webauthn::idl::origin::{
     Origin as LibwebauthnOrigin, RequestOrigin as LibwebauthnRequestOrigin,
 };
 use libwebauthn::ops::webauthn::psl::SystemPublicSuffixList;
-use libwebauthn::ops::webauthn::{OriginValidation, RelatedOrigins, RequestSettings};
+use libwebauthn::ops::webauthn::{
+    MaxRegistrableLabels, OriginValidation, RelatedOrigins, RequestSettings,
+    ReqwestRelatedOriginsSource,
+};
 
 use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
 use crate::webauthn::{
@@ -55,11 +58,24 @@ fn load_system_psl() -> Result<SystemPublicSuffixList, WebAuthnError> {
     })
 }
 
-fn request_settings(psl: &SystemPublicSuffixList) -> RequestSettings<'_> {
+fn build_related_origins_source() -> Result<ReqwestRelatedOriginsSource, WebAuthnError> {
+    ReqwestRelatedOriginsSource::new().map_err(|err| {
+        tracing::error!("Failed to build related-origins source: {err}");
+        WebAuthnError::NotAllowedError
+    })
+}
+
+fn request_settings<'a>(
+    psl: &'a SystemPublicSuffixList,
+    related_origins: &'a ReqwestRelatedOriginsSource,
+) -> RequestSettings<'a> {
     RequestSettings {
         origin: OriginValidation::Validate {
             public_suffix_list: psl,
-            related_origins: RelatedOrigins::Disabled,
+            related_origins: RelatedOrigins::Enabled {
+                source: related_origins,
+                max_labels: MaxRegistrableLabels::default(),
+            },
         },
     }
 }
@@ -76,7 +92,8 @@ pub(super) async fn create_credential_request_try_into_ctap2(
 
     let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
-    let settings = request_settings(&psl);
+    let related_origins = build_related_origins_source()?;
+    let settings = request_settings(&psl, &related_origins);
 
     let make_cred_request =
         MakeCredentialRequest::prepare(&request_origin, &options.request_json, &settings)
@@ -128,7 +145,8 @@ pub(super) async fn get_credential_request_try_into_ctap2(
 
     let request_origin: LibwebauthnRequestOrigin = request_environment.try_into()?;
     let psl = load_system_psl()?;
-    let settings = request_settings(&psl);
+    let related_origins = build_related_origins_source()?;
+    let settings = request_settings(&psl, &related_origins);
 
     let get_assertion_request =
         GetAssertionRequest::prepare(&request_origin, &options.request_json, &settings)
