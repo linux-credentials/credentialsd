@@ -1,6 +1,6 @@
-data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in
-data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in
-data/resources/ui/window.blp
-src/gui/view_model/gtk/mod.rs
-src/gui/view_model/gtk/device.rs
-src/gui/view_model/mod.rs
+credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.gschema.xml.in
+credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in
+credentialsd-ui/data/resources/ui/window.blp
+credentialsd-ui/src/gui/view_model/gtk/mod.rs
+credentialsd-ui/src/gui/view_model/gtk/device.rs
+credentialsd-ui/src/gui/view_model/mod.rs
