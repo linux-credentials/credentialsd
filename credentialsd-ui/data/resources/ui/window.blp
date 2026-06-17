@@ -79,7 +79,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               halign: start;
               valign: start;
               hexpand: true;
-              label: _("Scan the QR code using the camera on the device that has the passkey for {%s}");
+              label: bind template.view-model as <$CredentialManagerViewModel>.scan_qr_prompt;
               wrap: true;
             }
 
@@ -150,7 +150,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               halign: start;
               valign: start;
               xalign: 0;
-              label: _("Insert and activate your security key to use it for (%s)");
+              label: bind template.view-model as <$CredentialManagerViewModel>.activate_usb_prompt;
               wrap: true;
             }
           }
