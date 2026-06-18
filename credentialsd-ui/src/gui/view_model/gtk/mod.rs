@@ -41,6 +41,12 @@ mod imp {
         pub subtitle: RefCell<String>,
 
         #[property(get, set)]
+        pub scan_qr_prompt: RefCell<String>,
+
+        #[property(get, set)]
+        pub activate_usb_prompt: RefCell<String>,
+
+        #[property(get, set)]
         pub devices: RefCell<gtk::ListBox>,
 
         #[property(get, set)]
@@ -126,9 +132,16 @@ impl ViewModel {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_nfc_pin_entry_visible(false);
                             match update {
-                                ViewUpdate::SetTitle((title, subtitle)) => {
+                                ViewUpdate::SetTitle {
+                                    title,
+                                    subtitle,
+                                    qr_prompt,
+                                    usb_prompt,
+                                } => {
                                     view_model.set_title(title);
                                     view_model.set_subtitle(subtitle);
+                                    view_model.set_scan_qr_prompt(qr_prompt);
+                                    view_model.set_activate_usb_prompt(usb_prompt);
                                 }
                                 ViewUpdate::SetDevices(devices) => {
                                     view_model.update_devices(&devices)
@@ -176,11 +189,14 @@ impl ViewModel {
                                     let texture = view_model.draw_qr_code(&qr_code);
                                     view_model.set_qr_code_paintable(&texture);
                                     view_model.set_qr_code_visible(true);
-                                    view_model.set_qr_spinner_visible(true);
                                 }
                                 ViewUpdate::HybridConnecting => {
                                     view_model.set_qr_code_visible(false);
                                     _ = view_model.qr_code_paintable().take();
+                                    view_model.waiting_for_device(&Device {
+                                        id: "x".to_string(),
+                                        transport: Transport::HybridQr,
+                                    });
                                     view_model.set_prompt(gettext(
                                         "Connecting to your device. Make sure both devices are near each other and have Bluetooth enabled.",
                                     ));

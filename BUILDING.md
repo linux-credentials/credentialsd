@@ -23,7 +23,6 @@ To build, you need the following utility packages and development library packag
 - libpcsclite
 - libssl/openssl
 - libudev
-- desktop-file-utils
 
 Using the web extension also requires `python3-dbus-next`.
 
@@ -39,8 +38,6 @@ sudo apt update && sudo apt install \
   meson ninja-build \
   # project dependencies
   libgtk-4-dev gettext libdbus-1-dev libnfc-dev libpcsclite-dev libssl-dev libudev-dev \
-  # packaging dependencies
-  desktop-file-utils \
   # web extension dependencies
   python3-dbus-next
 ```
@@ -56,8 +53,6 @@ sudo dnf install \
   meson ninja-build \
   # project dependencies
   gtk4-devel gettext dbus-devel libnfc-devel pcsc-lite-devel openssl-devel systemd-udev \
-  # packaging dependencies
-  desktop-file-utils \
   # web extension dependencies
   python3-dbus-next
 ```

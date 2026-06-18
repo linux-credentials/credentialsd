@@ -3,5 +3,7 @@
   <gresource prefix="/xyz/iinuwa/credentialsd/CredentialsUi/">
     <file compressed="true" preprocess="xml-stripblanks">ui/window.ui</file>
     <file compressed="true">style.css</file>
+    <file>icons/scalable/emblems/passkey-logo.svg</file>
+    <file>icons/symbolic/status/check-round-outline-symbolic.svg</file>
   </gresource>
 </gresources>

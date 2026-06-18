@@ -36,7 +36,7 @@ jobs:
             curl git build-essential \
             libgtk-4-dev libclang-dev libdbus-1-dev libssl-dev libudev-dev libnfc-dev \
             libpcsclite-dev libxml2-utils \
-            desktop-file-utils gettext ninja-build python3-pip \
+            appstream-util gettext ninja-build python3-pip \
             udev zip
 
       - name: Set up mold as default linker

@@ -140,7 +140,12 @@ pub type RequestId = u32;
 // TODO: Move to credentialsd-ui
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewUpdate {
-    SetTitle((String, String)),
+    SetTitle {
+        title: String,
+        subtitle: String,
+        qr_prompt: String,
+        usb_prompt: String,
+    },
     SetDevices(Vec<Device>),
     // TODO: Fix this
     SetCredentials(Vec<crate::server::Credential>),
@@ -148,8 +153,12 @@ pub enum ViewUpdate {
     WaitingForDevice(Device),
     SelectingDevice,
 
-    NeedsPin { attempts_left: Option<u32> },
-    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsPin {
+        attempts_left: Option<u32>,
+    },
+    NeedsUserVerification {
+        attempts_left: Option<u32>,
+    },
     NeedsUserPresence,
 
     HybridNeedsQrCode(String),

@@ -8,8 +8,8 @@ template $CredentialsUiWindow: ApplicationWindow {
     orientation: vertical;
     halign: center;
     width-request: 600;
-    margin-start: 160;
-    margin-end: 160;
+    margin-start: 32;
+    margin-end: 32;
     margin-bottom: 48;
     spacing: 10;
 
@@ -23,14 +23,14 @@ template $CredentialsUiWindow: ApplicationWindow {
 
     Box {
       orientation: vertical;
-      margin-start: 48;
-      margin-end: 48;
+      margin-start: 100;
+      margin-end: 100;
 
       Label {
         label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
         wrap: true;
         use-markup: true;
-        width-request: 600;
+        width-request: 550;
 
         styles [
           "subtitle-header",
@@ -79,7 +79,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               halign: start;
               valign: start;
               hexpand: true;
-              label: _("Scan the QR code using the camera on the device that has the passkey for {%s}");
+              label: bind template.view-model as <$CredentialManagerViewModel>.scan_qr_prompt;
               wrap: true;
             }
 
@@ -90,7 +90,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               width-request: 400;
 
               Picture qr_code_pic {
-                height-request: 100;
+                height-request: 300;
                 vexpand: false;
                 halign: center;
                 valign: center;
@@ -105,6 +105,19 @@ template $CredentialsUiWindow: ApplicationWindow {
                 styles [
                   "qr-code",
                 ]
+              }
+
+              [overlay]
+              Image {
+                pixel-size: 96;
+                halign: center;
+                valign: center;
+                // TODO: Figure out why this doesn't work as icon-name: 'passkey-logo';
+                resource: "/xyz/iinuwa/credentialsd/CredentialsUi/icons/scalable/emblems/passkey-logo.svg";
+
+                accessibility {
+                  label: "FIDO passkey logo";
+                }
               }
             }
           }
@@ -137,7 +150,7 @@ template $CredentialsUiWindow: ApplicationWindow {
               halign: start;
               valign: start;
               xalign: 0;
-              label: _("Insert and activate your security key to use it for (%s)");
+              label: bind template.view-model as <$CredentialManagerViewModel>.activate_usb_prompt;
               wrap: true;
             }
           }
@@ -153,6 +166,14 @@ template $CredentialsUiWindow: ApplicationWindow {
 
           Image {
             icon-name: "media-removable-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
 
             accessibility {
               labelled-by: security_key_label;
@@ -161,12 +182,20 @@ template $CredentialsUiWindow: ApplicationWindow {
 
           Label security_key_label {
             label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
           }
 
           PasswordEntry usb_nfc_pin_entry {
             activate => $handle_usb_nfc_pin_entered() swapped;
+            show => $handle_usb_nfc_pin_shown() swapped;
             visible: bind template.view-model as <$CredentialManagerViewModel>.usb_nfc_pin_entry_visible;
             placeholder-text: _("Enter your device PIN");
+            can-focus: true;
           }
         };
       }
@@ -178,12 +207,37 @@ template $CredentialsUiWindow: ApplicationWindow {
         child: Box {
           orientation: vertical;
 
-          Spinner {
-            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+          Image {
+            icon-name: "phone-symbolic";
+            icon-size: large;
+            pixel-size: 120;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Mobile device icon";
+            }
           }
 
           Label {
             label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
+          }
+
+          Spinner {
+            height-request: 120;
+            margin-top: 16;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+            spinning: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
           }
         };
       }
@@ -214,8 +268,28 @@ template $CredentialsUiWindow: ApplicationWindow {
         child: Box {
           orientation: vertical;
 
+          Image {
+            icon-name: "face-smile-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Success icon";
+            }
+          }
+
           Label {
             label: _("Done!");
+
+            styles [
+              "instructions",
+            ]
           }
         };
       }

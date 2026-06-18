@@ -110,11 +110,20 @@ impl ViewModel {
         subtitle = subtitle.replace("%s3", &self.app_path_or_id);
         self.title = title;
         self.subtitle = subtitle;
+        let qr_prompt =
+            // TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+            gettext("Scan the QR code using the camera on the device that has the passkey for %s1")
+                .replace("%s1", &self.rp_id);
+        // TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+        let usb_prompt = gettext("Insert and activate your security key to use it for %s1")
+            .replace("%s1", &self.rp_id);
         self.tx_update
-            .send(ViewUpdate::SetTitle((
-                self.title.to_string(),
-                self.subtitle.to_string(),
-            )))
+            .send(ViewUpdate::SetTitle {
+                title: self.title.to_string(),
+                subtitle: self.subtitle.to_string(),
+                qr_prompt,
+                usb_prompt,
+            })
             .await
             .unwrap();
     }

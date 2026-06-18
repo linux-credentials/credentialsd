@@ -26,7 +26,17 @@
   padding-left: 0px;
 }
 
+.hero {
+  margin-bottom: 24px;
+}
+
 separator {
   margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+.instructions {
+  font-size: 1.2em;
+  font-weight: bold;
   margin-bottom: 12px;
 }
