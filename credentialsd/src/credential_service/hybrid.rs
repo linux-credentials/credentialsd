@@ -342,6 +342,7 @@ pub(super) mod test {
                 signature_count: 1,
                 attested_credential: None,
                 extensions: None,
+                raw: None,
             };
 
             let assertion = Assertion {
@@ -356,8 +357,6 @@ pub(super) mod test {
                 credentials_count: Some(1),
                 user_selected: None,
                 unsigned_extensions_output: None,
-                enterprise_attestation: None,
-                attestation_statement: None,
             };
             let response = GetAssertionResponse {
                 assertions: vec![assertion],
