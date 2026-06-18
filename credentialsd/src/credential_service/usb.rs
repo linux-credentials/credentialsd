@@ -8,7 +8,7 @@ use libwebauthn::{
     proto::CtapError,
     transport::{
         hid::{channel::HidChannelHandle, HidDevice},
-        Channel, Device,
+        Channel, ChannelSettings, Device,
     },
     webauthn::{Error as WebAuthnError, WebAuthn},
     UvUpdate,
@@ -85,7 +85,7 @@ impl InProcessUsbHandler {
             tokio::spawn(async move {
                 let dev = device.clone();
 
-                let res = match device.channel().await {
+                let res = match device.channel(ChannelSettings::default()).await {
                     Ok(ref mut channel) => {
                         let cancel_handle = channel.get_handle();
                         stx.send((idx, dev, cancel_handle)).await.unwrap();
@@ -290,7 +290,12 @@ async fn handle_events(
     signal_tx: &Sender<Result<UsbUvMessage, Error>>,
 ) {
     let device_debug = device.to_string();
-    match device.channel().await {
+    match device
+        .channel(ChannelSettings {
+            persistent_token_store: Some(super::persistent_token_store()),
+        })
+        .await
+    {
         Err(err) => {
             tracing::error!("Failed to open channel to USB authenticator, cannot receive user verification events: {:?}", err);
         }

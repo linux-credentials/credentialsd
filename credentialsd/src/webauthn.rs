@@ -4,7 +4,7 @@
 use std::{fmt::Display, str::FromStr};
 
 pub use libwebauthn::ops::webauthn::{
-    GetAssertionRequest, MakeCredentialRequest, RelyingPartyId, WebAuthnIDL, WebAuthnIDLResponse,
+    GetAssertionRequest, MakeCredentialRequest, RelyingPartyId, WebAuthnIDLResponse,
 };
 
 /// An application ID conforming to the
