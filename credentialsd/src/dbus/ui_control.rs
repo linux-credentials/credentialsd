@@ -89,7 +89,6 @@ impl Ceremony {
     default_service = "xyz.iinuwa.credentialsd.UiControl"
 )]
 trait CeremonyObject {
-    async fn start(&self) -> fdo::Result<()>;
     async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()>;
 
     async fn cancel(&self) -> fdo::Result<()>;
@@ -152,8 +151,6 @@ impl UiController for UiControlServiceClient {
             )
             .await?;
         tracing::debug!(path = ?handle, "Path initialized");
-        // Mark as ready to receive messages.
-        ceremony.start().await?;
         Ok(Ceremony {
             proxy: Arc::new(ceremony),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
