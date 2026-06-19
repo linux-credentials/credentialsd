@@ -110,6 +110,12 @@ impl CeremonyObject {
         &mut self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
+        let mut ui_events_task = self.ui_events_forwarder_task.lock().await;
+        if ui_events_task.is_some() {
+            tracing::warn!("Start() method called more than once. Ignoring.");
+            return Ok(());
+        }
+
         let (ui_events_tx, ui_events_rx) = channel::bounded(32);
         let (bg_events_tx, bg_events_rx) = channel::bounded(32);
         let flow_control_client = FlowControlClient {
@@ -121,7 +127,7 @@ impl CeremonyObject {
         let emitter = emitter
             .set_destination(BusName::Unique((&self.return_address).into()))
             .to_owned();
-        let ui_events_task = async_std::task::spawn(async move {
+        *ui_events_task = Some(async_std::task::spawn(async move {
             while let Ok(ui_event) = ui_events_rx.recv().await {
                 tracing::trace!(?ui_event, "Sending UI event signal to portal");
                 if emitter.user_interacted(&ui_event).await.is_err() {
@@ -131,11 +137,7 @@ impl CeremonyObject {
                     break;
                 }
             }
-        });
-        self.ui_events_forwarder_task
-            .lock()
-            .await
-            .insert(ui_events_task);
+        }));
 
         // Assuming this is a PublicKey request, require the rp_id
         let rp_id = self
