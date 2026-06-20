@@ -13,7 +13,7 @@ use zbus::{
     message::Header,
     names::{BusName, OwnedUniqueName},
     object_server::SignalEmitter,
-    zvariant::{ObjectPath, Optional, OwnedObjectPath},
+    zvariant::{Optional, OwnedObjectPath},
 };
 
 use credentialsd_common::{
