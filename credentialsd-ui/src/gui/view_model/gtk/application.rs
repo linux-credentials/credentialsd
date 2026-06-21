@@ -187,7 +187,7 @@ impl CredentialsUi {
 
     // Sets up keyboard shortcuts
     fn setup_accels(&self) {
-        self.set_accels_for_action("app.quit", &["<Control>q"]);
+        self.set_accels_for_action("app.quit", &["<Control>q", "Escape"]);
         self.set_accels_for_action("window.close", &["<Control>w"]);
     }
 

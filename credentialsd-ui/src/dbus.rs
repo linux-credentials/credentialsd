@@ -1,16 +1,19 @@
 use std::sync::Arc;
 
 use async_std::{
-    channel::{self, Sender},
+    channel::{self, Receiver, Sender},
     sync::Mutex as AsyncMutex,
     task::JoinHandle,
 };
+use futures_lite::{FutureExt, StreamExt};
 use zbus::{
-    ObjectServer, fdo, interface,
+    Connection, ObjectServer,
+    fdo::{self, DBusProxy},
+    interface,
     message::Header,
     names::{BusName, OwnedUniqueName},
     object_server::SignalEmitter,
-    zvariant::{ObjectPath, Optional},
+    zvariant::{Optional, OwnedObjectPath},
 };
 
 use credentialsd_common::{
@@ -24,7 +27,11 @@ use credentialsd_common::{
 use crate::client::FlowControlClient;
 
 pub struct CredentialPortalBackend {
-    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
+    pub request_tx: Sender<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,8 +53,10 @@ pub(crate) struct UiContext {
 impl CredentialPortalBackend {
     async fn initialize(
         &self,
+        #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        handle: OwnedObjectPath,
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -58,14 +67,62 @@ impl CredentialPortalBackend {
         app_pid: u32,
         app_path: String,
         options: PortalBackendOptions,
-    ) -> fdo::Result<ObjectPath<'_>> {
-        let Some(sender) = header.sender() else {
+    ) -> fdo::Result<()> {
+        let Some(sender) = header.sender().map(|h| h.to_owned()) else {
             return Err(fdo::Error::BadAddress("Sender not found".to_string()));
         };
-        let object_path = ObjectPath::from_string_unchecked(format!(
-            "/org/freedesktop/portal/Credential/{}",
-            request_id
-        ));
+
+        // Set up cancellation background task.
+        let (cancel_task, client_cancelled_tx, gui_stopped_tx, cancel_gui_rx) = {
+            let sender = sender.clone();
+            let object_path = handle.clone();
+            let (client_cancelled_tx, client_cancelled_rx) = channel::bounded(1);
+            let (gui_stopped_tx, gui_stopped_rx) = channel::bounded(1);
+            let (cancel_gui_tx, cancel_gui_rx) = channel::bounded(1);
+            let client_disconnected_rx =
+                notify_on_disconnected(connection, sender.clone().into()).await?;
+            let object_server = object_server.clone();
+            let cancel_task = async_std::task::spawn(async move {
+                let disconnect_fut = client_disconnected_rx.recv();
+                let cancel_fut = client_cancelled_rx.recv();
+                let gui_stopped_fut = gui_stopped_rx.recv();
+
+                match disconnect_fut.race(cancel_fut).race(gui_stopped_fut).await {
+                    Ok(Ok(())) => {
+                        tracing::debug!(%sender, "Client cancelled or disconnected, dropping request")
+                    }
+                    Ok(Err(err)) => {
+                        tracing::error!(%sender, %err, "Failed to watch for client disconnection")
+                    }
+                    Err(_) => {
+                        tracing::error!(%sender, "Client disconnection task dropped prematurely")
+                    }
+                }
+
+                if cancel_gui_tx.send(()).await.is_err() {
+                    tracing::error!("Failed to send cancellation request to GUI");
+                };
+                if let Err(err) = object_server
+                    .remove::<CeremonyObject, _>(&object_path)
+                    .await
+                {
+                    tracing::warn!(%object_path, %err, "Failed to remove Ceremony request");
+                }
+                if let Err(err) = object_server
+                    .remove::<CeremonyRequest, _>(&object_path)
+                    .await
+                {
+                    tracing::warn!(%object_path, %err, "Failed to remove org.freedesktop.impl.portal.Request");
+                }
+            });
+            (
+                cancel_task,
+                client_cancelled_tx,
+                gui_stopped_tx,
+                cancel_gui_rx,
+            )
+        };
+
         let ui_context = UiContext {
             parent_window: parent_window.into(),
             origin,
@@ -78,35 +135,91 @@ impl CredentialPortalBackend {
             app_path,
             options,
         };
-        let ceremony = CeremonyObject {
+        let ui_events_forwarder_task = Arc::new(AsyncMutex::new(None));
+        let mut ceremony = CeremonyObject {
             ui_context,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
-            ui_events_forwarder_task: None,
+            ui_events_forwarder_task: ui_events_forwarder_task.clone(),
             bg_events_tx: None,
         };
-        object_server.at(object_path.clone(), ceremony).await?;
+        let request = CeremonyRequest {
+            ui_events_forwarder_task,
+            cancel_task: Arc::new(AsyncMutex::new(Some(cancel_task))),
+            client_cancelled_tx,
+        };
+        object_server.at(handle.clone(), request).await?;
+
+        let emitter = SignalEmitter::new(connection, handle.clone())?;
+        ceremony
+            .start(gui_stopped_tx, cancel_gui_rx, emitter.to_owned())
+            .await?;
+        object_server.at(handle, ceremony).await?;
+
         tracing::debug!("Received UI launch request");
-        Ok(object_path)
+        Ok(())
     }
+}
+
+async fn notify_on_disconnected(
+    conn: &Connection,
+    bus_name: BusName<'static>,
+) -> Result<Receiver<fdo::Result<()>>, fdo::Error> {
+    let (tx, rx) = channel::bounded(1);
+    let dbus = DBusProxy::new(conn).await?;
+
+    if !dbus.name_has_owner((&bus_name).into()).await? {
+        _ = tx.send(Ok(())).await;
+        tracing::trace!(%bus_name, "Name not connected.");
+        return Ok(rx);
+    }
+    async_std::task::spawn(async move {
+        async fn watch(dbus: DBusProxy<'_>, bus_name: BusName<'_>) -> fdo::Result<()> {
+            let mut stream = dbus.receive_name_owner_changed().await?;
+            while let Some(signal) = stream.next().await {
+                let args = signal.args()?;
+                if args.name == bus_name && args.new_owner.is_none() {
+                    tracing::trace!(%bus_name, "Name owner disconnected.");
+                    return Ok(());
+                }
+            }
+            Err(fdo::Error::Disconnected(format!(
+                "Disconnected from bus while waiting for name owner change on {bus_name}"
+            )))
+        }
+        let res = watch(dbus, bus_name).await;
+        _ = tx.send(res).await;
+    });
+    Ok(rx)
 }
 
 pub struct CeremonyObject {
     ui_context: UiContext,
-    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
+    pub request_tx: Sender<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
     pub return_address: OwnedUniqueName,
-    ui_events_forwarder_task: Option<JoinHandle<()>>,
+    ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     bg_events_tx: Option<Sender<BackgroundEvent>>,
 }
 
-#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.Ceremony")]
 impl CeremonyObject {
     /// Start the UI ceremony with an initial set of available credential interfaces.
     /// Call this method after subscribing to the signals.
     async fn start(
         &mut self,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        stopped_tx: Sender<fdo::Result<()>>,
+        cancel_rx: Receiver<()>,
+        emitter: SignalEmitter<'static>,
     ) -> fdo::Result<()> {
+        let mut ui_events_task = self.ui_events_forwarder_task.lock().await;
+        if ui_events_task.is_some() {
+            tracing::warn!("Start() method called more than once. Ignoring.");
+            return Ok(());
+        }
+
         let (ui_events_tx, ui_events_rx) = channel::bounded(32);
         let (bg_events_tx, bg_events_rx) = channel::bounded(32);
         let flow_control_client = FlowControlClient {
@@ -118,18 +231,21 @@ impl CeremonyObject {
         let emitter = emitter
             .set_destination(BusName::Unique((&self.return_address).into()))
             .to_owned();
-        let ui_events_task = async_std::task::spawn(async move {
+        *ui_events_task = Some(async_std::task::spawn(async move {
             while let Ok(ui_event) = ui_events_rx.recv().await {
                 tracing::trace!(?ui_event, "Sending UI event signal to portal");
                 if emitter.user_interacted(&ui_event).await.is_err() {
-                    tracing::error!("Failed to send UI event signal.");
-                    // TODO: we need to cancel the request here, so we need a
-                    // channel back to the ceremony object to send the cancellation.
+                    tracing::trace!("Failed to send UI event signal.");
                     break;
                 }
             }
-        });
-        self.ui_events_forwarder_task = Some(ui_events_task);
+            tracing::trace!("ui_events_task ending");
+            if stopped_tx.send(Ok(())).await.is_err() {
+                tracing::error!(
+                    "Failed to notify CredentialPortalBackend that request is ready for cleanup"
+                );
+            };
+        }));
 
         // Assuming this is a PublicKey request, require the rp_id
         let rp_id = self
@@ -159,6 +275,7 @@ impl CeremonyObject {
                 window_handle: self.ui_context.parent_window.clone().into(),
             },
             Arc::new(AsyncMutex::new(flow_control_client)),
+            cancel_rx,
         );
         if self.request_tx.send(req).await.is_err() {
             tracing::error!("Received message to start flow, but GUI thread is not listening.");
@@ -166,7 +283,10 @@ impl CeremonyObject {
         }
         Ok(())
     }
+}
 
+#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.Ceremony")]
+impl CeremonyObject {
     async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()> {
         tracing::trace!(?event, "Received background event");
         if let Some(tx) = &self.bg_events_tx {
@@ -180,24 +300,32 @@ impl CeremonyObject {
         return Err(fdo::Error::Failed("Failed to handle event".to_string()));
     }
 
-    async fn cancel(
-        &mut self,
-        #[zbus(header)] header: Header<'_>,
-        #[zbus(object_server)] object_server: &ObjectServer,
-    ) -> fdo::Result<()> {
-        if let Some(task) = self.ui_events_forwarder_task.take() {
-            task.cancel().await;
-        }
-        if let Some(path) = header.path() {
-            // TODO: Send clean up task to GUI thread.
-            object_server.remove::<CeremonyObject, _>(path).await?;
-        }
-        Ok(())
-    }
-
     #[zbus(signal)]
     async fn user_interacted(
         emitter: SignalEmitter<'_>,
         event: &UserInteractedEvent,
     ) -> zbus::Result<()>;
+}
+
+struct CeremonyRequest {
+    ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
+    cancel_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
+    client_cancelled_tx: Sender<fdo::Result<()>>,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.Request")]
+impl CeremonyRequest {
+    async fn close(&mut self) -> fdo::Result<()> {
+        tracing::debug!("Client requested cancellation");
+        if let Some(task) = self.ui_events_forwarder_task.lock().await.take() {
+            task.cancel().await;
+        }
+        if let Some(task) = self.cancel_task.lock().await.take() {
+            task.cancel().await;
+        }
+        if self.client_cancelled_tx.send(Ok(())).await.is_err() {
+            tracing::warn!("Request already cancelled");
+        }
+        Ok(())
+    }
 }

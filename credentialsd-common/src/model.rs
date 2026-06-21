@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use zvariant::{Optional, OwnedFd, SerializeDict, Type};
+use zvariant::{DeserializeDict, Optional, OwnedFd, SerializeDict, Type};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
@@ -44,7 +44,8 @@ pub enum Operation {
     PublicKeyGet,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
 pub struct PortalBackendOptions {
     /// A token that can be used to activate the UI window.
     pub activation_token: Optional<String>,

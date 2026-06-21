@@ -149,6 +149,7 @@ impl ViewModel {
         };
         let mut all_events = view_events.merge(bg_events.map(Event::Background));
         while let Some(event) = all_events.next().await {
+            tracing::trace!("View event received: {event:?}");
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
@@ -185,6 +186,7 @@ impl ViewModel {
                     }
                 }
                 Event::View(ViewEvent::UserCancelled) => {
+                    self.tx_update.send(ViewUpdate::Cancelled).await.unwrap();
                     break;
                 }
 
@@ -336,7 +338,7 @@ impl ViewModel {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
     CredentialSelected(String),
@@ -344,6 +346,7 @@ pub enum ViewEvent {
     UserCancelled,
 }
 
+#[derive(Debug)]
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
