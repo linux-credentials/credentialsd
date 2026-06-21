@@ -27,7 +27,11 @@ use credentialsd_common::{
 use crate::client::FlowControlClient;
 
 pub struct CredentialPortalBackend {
-    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
+    pub request_tx: Sender<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,11 +73,12 @@ impl CredentialPortalBackend {
         };
 
         // Set up cancellation background task.
-        let (cancel_task, client_cancelled_tx, gui_stopped_tx) = {
+        let (cancel_task, client_cancelled_tx, gui_stopped_tx, cancel_gui_rx) = {
             let sender = sender.clone();
             let object_path = handle.clone();
             let (client_cancelled_tx, client_cancelled_rx) = channel::bounded(1);
             let (gui_stopped_tx, gui_stopped_rx) = channel::bounded(1);
+            let (cancel_gui_tx, cancel_gui_rx) = channel::bounded(1);
             let client_disconnected_rx =
                 notify_on_disconnected(connection, sender.clone().into()).await?;
             let object_server = object_server.clone();
@@ -94,7 +99,9 @@ impl CredentialPortalBackend {
                     }
                 }
 
-                // TODO: Signal GUI thread of cancellation
+                if cancel_gui_tx.send(()).await.is_err() {
+                    tracing::error!("Failed to send cancellation request to GUI");
+                };
                 if let Err(err) = object_server
                     .remove::<CeremonyObject, _>(&object_path)
                     .await
@@ -108,7 +115,12 @@ impl CredentialPortalBackend {
                     tracing::warn!(%object_path, %err, "Failed to remove org.freedesktop.impl.portal.Request");
                 }
             });
-            (cancel_task, client_cancelled_tx, gui_stopped_tx)
+            (
+                cancel_task,
+                client_cancelled_tx,
+                gui_stopped_tx,
+                cancel_gui_rx,
+            )
         };
 
         let ui_context = UiContext {
@@ -139,7 +151,9 @@ impl CredentialPortalBackend {
         object_server.at(handle.clone(), request).await?;
 
         let emitter = SignalEmitter::new(connection, handle.clone())?;
-        ceremony.start(gui_stopped_tx, emitter.to_owned()).await?;
+        ceremony
+            .start(gui_stopped_tx, cancel_gui_rx, emitter.to_owned())
+            .await?;
         object_server.at(handle, ceremony).await?;
 
         tracing::debug!("Received UI launch request");
@@ -181,7 +195,11 @@ async fn notify_on_disconnected(
 
 pub struct CeremonyObject {
     ui_context: UiContext,
-    pub request_tx: Sender<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
+    pub request_tx: Sender<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
     pub return_address: OwnedUniqueName,
     ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     bg_events_tx: Option<Sender<BackgroundEvent>>,
@@ -193,6 +211,7 @@ impl CeremonyObject {
     async fn start(
         &mut self,
         stopped_tx: Sender<fdo::Result<()>>,
+        cancel_rx: Receiver<()>,
         emitter: SignalEmitter<'static>,
     ) -> fdo::Result<()> {
         let mut ui_events_task = self.ui_events_forwarder_task.lock().await;
@@ -256,6 +275,7 @@ impl CeremonyObject {
                 window_handle: self.ui_context.parent_window.clone().into(),
             },
             Arc::new(AsyncMutex::new(flow_control_client)),
+            cancel_rx,
         );
         if self.request_tx.send(req).await.is_err() {
             tracing::error!("Received message to start flow, but GUI thread is not listening.");

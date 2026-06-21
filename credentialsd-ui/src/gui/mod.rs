@@ -15,17 +15,25 @@ use crate::client::FlowControlClient;
 use view_model::ViewEvent;
 
 pub(super) fn start_gui_thread(
-    rx: Receiver<(ViewRequest, Arc<AsyncMutex<FlowControlClient>>)>,
+    rx: Receiver<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new().name("gui".into()).spawn(move || {
         // D-Bus received a request and needs a window open
-        while let Ok((view_request, flow_controller)) = rx.recv_blocking() {
-            run_gui(flow_controller, view_request);
+        while let Ok((view_request, flow_controller, cancel_rx)) = rx.recv_blocking() {
+            run_gui(flow_controller, view_request, cancel_rx);
         }
     })
 }
 
-fn run_gui(flow_controller: Arc<AsyncMutex<FlowControlClient>>, request: ViewRequest) {
+fn run_gui(
+    flow_controller: Arc<AsyncMutex<FlowControlClient>>,
+    request: ViewRequest,
+    cancel_rx: Receiver<()>,
+) {
     let parent_window: Option<WindowHandle> = request.window_handle.as_ref().and_then(|h| {
         h.to_string()
             .try_into()
@@ -35,13 +43,21 @@ fn run_gui(flow_controller: Arc<AsyncMutex<FlowControlClient>>, request: ViewReq
 
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
+    let tx_event2 = tx_event.clone();
+    let cancel_task = async_std::task::spawn(async move {
+        if let Ok(_) = cancel_rx.recv().await {
+            if tx_event2.send(ViewEvent::UserCancelled).await.is_err() {
+                tracing::error!("Failed to send cancellation to view model");
+            }
+        }
+    });
     let event_loop = async_std::task::spawn(async move {
-        let request_id = request.id;
         let mut vm =
             view_model::ViewModel::new(request, flow_controller.clone(), rx_event, tx_update);
         vm.start_event_loop().await;
         tracing::debug!("Finishing user request.");
         // If cancellation fails, that's fine.
+        cancel_task.cancel().await;
         let _ = flow_controller.lock().await.cancel_request().await;
         // TODO: Clean up flow_object when request completes
     });

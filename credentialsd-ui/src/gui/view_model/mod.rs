@@ -186,6 +186,7 @@ impl ViewModel {
                     }
                 }
                 Event::View(ViewEvent::UserCancelled) => {
+                    self.tx_update.send(ViewUpdate::Cancelled).await.unwrap();
                     break;
                 }
 
