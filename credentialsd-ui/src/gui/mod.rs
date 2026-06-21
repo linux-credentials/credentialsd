@@ -5,12 +5,9 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
-use credentialsd_common::{
-    model::ViewUpdate,
-    server::{ViewRequest, WindowHandle},
-};
+use credentialsd_common::{model::ViewUpdate, server::WindowHandle};
 
-use crate::client::FlowControlClient;
+use crate::{ViewRequest, client::FlowControlClient};
 
 use view_model::ViewEvent;
 

@@ -66,7 +66,6 @@ impl CredentialPortalGateway {
         cred_type: CredentialType,
         options: CreateCredentialPortalOptions,
         claimed_app_id: String,
-        claimed_app_display_name: Optional<String>,
     ) -> PortalResult<CreateCredentialResponse, Error> {
         let CreateCredentialPortalOptions {
             activation_token,
@@ -86,7 +85,6 @@ impl CredentialPortalGateway {
             connection,
             &header,
             claimed_app_id,
-            claimed_app_display_name.into(),
             origin.clone(),
             top_origin.clone().into(),
         )
@@ -135,7 +133,6 @@ impl CredentialPortalGateway {
         origin: String,
         options: GetCredentialPortalOptions,
         claimed_app_id: String,
-        claimed_app_display_name: Optional<String>,
     ) -> PortalResult<GetCredentialResponse, Error> {
         let GetCredentialPortalOptions {
             activation_token,
@@ -146,7 +143,6 @@ impl CredentialPortalGateway {
             connection,
             &header,
             claimed_app_id,
-            claimed_app_display_name.into(),
             origin.clone(),
             top_origin.clone().into(),
         )
@@ -346,7 +342,6 @@ async fn validate_app_details(
     connection: &Connection,
     header: &Header<'_>,
     claimed_app_id: String,
-    claimed_app_display_name: Option<String>,
     claimed_origin: String,
     claimed_top_origin: Option<String>,
 ) -> Result<RequestContext, Error> {
@@ -370,7 +365,6 @@ async fn validate_app_details(
         tracing::warn!("Invalid app ID passed: {claimed_app_id}");
         return Err(Error::SecurityError);
     };
-    let display_name = claimed_app_display_name.unwrap_or_default();
 
     // Verify that the origin is valid for the given app ID.
     let claimed_origin = claimed_origin.parse().map_err(|err| {
@@ -389,7 +383,6 @@ async fn validate_app_details(
 
     Ok(RequestContext {
         app_id,
-        app_name: display_name,
         pid,
         request_kind,
     })

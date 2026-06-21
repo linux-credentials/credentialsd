@@ -207,7 +207,6 @@ CreateCredentialRequest(
         <type_specific_fields>
     },
     IN app_id s,
-    IN app_display_name s
 )
 ```
 
@@ -261,7 +260,6 @@ type.
             public_key: s  // WebAuthn credential attestation JSON
         },
         IN app_id s,
-        IN app_display_name s
     )
 
 ### Response
@@ -328,7 +326,6 @@ GetCredentialRequest (
         public_key: s
     },
     IN app_id s,
-    IN app_display_name s
 )
 ```
 

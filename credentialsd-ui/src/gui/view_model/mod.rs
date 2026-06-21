@@ -7,15 +7,14 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
-use credentialsd_common::model::RequestingApplication;
-use credentialsd_common::server::{BackgroundEvent, Credential, ViewRequest};
+use credentialsd_common::server::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use credentialsd_common::model::{Device, HybridState, Operation, Transport, ViewUpdate};
 
-use crate::client::FlowControlClient;
+use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
 
 #[derive(Debug)]
 pub(crate) struct ViewModel {
