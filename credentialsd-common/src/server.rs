@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{Device, Operation, RequestId, RequestingApplication, UserInteractedEvent};
+use crate::model::{Device, Operation, RequestId, UserInteractedEvent};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U32, &Signature::Variant],
@@ -506,26 +506,6 @@ impl<'de> Deserialize<'de> for UserInteractedEvent {
             ))
         })
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct ViewRequest {
-    pub operation: Operation,
-
-    /// ID of the request.
-    pub id: RequestId,
-
-    /// The RP ID
-    pub rp_id: String,
-
-    /// Details about the application requesting credentials.
-    pub requesting_app: RequestingApplication,
-
-    /// Initial list of device interfaces that may provide credentials.
-    pub initial_devices: Vec<Device>,
-
-    /// Client window handle.
-    pub window_handle: Optional<WindowHandle>,
 }
 
 #[derive(Clone, Debug, PartialEq, Type)]

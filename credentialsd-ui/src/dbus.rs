@@ -6,6 +6,8 @@ use async_std::{
     task::JoinHandle,
 };
 use futures_lite::{FutureExt, StreamExt};
+use gio_unix::DesktopAppInfo;
+use gio_unix::prelude::AppInfoExt;
 use zbus::{
     Connection, ObjectServer,
     fdo::{self, DBusProxy},
@@ -17,14 +19,11 @@ use zbus::{
 };
 
 use credentialsd_common::{
-    model::{
-        Device, Operation, PortalBackendOptions, RequestId, RequestingApplication,
-        UserInteractedEvent,
-    },
-    server::{BackgroundEvent, ViewRequest, WindowHandle},
+    model::{Device, Operation, PortalBackendOptions, RequestId, UserInteractedEvent},
+    server::{BackgroundEvent, WindowHandle},
 };
 
-use crate::client::FlowControlClient;
+use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
 
 pub struct CredentialPortalBackend {
     pub request_tx: Sender<(
@@ -63,7 +62,6 @@ impl CredentialPortalBackend {
         request_id: RequestId,
         devices: Vec<Device>,
         app_id: String,
-        app_display_name: String,
         app_pid: u32,
         app_path: String,
         options: PortalBackendOptions,
@@ -122,6 +120,15 @@ impl CredentialPortalBackend {
                 cancel_gui_rx,
             )
         };
+
+        let app_display_name = DesktopAppInfo::new(&format!("{app_id}.desktop"))
+            .ok_or_else(|| {
+                fdo::Error::Failed(format!(
+                    "Failed to retrieve app name for {app_id}: Could not find desktop file"
+                ))
+            })?
+            .display_name()
+            .to_string();
 
         let ui_context = UiContext {
             parent_window: parent_window.into(),
@@ -268,7 +275,7 @@ impl CeremonyObject {
                 rp_id,
                 requesting_app: RequestingApplication {
                     path_or_app_id: self.ui_context.app_id.clone(),
-                    name: Some(self.ui_context.app_display_name.clone()).into(),
+                    name: self.ui_context.app_display_name.clone(),
                     pid: self.ui_context.app_pid,
                 },
                 initial_devices: self.ui_context.devices.clone(),

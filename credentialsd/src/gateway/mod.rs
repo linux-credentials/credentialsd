@@ -10,7 +10,7 @@ use std::{
 };
 
 use credentialsd_common::{
-    model::{RequestingApplication, WebAuthnError},
+    model::WebAuthnError,
     server::{
         CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
         GetCredentialResponse, WindowHandle,
@@ -21,7 +21,7 @@ use zbus::Connection;
 
 use crate::{
     dbus::CredentialRequestController,
-    model::{CredentialRequest, CredentialResponse},
+    model::{ClientDetails, CredentialRequest, CredentialResponse},
     webauthn::{AppId, NavigationContext, Origin},
 };
 use util::{
@@ -55,16 +55,16 @@ enum RequestKind {
 #[derive(Debug)]
 struct RequestContext {
     app_id: AppId,
-    app_name: String,
     pid: u32,
     request_kind: RequestKind,
 }
 
-impl From<RequestContext> for RequestingApplication {
+impl From<RequestContext> for ClientDetails {
     fn from(value: RequestContext) -> Self {
-        RequestingApplication {
-            path_or_app_id: value.app_id.as_ref().to_string(),
-            name: Some(value.app_name).into(),
+        ClientDetails {
+            app_id: value.app_id.as_ref().to_string(),
+            // TODO: put path in RequestContext
+            path: value.app_id.as_ref().to_string(),
             pid: value.pid,
         }
     }

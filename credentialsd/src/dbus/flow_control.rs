@@ -11,8 +11,8 @@ use std::{
 
 use async_trait::async_trait;
 use credentialsd_common::model::{
-    Error as CredentialServiceError, Operation, PortalBackendOptions, RequestingApplication,
-    UserInteractedEvent, WebAuthnError,
+    Error as CredentialServiceError, Operation, PortalBackendOptions, UserInteractedEvent,
+    WebAuthnError,
 };
 use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use futures_lite::{Stream, StreamExt};
@@ -24,7 +24,6 @@ use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice};
 use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
@@ -32,9 +31,14 @@ use crate::{
     dbus::ui_control::UiController,
     model::{CredentialRequest, CredentialResponse},
 };
+use crate::{
+    credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice},
+    model::ClientDetails,
+};
+
 pub struct UiRequestContext {
     request: CredentialRequest,
-    app: RequestingApplication,
+    app: ClientDetails,
     /// Client window handle
     window_handle: Option<WindowHandle>,
     activation_token: Option<String>,
@@ -83,7 +87,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     svc: Arc<AsyncMutex<M>>,
     ui_control_client: UC,
     msg: CredentialRequest,
-    requesting_app: RequestingApplication,
+    requesting_app: ClientDetails,
     window_handle: Option<WindowHandle>,
     activation_token: Option<String>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
@@ -118,12 +122,11 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .await
         .unwrap_or_default();
 
-    let RequestingApplication {
-        path_or_app_id,
-        name: app_name,
+    let ClientDetails {
+        app_id,
+        path: app_path,
         pid: app_pid,
     } = requesting_app;
-    let app_name = Option::from(app_name).unwrap_or_else(|| "TODO: Require app name".to_string());
     let handle: OwnedObjectPath = format!(
         "/org/freedesktop/portal/desktop/request/CREDENTIALSD_{}",
         rand::random::<u32>()
@@ -138,11 +141,9 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             operation,
             request_id,
             initial_devices,
-            path_or_app_id.clone(),
-            app_name,
+            app_id,
             app_pid,
-            // TODO: Make path and app ID separate.
-            path_or_app_id,
+            app_path,
             PortalBackendOptions {
                 activation_token: activation_token.into(),
                 top_origin: top_origin.into(),
@@ -265,7 +266,7 @@ fn forward_background_event_stream(
 pub trait CredentialRequestController {
     async fn request_credential(
         &self,
-        requesting_app: RequestingApplication,
+        requesting_app: ClientDetails,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
@@ -280,7 +281,7 @@ pub struct CredentialRequestControllerClient {
 impl CredentialRequestController for CredentialRequestControllerClient {
     async fn request_credential(
         &self,
-        app: RequestingApplication,
+        app: ClientDetails,
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
