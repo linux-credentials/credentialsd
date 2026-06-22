@@ -7,6 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
+use credentialsd_common::memfd::read_secret;
 use credentialsd_common::server::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
@@ -33,10 +34,7 @@ pub(crate) struct ViewModel {
     devices: Vec<Device>,
     selected_device: Option<Device>,
 
-    // providers: Vec<Provider>,
-    hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
-    // hybrid_linked_state: HybridState,
 }
 
 impl ViewModel {
@@ -67,7 +65,6 @@ impl ViewModel {
             subtitle: String::default(),
             devices,
             selected_device: None,
-            hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
         }
     }
@@ -300,7 +297,8 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::HybridIdle) => {
                     self.hybrid_qr_code_data = None;
                 }
-                Event::Background(BackgroundEvent::HybridStarted(qr_code)) => {
+                Event::Background(BackgroundEvent::HybridStarted(qr_code_fd)) => {
+                    let qr_code = read_secret(qr_code_fd.into()).unwrap();
                     self.hybrid_qr_code_data = Some(qr_code.clone().into_bytes());
                     self.tx_update
                         .send(ViewUpdate::HybridNeedsQrCode(qr_code))

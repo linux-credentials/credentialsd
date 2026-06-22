@@ -21,7 +21,11 @@ impl FlowControlClient {
     }
 
     pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-        let fd = match write_secret(pin.into_bytes(), CTAP_CLIENT_SECRET_MAX_LEN) {
+        if pin.len() > CTAP_CLIENT_SECRET_MAX_LEN {
+            tracing::error!("PIN is too long");
+            return Err(());
+        }
+        let fd = match write_secret(pin.into_bytes()) {
             Ok(fd) => fd,
             Err(err) => {
                 tracing::error!(%err, "Failed to write secret to file descriptor");

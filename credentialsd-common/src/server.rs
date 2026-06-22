@@ -3,12 +3,12 @@
 use std::{collections::HashMap, fmt::Display};
 
 use serde::{
-    Deserialize, Serialize,
     de::{DeserializeSeed, Error, Visitor},
+    Deserialize, Serialize,
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional, OwnedFd, OwnedValue,
-    SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
+    self, signature::Fields, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional,
+    OwnedFd, OwnedValue, SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value,
 };
 
 use crate::model::{Device, Operation, RequestId, UserInteractedEvent};
@@ -55,7 +55,7 @@ const USER_INTERACTED_EVENT_CREDENTIAL_SELECTED: u32 = 0x05;
 const USER_INTERACTED_EVENT_REQUEST_CANCELLED: u32 = 0x06;
 
 /// Flattened enum BackgroundEvent for sending across D-Bus.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum BackgroundEvent {
     CeremonyCompleted,
     NeedsPin { attempts_left: Option<u32> },
@@ -64,7 +64,7 @@ pub enum BackgroundEvent {
     SelectingCredential { creds: Vec<Credential> },
 
     HybridIdle,
-    HybridStarted(String),
+    HybridStarted(OwnedFd),
     HybridConnecting,
     HybridConnected,
 
@@ -138,7 +138,7 @@ impl From<&BackgroundEvent> for Structure<'_> {
                 Some(Value::U32(attempts_left.map(u32::from).unwrap_or(u32::MAX)))
             }
             BackgroundEvent::SelectingCredential { creds } => Some(Value::Array(creds.into())),
-            BackgroundEvent::HybridStarted(qr_data) => Some(Value::Str(qr_data.into())),
+            BackgroundEvent::HybridStarted(qr_data_fd) => Some(Value::Fd(qr_data_fd.into())),
             // Empty
             BackgroundEvent::CeremonyCompleted => None,
             BackgroundEvent::NeedsUserPresence => None,
@@ -215,8 +215,8 @@ impl TryFrom<&Structure<'_>> for BackgroundEvent {
 
             BACKGROUND_EVENT_HYBRID_IDLE => Ok(Self::HybridIdle),
             BACKGROUND_EVENT_HYBRID_STARTED => {
-                let qr_data = value.downcast_ref::<&str>()?;
-                Ok(Self::HybridStarted(qr_data.to_string()))
+                let qr_data_fd = value.downcast_ref::<Fd>()?.try_to_owned()?;
+                Ok(Self::HybridStarted(qr_data_fd.into()))
             }
             BACKGROUND_EVENT_HYBRID_CONNECTING => Ok(Self::HybridConnecting),
             BACKGROUND_EVENT_HYBRID_CONNECTED => Ok(Self::HybridConnected),
@@ -636,9 +636,11 @@ fn tag_value_to_struct(tag: u32, value: Option<Value<'_>>) -> Structure<'static>
 
 #[cfg(test)]
 mod test {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
     use zvariant::{
-        Type,
         serialized::{Context, Data, Format},
+        Type,
     };
 
     use super::{BackgroundEvent, Credential};
@@ -656,25 +658,28 @@ mod test {
 
     #[test]
     fn test_round_trip_background_hybrid_event() {
-        let event1 = BackgroundEvent::HybridStarted("FIDO:/1234".to_string());
+        let mut fds = [0; 2];
+        unsafe {
+            libc::pipe(fds.as_mut_ptr());
+        }
+        // Wrap the raw fds into safe OwnedFd instances
+        let mock_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        let _mock_fd2 = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+
+        println!("mock_fd: {mock_fd:?}");
+        let event1 = BackgroundEvent::HybridStarted(mock_fd.into());
         let ctx = zvariant::serialized::Context::new_dbus(zvariant::BE, 0);
         assert_eq!("(uv)", BackgroundEvent::SIGNATURE.to_string());
         let data = zvariant::to_bytes(ctx, &event1).unwrap();
-        let expected = b"\x00\x00\x00\x21\x01s\0\0\0\0\0\x0aFIDO:/1234\0";
+        println!("data: {data:?}");
+        // handle value is 0_u32 because it's the index into the list of fds in the message. Since
+        // there's only one, it will be 0.
+        let expected = b"\x00\x00\x00\x21\x01h\0\0\0\0\0\0";
         assert_eq!(expected, data.bytes());
         let event2 = data.deserialize().unwrap().0;
-        assert_eq!(event1, event2);
-    }
-
-    #[test]
-    fn test_deserialize_background_hybrid_event() {
-        let bytes = b"\x00\x00\x00\x21\x01s\0\0\0\0\0\x0aFIDO:/1234\0";
-        let data = Data::new(bytes, Context::new(Format::DBus, zvariant::BE, 0));
-        let event: BackgroundEvent = data.deserialize().unwrap().0;
-        assert!(matches!(
-            event,
-            BackgroundEvent::HybridStarted(ref s) if s == "FIDO:/1234"
-        ));
+        // I believe that the fd is `dup()`'d through the serialization/deserialization process, so
+        // we can't compare the numbers for equality.
+        assert!(matches!(event2, BackgroundEvent::HybridStarted(_)));
     }
 
     #[test]

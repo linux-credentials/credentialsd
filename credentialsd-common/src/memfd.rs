@@ -65,23 +65,24 @@ pub fn read_secret(pin_fd: std::os::fd::OwnedFd) -> Result<String, std::io::Erro
     })
 }
 
-pub fn write_secret(mut secret: Vec<u8>, max_len: usize) -> Result<OwnedFd, std::io::Error> {
-    let bytes_len = if secret.len() <= max_len {
-        secret.len() as u8
-    } else {
+pub fn write_secret(mut secret: Vec<u8>) -> Result<OwnedFd, std::io::Error> {
+    if secret.len() > 4096 {
         return Err(io::Error::new(
             ErrorKind::FileTooLarge,
             "value is too large",
         ));
-    };
+    }
 
     // Open memfd_secret
-    let ret: i64 = unsafe { libc::syscall(SYS_memfd_secret, O_CLOEXEC) };
-    if ret == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let fd = i32::try_from(ret).map_err(|_| std::io::Error::other("invalid file descriptor"))?;
-    if unsafe { ftruncate(fd, bytes_len as off_t) } == -1 {
+    let fd = {
+        let ret = unsafe { libc::syscall(SYS_memfd_secret, O_CLOEXEC) };
+        if ret == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        unsafe { OwnedFd::from_raw_fd(ret as i32) }
+    };
+
+    if unsafe { ftruncate(fd.as_raw_fd(), secret.len() as off_t) } == -1 {
         return Err(std::io::Error::last_os_error());
     }
 
@@ -91,13 +92,12 @@ pub fn write_secret(mut secret: Vec<u8>, max_len: usize) -> Result<OwnedFd, std:
             4096,
             PROT_READ | PROT_WRITE,
             MAP_SHARED,
-            fd,
+            fd.as_raw_fd(),
             0,
         );
         if ptr == usize::MAX as *mut c_void {
             return Err(std::io::Error::last_os_error());
         }
-        // ptr as *mut u8
         ptr
     };
 
@@ -113,6 +113,5 @@ pub fn write_secret(mut secret: Vec<u8>, max_len: usize) -> Result<OwnedFd, std:
     secret.zeroize();
     drop(secret);
 
-    let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-    Ok(owned_fd)
+    Ok(fd)
 }
