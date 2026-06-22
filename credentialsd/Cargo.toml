@@ -12,7 +12,6 @@ base64 = "0.22.1"
 credentialsd-common = { path = "../credentialsd-common" }
 futures = "0.3.32"
 futures-lite.workspace = true
-libc.workspace = true
 libwebauthn = { version = "0.8.0", features = ["nfc-backend-libnfc", "nfc-backend-pcsc", "reqwest-related-origins-source"] }
 # 0.6.1 fails to build with non-vendored library.
 # https://github.com/alexrsagen/rs-nfc1/issues/15

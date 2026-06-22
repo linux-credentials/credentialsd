@@ -799,7 +799,6 @@ dependencies = [
  "futures",
  "futures-lite",
  "gio 0.21.5",
- "libc",
  "libwebauthn",
  "nfc1",
  "rand 0.9.2",
@@ -817,7 +816,9 @@ name = "credentialsd-common"
 version = "0.2.0"
 dependencies = [
  "futures-lite",
+ "libc",
  "serde",
+ "zeroize",
  "zvariant",
 ]
 
@@ -832,7 +833,6 @@ dependencies = [
  "gettext-rs",
  "gio-unix",
  "gtk4",
- "libc",
  "qrcode",
  "serde",
  "tracing",
@@ -3184,7 +3184,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5210,9 +5210,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
  "zeroize_derive",
 ]

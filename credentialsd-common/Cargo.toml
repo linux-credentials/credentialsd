@@ -7,5 +7,7 @@ license = "LGPL-3.0-only"
 
 [dependencies]
 futures-lite.workspace = true
+libc.workspace = true
 serde = { workspace = true, features = ["derive"] }
+zeroize = "1.9.0"
 zvariant.workspace = true
