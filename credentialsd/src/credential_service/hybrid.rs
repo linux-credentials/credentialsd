@@ -53,15 +53,21 @@ impl HybridHandler for InternalHybridHandler {
                     QrCodeOperationHint::GetAssertionRequest
                 }
             };
-            let mut device =
-                match CableQrCodeDevice::new_transient(hint, CableTransports::CloudAssistedOrLocal)
-                {
-                    Ok(device) => device,
-                    Err(err) => {
-                        tracing::error!("Failed to create caBLE QR code device: {:?}", err);
-                        return;
-                    }
-                };
+            let hybrid_transports = if std::env::var("CREDSD_ENABLE_HYBRID_BLE_TRANSPORT")
+                .map(|s| s.to_lowercase() == "true")
+                .unwrap_or_default()
+            {
+                CableTransports::CloudAssistedOrLocal
+            } else {
+                CableTransports::CloudAssistedOnly
+            };
+            let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
+                Ok(device) => device,
+                Err(err) => {
+                    tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                    return;
+                }
+            };
             let qr_code = device.qr_code.to_string();
             if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
                 tracing::error!("Failed to send caBLE update: {:?}", err);
