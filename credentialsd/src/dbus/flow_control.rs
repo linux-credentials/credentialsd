@@ -199,7 +199,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                 }
                 UserInteractedEvent::ClientPinEntered(pin_fd) => {
                     let pin_fd = OwnedFd::from(pin_fd);
-                    let pin = match read_secret(pin_fd.into()) {
+                    let pin = match read_secret(pin_fd.into())
+                        .map_err(|err| format!("Could not read from file descriptor: {err}"))
+                        .and_then(|bytes| {
+                            String::from_utf8(bytes).map_err(|err| {
+                                format!("Invalid UTF-8 data retrieved from pin: {err}")
+                            })
+                        }) {
                         Ok(pin) => pin,
                         // TODO: need to send an error to the UI, cancel the request and terminate the loop.
                         Err(err) => {

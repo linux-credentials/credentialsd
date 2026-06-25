@@ -3,12 +3,12 @@
 use std::{collections::HashMap, fmt::Display};
 
 use serde::{
-    de::{DeserializeSeed, Error, Visitor},
     Deserialize, Serialize,
+    de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, signature::Fields, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional,
-    OwnedFd, OwnedValue, SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value,
+    self, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional, OwnedFd, OwnedValue,
+    SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
 use crate::model::{Device, Operation, RequestId, UserInteractedEvent};
@@ -639,8 +639,8 @@ mod test {
     use std::os::fd::{FromRawFd, OwnedFd};
 
     use zvariant::{
-        serialized::{Context, Data, Format},
         Type,
+        serialized::{Context, Data, Format},
     };
 
     use super::{BackgroundEvent, Credential};

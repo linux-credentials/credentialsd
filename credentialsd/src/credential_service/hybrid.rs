@@ -242,7 +242,13 @@ impl From<&HybridState> for BackgroundEvent {
     fn from(value: &HybridState) -> Self {
         match value {
             HybridState::Init(qr_code) => {
-                let fd = write_secret(qr_code.clone().into_bytes()).unwrap();
+                let fd = match write_secret(qr_code.clone().into_bytes()) {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        tracing::error!(%err, "Failed to write QR code secret");
+                        panic!("Failed to write QR code secret");
+                    }
+                };
                 BackgroundEvent::HybridStarted(fd.into())
             }
 

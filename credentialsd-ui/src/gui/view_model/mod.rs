@@ -298,7 +298,8 @@ impl ViewModel {
                     self.hybrid_qr_code_data = None;
                 }
                 Event::Background(BackgroundEvent::HybridStarted(qr_code_fd)) => {
-                    let qr_code = read_secret(qr_code_fd.into()).unwrap();
+                    let qr_code_bytes = read_secret(qr_code_fd.into()).unwrap();
+                    let qr_code = String::from_utf8(qr_code_bytes).unwrap();
                     self.hybrid_qr_code_data = Some(qr_code.clone().into_bytes());
                     self.tx_update
                         .send(ViewUpdate::HybridNeedsQrCode(qr_code))
