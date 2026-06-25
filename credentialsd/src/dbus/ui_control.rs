@@ -1,16 +1,17 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::{error::Error, future::Future, sync::Arc};
+use std::{error::Error, future::Future, sync::Arc, time::Duration};
 
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self, Receiver},
 };
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 use zbus::{
     Connection, MatchRule, MessageStream,
     fdo::{self, DBusProxy},
-    names::OwnedUniqueName,
+    names::{BusName, OwnedUniqueName},
     proxy,
     zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
 };
@@ -42,6 +43,7 @@ pub trait UiController {
         app_id: String,
         app_pid: u32,
         options: PortalBackendOptions,
+        cancellation_token: CancellationToken,
     ) -> impl Future<Output = std::result::Result<Ceremony, Box<dyn Error>>> + Send;
 }
 
@@ -396,6 +398,7 @@ impl UiController for UiControlServiceClient {
         app_id: String,
         app_pid: u32,
         options: PortalBackendOptions,
+        cancellation_token: CancellationToken,
     ) -> Result<Ceremony, Box<dyn Error>> {
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
         let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
@@ -424,6 +427,7 @@ impl UiController for UiControlServiceClient {
             )
             .await?;
         tracing::debug!(path = ?session_handle, "Session initialized");
+        notify_on_disconnected(backend_proxy.to_owned(), cancellation_token).await?;
         Ok(Ceremony {
             proxy: Arc::new(backend_proxy),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
@@ -528,5 +532,78 @@ async fn subscribe_ui_events(
         tracing::trace!("Stopping UI event forwarder");
         Ok::<_, zbus::Error>(())
     });
+    Ok(())
+}
+
+async fn notify_on_disconnected(
+    ceremony: UiControlServiceProxy<'static>,
+    cancellation_token: CancellationToken,
+) -> fdo::Result<()> {
+    // Do early checks
+    let dbus = DBusProxy::new(ceremony.inner().connection()).await?;
+
+    let bus_name = ceremony.inner().destination().to_owned();
+    if !dbus.name_has_owner(bus_name.clone()).await? {
+        cancellation_token.cancel();
+        tracing::trace!(%bus_name, "Name not connected.");
+        return Ok(());
+    }
+
+    // Listen if the whole service goes away
+    let ct1 = cancellation_token.clone();
+    let dbus1 = dbus.clone();
+    tokio::spawn(async move {
+        let dbus = dbus1;
+        async fn watch(dbus: DBusProxy<'_>, bus_name: BusName<'_>) -> fdo::Result<()> {
+            let mut stream = dbus.receive_name_owner_changed().await?;
+            while let Some(signal) = stream.next().await {
+                let args = signal.args()?;
+                if args.name == bus_name && args.new_owner.is_none() {
+                    tracing::trace!(%bus_name, "Name owner disconnected.");
+                    return Ok(());
+                }
+            }
+            Err(fdo::Error::Disconnected(format!(
+                "Disconnected from bus while waiting for name owner change on {bus_name}"
+            )))
+        }
+        if let Err(err) = watch(dbus, bus_name.into()).await {
+            tracing::debug!(%err, "Error while watching for name owner change");
+        }
+        ct1.cancel();
+    });
+
+    // Poll for the backend session's existence
+    let ct2 = cancellation_token.clone();
+    tokio::spawn(async move {
+        let proxy = ceremony.inner();
+        loop {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            // This is just a way to test if the object path exists.
+            match proxy.get_property::<String>("Bogus").await {
+                Ok(_) => {}
+                Err(zbus::Error::FDO(err)) => match *err {
+                    fdo::Error::UnknownProperty(_) => continue,
+                    fdo::Error::UnknownObject(_) => {
+                        let object_path = proxy.path();
+                        tracing::trace!(%object_path, "Object path disappeared from backend");
+                        ct2.cancel();
+                        break;
+                    }
+                    err => {
+                        tracing::debug!(%err, "Error occurred while monitoring Ceremony object path");
+                        ct2.cancel();
+                        break;
+                    }
+                },
+                Err(err) => {
+                    tracing::debug!(%err, "Error occurred while monitoring Ceremony object path");
+                    ct2.cancel();
+                    break;
+                }
+            }
+        }
+    });
+
     Ok(())
 }
