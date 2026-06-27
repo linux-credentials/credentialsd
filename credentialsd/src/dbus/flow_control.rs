@@ -98,13 +98,18 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     activation_token: Option<String>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
-    let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
+    let cancellation_token = CancellationToken::new();
+    let request_id = svc
+        .lock()
+        .await
+        .init_request(&msg, request_tx, cancellation_token.clone())
+        .await?;
+
     let operation = msg.operation();
     let rp_id = msg.relying_party_id().to_string();
-
     let origin = msg.origin().to_string();
-
     let top_origin = msg.top_origin().map(|o| o.to_string());
+
     let initial_devices = svc
         .lock()
         .await
@@ -122,7 +127,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     )
     .try_into()
     .expect("valid object path");
-    let cancellation_token = CancellationToken::new();
     let ceremony = match ui_control_client
         .create_session(
             handle,

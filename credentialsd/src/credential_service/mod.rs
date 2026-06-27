@@ -25,6 +25,7 @@ use tokio::sync::oneshot;
 use credentialsd_common::model::{
     BackgroundEvent, Device, Error as CredentialServiceError, Transport,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -54,6 +55,7 @@ struct RequestContext {
     request: CredentialRequest,
     response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
+    cancellation_token: CancellationToken,
 }
 
 impl RequestContext {
@@ -73,6 +75,7 @@ pub trait ManageDevice {
         &self,
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+        cancellation_token: CancellationToken,
     ) -> Result<RequestId, CredentialServiceError>;
     async fn cancel_request(&self, request_id: RequestId);
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
@@ -126,8 +129,17 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
 
     async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.usb_handler.lock().unwrap().start(request);
+        if let Some(RequestContext {
+            ref request,
+            ref cancellation_token,
+            ..
+        }) = *guard
+        {
+            let stream = self
+                .usb_handler
+                .lock()
+                .unwrap()
+                .start(request, cancellation_token.clone());
             let ctx = self.ctx.clone();
             Box::pin(UsbStateStream { inner: stream, ctx })
         } else {
@@ -161,6 +173,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         &self,
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+        cancellation_token: CancellationToken,
     ) -> Result<RequestId, CredentialServiceError> {
         let mut cred_request = self.ctx.lock().unwrap();
         if cred_request.is_some() {
@@ -175,6 +188,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 request: request.clone(),
                 response_channel: tx,
                 request_id,
+                cancellation_token,
             };
             _ = cred_request.insert(ctx);
             Ok(request_id)

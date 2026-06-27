@@ -18,6 +18,7 @@ use tokio::sync::{
     Mutex as AsyncMutex, broadcast,
     mpsc::{self, Receiver, Sender, WeakSender},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
@@ -30,6 +31,7 @@ pub(crate) trait UsbHandler {
     fn start(
         &self,
         request: &CredentialRequest,
+        cancellation_token: CancellationToken,
     ) -> impl Stream<Item = UsbEvent> + Send + Sized + Unpin + 'static;
 }
 
@@ -72,6 +74,7 @@ impl InProcessUsbHandler {
 
     async fn process_selecting_device(
         hid_devices: &[HidDevice],
+        cancellation_token: CancellationToken,
     ) -> Result<UsbStateInternal, Error> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
@@ -79,7 +82,9 @@ impl InProcessUsbHandler {
         let mut channel_map = HashMap::new();
         let (setup_tx, mut setup_rx) =
             tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(expected_answers);
+        let ct1 = cancellation_token.clone();
         for (idx, device) in hid_devices.iter().enumerate() {
+            let ct = ct1.clone();
             let stx = setup_tx.clone();
             let tx = blinking_tx.clone();
             let mut device = device.clone();
@@ -89,12 +94,18 @@ impl InProcessUsbHandler {
                 let res = match device.channel(ChannelSettings::default()).await {
                     Ok(ref mut channel) => {
                         let cancel_handle = channel.get_handle();
-                        stx.send((idx, dev, cancel_handle)).await.unwrap();
+                        stx.send((idx, dev, cancel_handle.clone())).await.unwrap();
                         drop(stx);
 
-                        let was_selected = channel
-                            .blink_and_wait_for_user_presence(Duration::from_secs(300))
-                            .await;
+                        let blink_fut =
+                            channel.blink_and_wait_for_user_presence(Duration::from_secs(300));
+                        let Some(was_selected) = ct.run_until_cancelled_owned(blink_fut).await
+                        else {
+                            tracing::trace!("Cancel blink");
+                            cancel_handle.cancel_ongoing_operation().await;
+                            return;
+                        };
+
                         match was_selected {
                             Ok(true) => Ok(Some(idx)),
                             Ok(false) => Ok(None),
@@ -242,23 +253,34 @@ impl InProcessUsbHandler {
     async fn process(
         tx: Sender<UsbStateInternal>,
         cred_request: CredentialRequest,
+        cancellation_token: CancellationToken,
     ) -> Result<(), Error> {
         let mut state = UsbStateInternal::Idle;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
         let mut failures = 0;
+        let mut waiting_counter = 0_u32;
         // act on current USB USB state, send state changes to the stream, and
         // loop until a credential or error is returned.
         loop {
-            tracing::trace!("current usb state: {:?}", state);
+            // Don't spam the log on waiting
+            if !matches!(state, UsbStateInternal::Waiting) || waiting_counter % 20 == 0 {
+                tracing::trace!("current usb state: {:?}", state);
+            }
+            let mut waiting_counter_tmp = 0;
             let prev_usb_state = state;
             let next_usb_state = match prev_usb_state {
                 UsbStateInternal::Idle | UsbStateInternal::Waiting => {
+                    waiting_counter_tmp = waiting_counter.wrapping_add(1);
                     Self::process_idle_waiting(&mut failures, &prev_usb_state).await
                 }
                 UsbStateInternal::SelectingDevice(ref hid_devices) => {
-                    Self::process_selecting_device(hid_devices.as_slice()).await
+                    Self::process_selecting_device(
+                        hid_devices.as_slice(),
+                        cancellation_token.clone(),
+                    )
+                    .await
                 }
                 UsbStateInternal::Connected(ref device) => {
                     let device = std::sync::Arc::clone(device);
@@ -282,6 +304,7 @@ impl InProcessUsbHandler {
                 UsbStateInternal::Completed(_) => break Ok(()),
                 UsbStateInternal::Failed(err) => break Err(err),
             };
+            waiting_counter = waiting_counter_tmp;
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
             // Usually, comparing the Discrimimant is enough, but PinNotSet can be
             // repeated multiple times with different or the same error reasons
@@ -386,14 +409,28 @@ impl UsbHandler for InProcessUsbHandler {
     fn start(
         &self,
         request: &CredentialRequest,
+        cancellation_token: CancellationToken,
     ) -> impl Stream<Item = UsbEvent> + Send + Sized + Unpin + 'static {
         let request = request.clone();
         let (tx, mut rx) = mpsc::channel(32);
         tokio::spawn(async move {
             // TODO: instead of logging error here, push the errors into the
             // stream so credential service can handle/forward them to the UI
-            if let Err(err) = InProcessUsbHandler::process(tx, request).await {
-                tracing::error!("Error getting credential from USB: {:?}", err);
+            if let Some(result) = cancellation_token
+                .run_until_cancelled(InProcessUsbHandler::process(
+                    tx,
+                    request,
+                    cancellation_token.clone(),
+                ))
+                .await
+            {
+                if let Err(err) = result {
+                    tracing::debug!("USB handler task ended: {:?}", err);
+                } else {
+                    tracing::trace!("USB handler task ended successfully.");
+                }
+            } else {
+                tracing::trace!("Cancelled USB process");
             }
         });
         Box::pin(stream! {
@@ -459,6 +496,37 @@ pub(super) enum UsbStateInternal {
     // TODO: implement cancellation
     // This isn't actually sent from the server.
     //UserCancelled,
+}
+
+impl UsbStateInternal {
+    /// Used to roughly determine whether movement from one state to another is
+    /// a state transition. Used for deciding whether to print a message in the
+    /// log on a new state.
+    fn is_transition(prev: &Self, next: &Self) -> bool {
+        match (prev, next) {
+            (Self::Idle, Self::Idle) => false,
+            (Self::Waiting, Self::Waiting) => false,
+            (Self::SelectingDevice(_), Self::SelectingDevice(_)) => false,
+            (Self::Connected(_), Self::Connected(_)) => false,
+            (
+                Self::NeedsPin {
+                    attempts_left: a1,
+                    pin_tx: _,
+                },
+                Self::NeedsPin {
+                    attempts_left: a2,
+                    pin_tx: _,
+                },
+            ) => a1 != a2,
+            (
+                Self::NeedsUserVerification { attempts_left: a1 },
+                Self::NeedsUserVerification { attempts_left: a2 },
+            ) => a1 != a2,
+            (Self::NeedsUserPresence, Self::NeedsUserPresence) => false,
+            (Self::SelectCredential { .. }, Self::SelectCredential { .. }) => false,
+            _ => true,
+        }
+    }
 }
 
 /// Used to share public state between  credential service and UI.
