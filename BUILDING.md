@@ -63,16 +63,50 @@ If you are interested in installing the program, you can use `meson install` to
 install the details. (If you would like to test without installing, you can
 follow the [build instructions for development](#for-development) below.)
 
+## Installing credentialsd and credentialsd-ui
+To install the daemon and UI binaries, do the following:
+
 ```shell
 git clone https://github.com/linux-credentials/credentialsd
 cd credentialsd
 meson setup -Dprefix=/usr/local build-release
-cd build-release
-meson install
+meson install -C build-release
 ```
 
 Note that since Meson is installing to `/usr/local`, it will ask you to use
 `sudo` to elevate privileges to install.
+
+## Installing patched xdg-desktop-portal
+
+credentialsd depends on integration with xdg-desktop-portal. Until this is
+upstreamed, you must build the patch from our fork. Setting a prefix of
+`/usr/local` should allow xdg-desktop-portal to find the portal configuration
+files from credentialsd installed in the previous step.
+
+Note that recent xdg-desktop-portal builds require very recent versions of some
+dependencies, which may be difficult on some distros. For example, on Fedora,
+you must be on Fedora 44 or greater. Other distributions may require you to
+build the dependencies manually.
+
+See the [official xdg-desktop-portal docs] for more information on building
+xdg-desktop-portal.
+
+```shell
+git clone https://github.com/linux-credentials/xdg-desktop-portal
+cd xdg-desktop-portal
+meson setup --prefix /usr/local . _build
+meson install -C _build
+```
+
+After installing, you should enable the feature flag to enable the Credential
+portal. Use `systemctl --user edit xdg-desktop-portal.service` and add the
+following contents:
+
+```
+[Service]
+Environment="XDG_DESKTOP_PORTAL_ENABLE_EXPERIMENTAL=credential"
+Environment="G_MESSAGES_DEBUG=xdg-desktop-portal"
+```
 
 ## Running the installed server
 
@@ -81,6 +115,17 @@ the services on demand, so you don't need to start it manually.
 
 The first time you install this, though, you must log out and log back in again
 for the service activation files to take effect.
+
+You can follow the logs with:
+
+```shell
+journalctl --user \
+  --pager-end \
+  --follow \
+  --unit xdg-desktop-portal.service \
+  --unit xyz.iinuwa.credentialsd.Credentials.service \
+  --unit xyz.iinuwa.credentialsd.UiControl.service
+```
 
 ## Testing installed builds with Firefox Web Add-On
 
@@ -95,11 +140,23 @@ ln -s /usr/local/lib64/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_he
 
 # For Development
 
+## Building credentialsd and credentialsd-ui
 ```
 git clone https://github.com/linux-credentials/credentialsd
 cd credentialsd
 meson setup -Dprofile=development build
 ninja -C build
+```
+
+## Building patched xdg-desktop-portal
+
+For more context on the patch, see the [instructions above](#installing-credentialsd-and-credentialsd-ui).
+
+```shell
+git clone https://github.com/linux-credentials/xdg-desktop-portal
+cd xdg-desktop-portal
+meson setup . _build
+meson compile -C _build
 ```
 
 ## Running the server for development
@@ -108,16 +165,28 @@ To run the required services during development, you need to add some
 environment variables.
 
 ```shell
-# Run the server, with debug logging enabled
-export GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data
-export RUST_LOG=credentialsd=debug,credentials_ui=debug
-./build/credentialsd/src/credentialsd &
-./build/credentialsd-ui/src/credentialsd-ui
+# These paths must be absolute
+XDP_REPO=/path/to/xdg-desktop-portal
+CREDSD_REPO=/path/to/credentialsd
+
+export XDG_DESKTOP_PORTAL_ENABLE_EXPERIMENTAL=credential
+XDP_BINARY="$XDP_REPO/build/desktop-portal/xdg-desktop-portal"
+$XDP_BINARY &
+
+# Run the server, with debug logging enabled, and configure the server to trust your xdg-desktop-portal
+export CREDSD_TRUSTED_CALLERS=$XDP_BINARY
+export RUST_LOG=credentialsd=debug,libwebauthn=debug
+$CREDSD_REPO/build/credentialsd/src/credentialsd &
+
+# Run the backend UI
+export RUST_LOG=debug
+export GSETTINGS_SCHEMA_DIR=$CREDS_REPO/build/credentialsd-ui/data
+$CREDSD_REPO/build/credentialsd-ui/src/credentialsd-ui
 ```
 
 ## Testing development builds with Firefox Web Add-On
 
-If you are using the Firefox add-on to build, follow the instructions for
+If you are using the Firefox add-on to test during development, follow the instructions for
 development in [`webext/README.md`](/webext/README.md#for-development).
 
 # For Packaging
