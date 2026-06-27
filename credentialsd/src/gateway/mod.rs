@@ -270,7 +270,12 @@ async fn should_trust_app_id(pid: u32) -> bool {
             .filter_map(|path| Path::new(path).canonicalize().ok())
             .collect()
     } else {
-        vec![PathBuf::from("/usr/bin/xdg-desktop-portal")]
+        vec![
+            PathBuf::from("/usr/lib/xdg-desktop-portal"),
+            PathBuf::from("/usr/libexec/xdg-desktop-portal"),
+            PathBuf::from("/usr/local/lib/xdg-desktop-portal"),
+            PathBuf::from("/usr/local/libexec/xdg-desktop-portal"),
+        ]
     };
     tracing::debug!(
         ?trusted_callers,
