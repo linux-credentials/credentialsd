@@ -196,6 +196,7 @@ template $CredentialsUiWindow: ApplicationWindow {
             visible: bind template.view-model as <$CredentialManagerViewModel>.usb_nfc_pin_entry_visible;
             placeholder-text: _("Enter your device PIN");
             can-focus: true;
+            max-width-chars: 63;
           }
         };
       }

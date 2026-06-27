@@ -2,10 +2,11 @@ use core::panic;
 use std::fmt::Debug;
 
 use async_stream::stream;
-use credentialsd_common::server::BackgroundEvent;
 use futures_lite::Stream;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::{
+    broadcast,
+    mpsc::{self, Sender},
+};
 use tracing::{debug, error};
 
 use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
@@ -15,7 +16,7 @@ use libwebauthn::transport::cable::qr_code_device::{
 use libwebauthn::transport::{Channel, ChannelSettings, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use credentialsd_common::model::Error;
+use credentialsd_common::{memfd::write_secret, model::Error, server::BackgroundEvent};
 
 use crate::model::CredentialRequest;
 
@@ -240,7 +241,17 @@ impl From<HybridState> for credentialsd_common::model::HybridState {
 impl From<&HybridState> for BackgroundEvent {
     fn from(value: &HybridState) -> Self {
         match value {
-            HybridState::Init(qr_code) => BackgroundEvent::HybridStarted(qr_code.to_string()),
+            HybridState::Init(qr_code) => {
+                let fd = match write_secret(qr_code.clone().into_bytes()) {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        tracing::error!(%err, "Failed to write QR code secret");
+                        panic!("Failed to write QR code secret");
+                    }
+                };
+                BackgroundEvent::HybridStarted(fd.into())
+            }
+
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
