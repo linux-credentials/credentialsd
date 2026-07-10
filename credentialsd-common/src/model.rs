@@ -201,9 +201,8 @@ impl TryFrom<&Structure<'_>> for BackgroundEvent {
                     .iter()
                     .map(|v| v.try_to_owned().unwrap())
                     .map(|v| {
-                        let cred: Result<Credential, zvariant::Error> = Value::from(v)
-                            .downcast::<Credential>()
-                            .map(Credential::from);
+                        let cred: Result<Credential, zvariant::Error> =
+                            Value::from(v).downcast::<Credential>();
                         cred
                     })
                     .collect();

@@ -555,7 +555,7 @@ impl From<&UsbState> for BackgroundEvent {
             }
             UsbState::NeedsUserPresence => BackgroundEvent::NeedsUserPresence,
             UsbState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
-                creds: creds.to_owned().into_iter().map(|c| c.into()).collect(),
+                creds: creds.to_vec(),
             },
             UsbState::Completed => BackgroundEvent::CeremonyCompleted,
             UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,

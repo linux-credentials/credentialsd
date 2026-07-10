@@ -110,17 +110,16 @@ mod imp {
     impl WindowImpl for CredentialsUiWindow {
         // Save window state on delete event
         fn close_request(&self) -> glib::Propagation {
-            if let Some(vm) = self.view_model.borrow().as_ref() {
-                if vm
+            if let Some(vm) = self.view_model.borrow().as_ref()
+                && vm
                     .get_sender()
                     .send_blocking(ViewEvent::UserCancelled)
                     .is_err()
-                {
-                    tracing::warn!(
-                        "Failed to notify the backend service that the user cancelled the request."
-                    );
-                };
-            }
+            {
+                tracing::warn!(
+                    "Failed to notify the backend service that the user cancelled the request."
+                );
+            };
 
             // Pass close request on to the parent
             self.parent_close_request()

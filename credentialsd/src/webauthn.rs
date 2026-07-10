@@ -83,9 +83,9 @@ impl TryFrom<&Origin> for RelyingPartyId {
     fn try_from(origin: &Origin) -> Result<Self, Self::Error> {
         match origin {
             Origin::Https { host, .. } => {
-                RelyingPartyId::try_from(host.as_str()).map_err(|_| OriginParseError::InvalidHost)
+                RelyingPartyId::try_from(host.as_str()).map_err(|_| OriginParseError::Host)
             }
-            Origin::AppId(_) => Err(OriginParseError::InvalidScheme),
+            Origin::AppId(_) => Err(OriginParseError::Scheme),
         }
     }
 }
@@ -103,33 +103,33 @@ impl FromStr for Origin {
             // begins with a letter
             match host_candidate.chars().nth(0) {
                 Some(c) if c.is_ascii_alphabetic() => {}
-                _ => return Err(OriginParseError::InvalidHost),
+                _ => return Err(OriginParseError::Host),
             };
             // alphanumeric with hyphens and labels separated by dots
             if !host_candidate
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
             {
-                return Err(OriginParseError::InvalidHost);
+                return Err(OriginParseError::Host);
             }
             // ends with a valid label
             if host_candidate.ends_with('.') {
-                return Err(OriginParseError::InvalidHost);
+                return Err(OriginParseError::Host);
             }
             let host = host_candidate.to_ascii_lowercase();
 
             let Ok(port) = port_candidate.map(|p| p.parse()).transpose() else {
-                return Err(OriginParseError::InvalidPort);
+                return Err(OriginParseError::Port);
             };
 
             Ok(Origin::Https { host, port })
         } else if let Some(app_id_candidate) = s.strip_prefix("app:") {
             let app_id = app_id_candidate
                 .parse()
-                .map_err(|_| OriginParseError::InvalidHost)?;
+                .map_err(|_| OriginParseError::Host)?;
             Ok(Origin::AppId(app_id))
         } else {
-            Err(OriginParseError::InvalidScheme)
+            Err(OriginParseError::Scheme)
         }
     }
 }
@@ -147,9 +147,9 @@ pub(crate) enum NavigationContext {
 
 #[derive(Debug)]
 pub(crate) enum OriginParseError {
-    InvalidScheme,
-    InvalidHost,
-    InvalidPort,
+    Scheme,
+    Host,
+    Port,
 }
 
 impl std::error::Error for OriginParseError {}
@@ -157,9 +157,9 @@ impl std::error::Error for OriginParseError {}
 impl Display for OriginParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidScheme => f.write_str("Invalid scheme"),
-            Self::InvalidHost => f.write_str("Invalid host"),
-            Self::InvalidPort => f.write_str("Invalid port"),
+            Self::Scheme => f.write_str("Invalid scheme"),
+            Self::Host => f.write_str("Invalid host"),
+            Self::Port => f.write_str("Invalid port"),
         }
     }
 }
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn test_origin_parse_when_http_fails() {
         let err = "http://example.com".parse::<Origin>().unwrap_err();
-        assert!(matches!(err, OriginParseError::InvalidScheme));
+        assert!(matches!(err, OriginParseError::Scheme));
     }
 
     #[test]
@@ -195,19 +195,19 @@ mod tests {
     #[test]
     fn test_origin_parse_with_trailing_slash_fails() {
         let err = "https://example.org/".parse::<Origin>().unwrap_err();
-        assert!(matches!(err, OriginParseError::InvalidHost));
+        assert!(matches!(err, OriginParseError::Host));
     }
 
     #[test]
     fn test_origin_parse_with_port_and_path_fails() {
         let err = "https://example.org:8443/".parse::<Origin>().unwrap_err();
-        assert!(matches!(err, OriginParseError::InvalidPort));
+        assert!(matches!(err, OriginParseError::Port));
     }
 
     #[test]
     fn test_origin_parse_with_invalid_characters_fails() {
         let err = "https://😭.edu:1234".parse::<Origin>().unwrap_err();
-        assert!(matches!(err, OriginParseError::InvalidHost));
+        assert!(matches!(err, OriginParseError::Host));
     }
 
     #[test]

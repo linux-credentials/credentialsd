@@ -450,7 +450,7 @@ impl From<&NfcState> for BackgroundEvent {
                 }
             }
             NfcState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
-                creds: creds.to_owned().into_iter().map(|c| c.into()).collect(),
+                creds: creds.to_vec(),
             },
             NfcState::Completed => BackgroundEvent::CeremonyCompleted,
             NfcState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,

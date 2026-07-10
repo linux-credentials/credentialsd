@@ -46,6 +46,8 @@ pub(crate) struct UiContext {
 /// These methods are called by the credential service to control the UI.
 #[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
 impl CredentialPortalBackend {
+    // D-Bus has long argument signatures.
+    #[expect(clippy::too_many_arguments)]
     async fn initialize(
         &self,
         #[zbus(connection)] connection: &Connection,
@@ -277,7 +279,7 @@ impl CeremonyObject {
                     pid: self.ui_context.app_pid,
                 },
                 initial_devices: self.ui_context.devices.clone(),
-                window_handle: self.ui_context.parent_window.clone().into(),
+                window_handle: self.ui_context.parent_window.clone(),
             },
             Arc::new(AsyncMutex::new(flow_control_client)),
             cancel_rx,
@@ -302,7 +304,7 @@ impl CeremonyObject {
         } else {
             tracing::error!("Flow was not properly initialized before receiving events.");
         }
-        return Err(fdo::Error::Failed("Failed to handle event".to_string()));
+        Err(fdo::Error::Failed("Failed to handle event".to_string()))
     }
 
     #[zbus(signal)]
