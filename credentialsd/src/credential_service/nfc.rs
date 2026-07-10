@@ -24,6 +24,7 @@ use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 use super::{AuthenticatorResponse, CredentialResponse};
 
 pub(crate) trait NfcHandler {
+    #[expect(unused)]
     fn start(
         &self,
         request: &CredentialRequest,
@@ -299,11 +300,13 @@ impl NfcHandler for InProcessNfcHandler {
 
 // this exists to prevent making NfcStateInternal type public to the whole crate.
 /// A message between NFC handler and credential service
+#[expect(unused)]
 pub struct NfcEvent {
     pub(super) state: NfcStateInternal,
 }
 
 /// Used to share internal state between handler and credential service
+#[expect(unused)]
 #[derive(Clone, Debug, Default)]
 pub(super) enum NfcStateInternal {
     /// Not polling for FIDO NFC device.
@@ -431,38 +434,6 @@ impl From<NfcStateInternal> for NfcState {
                 }
             }
             NfcStateInternal::Failed(err) => NfcState::Failed(err),
-        }
-    }
-}
-
-impl From<NfcState> for credentialsd_common::model::NfcState {
-    fn from(value: NfcState) -> Self {
-        Self::from(&value)
-    }
-}
-impl From<&NfcState> for credentialsd_common::model::NfcState {
-    fn from(value: &NfcState) -> Self {
-        match value {
-            NfcState::Idle => credentialsd_common::model::NfcState::Idle,
-            NfcState::Waiting => credentialsd_common::model::NfcState::Waiting,
-            NfcState::Connected => credentialsd_common::model::NfcState::Connected,
-            NfcState::NeedsPin { attempts_left, .. } => {
-                credentialsd_common::model::NfcState::NeedsPin {
-                    attempts_left: *attempts_left,
-                }
-            }
-            NfcState::NeedsUserVerification { attempts_left } => {
-                credentialsd_common::model::NfcState::NeedsUserVerification {
-                    attempts_left: *attempts_left,
-                }
-            }
-            NfcState::SelectingCredential { creds, .. } => {
-                credentialsd_common::model::NfcState::SelectingCredential {
-                    creds: creds.to_owned(),
-                }
-            }
-            NfcState::Completed => credentialsd_common::model::NfcState::Completed,
-            NfcState::Failed(err) => credentialsd_common::model::NfcState::Failed(err.to_owned()),
         }
     }
 }

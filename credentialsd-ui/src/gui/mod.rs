@@ -5,7 +5,8 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
-use credentialsd_common::{model::ViewUpdate, server::WindowHandle};
+use credentialsd_common::model::Device;
+use credentialsd_common::server::{Credential, WindowHandle};
 
 use crate::{ViewRequest, client::FlowControlClient};
 
@@ -62,4 +63,36 @@ fn run_gui(
     view_model::gtk::start_gtk_app(parent_window, tx_event, rx_update);
 
     async_std::task::block_on(event_loop.cancel());
+}
+
+#[derive(Debug, Clone)]
+pub enum ViewUpdate {
+    SetTitle {
+        title: String,
+        subtitle: String,
+        qr_prompt: String,
+        usb_prompt: String,
+    },
+    SetDevices(Vec<Device>),
+    // TODO: Fix this
+    SetCredentials(Vec<Credential>),
+
+    WaitingForDevice(Device),
+    SelectingDevice,
+
+    NeedsPin {
+        attempts_left: Option<u32>,
+    },
+    NeedsUserVerification {
+        attempts_left: Option<u32>,
+    },
+    NeedsUserPresence,
+
+    HybridNeedsQrCode(String),
+    HybridConnecting,
+    HybridConnected,
+
+    Completed,
+    Cancelled,
+    Failed(String),
 }

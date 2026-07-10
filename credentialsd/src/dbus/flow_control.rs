@@ -13,7 +13,6 @@ use credentialsd_common::{
     memfd::read_secret,
     model::{
         Error as CredentialServiceError, Operation, PortalBackendOptions, UserInteractedEvent,
-        WebAuthnError,
     },
 };
 use futures_lite::{Stream, StreamExt};
@@ -24,7 +23,6 @@ use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::UsbState,
@@ -35,6 +33,7 @@ use crate::{
     credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice},
     model::ClientDetails,
 };
+use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
 
 pub struct UiRequestContext {
     request: CredentialRequest,
@@ -139,7 +138,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             window_handle,
             origin,
             operation,
-            request_id,
             initial_devices,
             app_id,
             app_pid,
@@ -317,246 +315,5 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         // Every other error should be squashed into NotAllowed as a catch-all
         // For now, just squashing.
         response.map_err(|_| WebAuthnError::NotAllowedError)
-    }
-}
-
-#[cfg(test)]
-pub mod test {
-    use std::{
-        error::Error,
-        fmt::Debug,
-        pin::Pin,
-        sync::{Arc, Mutex},
-    };
-
-    use credentialsd_common::{
-        client::FlowController,
-        model::{Device, RequestId},
-        server::BackgroundEvent,
-    };
-    use futures_lite::{Stream, StreamExt};
-    use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
-
-    use crate::credential_service::{hybrid::HybridState, nfc::NfcState, ManageDevice, UsbState};
-
-    #[allow(clippy::enum_variant_names)]
-    #[derive(Debug)]
-    pub enum DummyFlowRequest {
-        EnterClientPin(String),
-        GetDevices,
-        GetCredential,
-        InitStream,
-    }
-
-    // Clippy complains that these variant names have the same prefix, but that's
-    // intentional for now.
-    #[allow(clippy::enum_variant_names)]
-    pub enum DummyFlowResponse {
-        EnterClientPin(Result<(), ()>),
-        GetDevices(Vec<Device>),
-        GetCredential,
-        InitStream(Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()>),
-    }
-
-    impl Debug for DummyFlowResponse {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                Self::EnterClientPin(arg0) => f.debug_tuple("EnterClientPin").field(arg0).finish(),
-                Self::GetDevices(arg0) => f.debug_tuple("GetDevices").field(arg0).finish(),
-                Self::GetCredential => f.debug_tuple("GetCredential").finish(),
-                Self::InitStream(_) => f
-                    .debug_tuple("InitStream")
-                    .field(&String::from("<BackgroundEventStream>"))
-                    .finish(),
-            }
-        }
-    }
-    /// Represents a client for the UI to call methods on the credential service.
-    #[derive(Debug)]
-    pub struct DummyFlowClient {
-        tx: mpsc::Sender<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
-    }
-
-    impl DummyFlowClient {
-        async fn send(&self, request: DummyFlowRequest) -> Result<DummyFlowResponse, ()> {
-            let (response_tx, response_rx) = oneshot::channel();
-            self.tx.send((request, response_tx)).await.unwrap();
-            match response_rx.await {
-                Ok(response) => Ok(response),
-                Err(err) => {
-                    tracing::error!("Failed to retrieve response from server: {:?}", err);
-                    Err(())
-                }
-            }
-        }
-    }
-
-    impl FlowController for DummyFlowClient {
-        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-            let response = self.send(DummyFlowRequest::GetDevices).await.unwrap();
-            if let DummyFlowResponse::GetDevices(devices) = response {
-                Ok(devices)
-            } else {
-                Err(())
-            }
-        }
-
-        async fn start_discovery(&mut self) -> Result<(), ()> {
-            if let Ok(DummyFlowResponse::GetCredential) =
-                self.send(DummyFlowRequest::GetCredential).await
-            {
-                Ok(())
-            } else {
-                Err(())
-            }
-        }
-
-        async fn subscribe(
-            &mut self,
-        ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
-            if let Ok(DummyFlowResponse::InitStream(Ok(stream))) =
-                self.send(DummyFlowRequest::InitStream).await
-            {
-                Ok(stream)
-            } else {
-                Err(())
-            }
-        }
-
-        async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-            if let Ok(DummyFlowResponse::EnterClientPin(Ok(()))) =
-                self.send(DummyFlowRequest::EnterClientPin(pin)).await
-            {
-                Ok(())
-            } else {
-                Err(())
-            }
-        }
-
-        async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
-            todo!();
-        }
-
-        async fn cancel_request(&self, _request_id: RequestId) -> Result<(), ()> {
-            todo!()
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct DummyFlowServer<M>
-    where
-        M: ManageDevice,
-    {
-        rx: mpsc::Receiver<(DummyFlowRequest, oneshot::Sender<DummyFlowResponse>)>,
-        svc: Arc<AsyncMutex<M>>,
-        bg_event_tx: Option<mpsc::Sender<BackgroundEvent>>,
-        pin_tx: Arc<AsyncMutex<Option<tokio::sync::mpsc::Sender<String>>>>,
-        usb_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
-        nfc_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
-        hybrid_event_forwarder_task: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
-    }
-
-    impl<M: ManageDevice> DummyFlowServer<M> {
-        pub fn new(svc: Arc<AsyncMutex<M>>) -> (Self, DummyFlowClient) {
-            let (request_tx, request_rx) = mpsc::channel(32);
-            let server = Self {
-                rx: request_rx,
-                svc,
-                bg_event_tx: None,
-                pin_tx: Arc::new(AsyncMutex::new(None)),
-                usb_event_forwarder_task: Arc::new(Mutex::new(None)),
-                nfc_event_forwarder_task: Arc::new(Mutex::new(None)),
-                hybrid_event_forwarder_task: Arc::new(Mutex::new(None)),
-            };
-            let client = DummyFlowClient { tx: request_tx };
-            (server, client)
-        }
-
-        pub async fn run(&mut self) {
-            while let Some((request, tx)) = self.rx.recv().await {
-                tracing::debug!(target: "DummyFlowServer", "Received message: {request:?}");
-                let response = match request {
-                    DummyFlowRequest::EnterClientPin(pin) => {
-                        let rsp = self.enter_client_pin(pin).await;
-                        DummyFlowResponse::EnterClientPin(rsp)
-                    }
-                    DummyFlowRequest::GetDevices => {
-                        let rsp = self.get_available_public_key_devices().await.unwrap();
-                        DummyFlowResponse::GetDevices(rsp)
-                    }
-                    DummyFlowRequest::GetCredential => {
-                        self.start_discovery().await.unwrap();
-                        DummyFlowResponse::GetCredential
-                    }
-                    DummyFlowRequest::InitStream => {
-                        let rsp = self.subscribe().await;
-                        DummyFlowResponse::InitStream(rsp)
-                    }
-                };
-                tx.send(response).unwrap()
-            }
-        }
-
-        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, Box<dyn Error>> {
-            tracing::debug!(target: "DummyFlowServer", "get_available_public_key_devices()");
-            let devices = self
-                .svc
-                .lock()
-                .await
-                .get_available_public_key_devices()
-                .await
-                .map_err(|_| "Failed to get public key devices".to_string())?;
-            Ok(devices)
-        }
-
-        async fn start_discovery(&mut self) -> Result<(), ()> {
-            unimplemented!();
-        }
-
-        async fn subscribe(
-            &mut self,
-        ) -> Result<Pin<Box<dyn Stream<Item = BackgroundEvent> + Send + 'static>>, ()> {
-            let (tx, mut rx) = mpsc::channel(32);
-            self.bg_event_tx = Some(tx);
-            Ok(Box::pin(async_stream::stream! {
-                // TODO: we need to add a shutdown event that tells this stream
-                // to shut down when completed, failed or cancelled
-                while let Some(bg_event) = rx.recv().await {
-                    yield bg_event
-                }
-                tracing::debug!("event stream ended");
-            }))
-        }
-
-        async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
-            if let Some(pin_tx) = self.pin_tx.lock().await.take() {
-                pin_tx.send(pin).await.unwrap();
-            }
-            Ok(())
-        }
-
-        async fn select_credential(&self, _credential_id: String) -> Result<(), ()> {
-            todo!();
-        }
-
-        async fn cancel_request(&self, _request_id: RequestId) -> Result<(), ()> {
-            todo!();
-        }
-    }
-
-    impl<M: ManageDevice> Drop for DummyFlowServer<M> {
-        fn drop(&mut self) {
-            if let Some(task) = self.usb_event_forwarder_task.lock().unwrap().take() {
-                task.abort();
-            }
-
-            if let Some(task) = self.nfc_event_forwarder_task.lock().unwrap().take() {
-                task.abort();
-            }
-
-            if let Some(task) = self.hybrid_event_forwarder_task.lock().unwrap().take() {
-                task.abort();
-            }
-        }
     }
 }

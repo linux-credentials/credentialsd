@@ -10,15 +10,16 @@ use zbus::{
     Connection, DBusError,
 };
 
-use credentialsd_common::{
-    model::WebAuthnError,
-    server::{
-        CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
-        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WindowHandle,
-    },
-};
+use credentialsd_common::server::WindowHandle;
 
-use crate::{webauthn::AppId, DBUS_SERVICE_NAME};
+use crate::{
+    gateway::{
+        CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
+        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WebAuthnError,
+    },
+    webauthn::AppId,
+    DBUS_SERVICE_NAME,
+};
 
 use super::{check_origin_from_app, GatewayService, RequestContext};
 

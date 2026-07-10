@@ -5,19 +5,18 @@ mod dbus;
 mod util;
 
 use std::{
+    collections::HashMap,
+    fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use credentialsd_common::{
-    model::WebAuthnError,
-    server::{
-        CreateCredentialRequest, CreateCredentialResponse, GetCredentialRequest,
-        GetCredentialResponse, WindowHandle,
-    },
-};
+use credentialsd_common::server::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
-use zbus::Connection;
+use zbus::{
+    zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
+    Connection,
+};
 
 use crate::{
     dbus::CredentialRequestController,
@@ -345,13 +344,154 @@ fn check_origin_from_privileged_client(
     }
 }
 
+#[derive(Clone, Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct GetCredentialRequest {
+    pub origin: Option<String>,
+    pub is_same_origin: Option<bool>,
+    #[zvariant(rename = "publicKey")]
+    pub public_key: Option<GetPublicKeyCredentialRequest>,
+}
+
+#[derive(Clone, Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct GetPublicKeyCredentialRequest {
+    pub request_json: String,
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct GetCredentialResponse {
+    #[zvariant(rename = "type")]
+    r#type: String,
+    public_key: Option<GetPublicKeyCredentialResponse>,
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct GetPublicKeyCredentialResponse {
+    pub authentication_response_json: String,
+}
+
+impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
+    fn from(response: GetPublicKeyCredentialResponse) -> Self {
+        GetCredentialResponse {
+            // TODO: Decide on camelCase or kebab-case for cred types
+            r#type: "public-key".to_string(),
+            public_key: Some(response),
+        }
+    }
+}
+
+#[derive(Clone, Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct CreateCredentialRequest {
+    pub origin: Option<String>,
+    pub is_same_origin: Option<bool>,
+    #[zvariant(rename = "type")]
+    pub r#type: String,
+    #[zvariant(rename = "publicKey")]
+    pub public_key: Option<CreatePublicKeyCredentialRequest>,
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct CreateCredentialResponse {
+    #[zvariant(rename = "type")]
+    r#type: String,
+    public_key: Option<CreatePublicKeyCredentialResponse>,
+}
+
+impl NoneValue for CreateCredentialResponse {
+    type NoneType = HashMap<String, OwnedValue>;
+
+    fn null_value() -> Self::NoneType {
+        HashMap::new()
+    }
+}
+
+#[derive(Clone, Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct CreatePublicKeyCredentialRequest {
+    pub request_json: String,
+}
+
+#[derive(SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct CreatePublicKeyCredentialResponse {
+    pub registration_response_json: String,
+}
+
+impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
+    fn from(response: CreatePublicKeyCredentialResponse) -> Self {
+        CreateCredentialResponse {
+            // TODO: Decide on camelCase or kebab-case for cred types
+            r#type: "public-key".to_string(),
+            public_key: Some(response),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum WebAuthnError {
+    /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
+    /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
+    /// Operations.
+    AbortError,
+
+    /// Either `residentKey` was set to required and no available authenticator
+    /// supported resident keys, or `userVerification` was set to required and no
+    /// available authenticator could perform user verification.
+    ConstraintError,
+
+    /// The authenticator used in the ceremony recognized an entry in
+    /// `excludeCredentials` after the user consented to registering a credential.
+    InvalidStateError,
+
+    /// No entry in `pubKeyCredParams` had a type property of `public-key`, or the
+    /// authenticator did not support any of the signature algorithms specified
+    /// in `pubKeyCredParams`.
+    NotSupportedError,
+
+    /// The effective domain was not a valid domain, or `rp.id` was not equal to
+    /// or a registrable domain suffix of the effective domain. In the latter
+    /// case, the client does not support related origin requests or the related
+    /// origins validation procedure failed.
+    SecurityError,
+
+    /// A catch-all error covering a wide range of possible reasons, including
+    /// common ones like the user canceling out of the ceremony. Some of these
+    /// causes are documented throughout this spec, while others are
+    /// client-specific.
+    NotAllowedError,
+
+    /// The options argument was not a valid `CredentialCreationOptions` value, or
+    /// the value of `user.id` was empty or was longer than 64 bytes.
+    TypeError,
+}
+
+impl std::error::Error for WebAuthnError {}
+
+impl Display for WebAuthnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            WebAuthnError::AbortError => "Operation was aborted by client.",
+            WebAuthnError::ConstraintError => "Resident key or user verification requirement was not able to be met.",
+            WebAuthnError::InvalidStateError => "A user consented to create a new credential after trying to use an authenticator with a previously registered credential.",
+            WebAuthnError::NotSupportedError => "Operation parameters are not supported.",
+            WebAuthnError::SecurityError => "Validation of the client context for given RP ID failed.",
+            WebAuthnError::NotAllowedError => "An unspecified error occurred, and the operation is not allowed to continue.",
+            WebAuthnError::TypeError => "Invalid parameters specified.",
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use credentialsd_common::model::WebAuthnError;
-
     use crate::webauthn::{NavigationContext, Origin};
 
-    use super::check_origin_from_privileged_client;
+    use super::{check_origin_from_privileged_client, WebAuthnError};
+
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();
         check_origin_from_privileged_client(&origin, None)

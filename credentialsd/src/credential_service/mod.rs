@@ -20,7 +20,7 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 
 use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, RequestId, Transport},
+    model::{Device, Error as CredentialServiceError, Transport},
     server::BackgroundEvent,
 };
 
@@ -35,6 +35,9 @@ use self::{
 };
 
 pub use usb::UsbState;
+
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
 
 /// Process-wide in-memory store so a security key's pinUvAuthToken is reused across ceremonies.
 fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
@@ -82,7 +85,7 @@ pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
     hybrid_handler: Mutex<H>,
-    nfc_handler: Mutex<N>,
+    _nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
 }
 
@@ -94,7 +97,7 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
             ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler: Mutex::new(hybrid_handler),
-            nfc_handler: Mutex::new(nfc_handler),
+            _nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
         }
     }
@@ -133,10 +136,10 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
-    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+    async fn _get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext { ref request, .. }) = *guard {
-            let stream = self.nfc_handler.lock().unwrap().start(request);
+            let stream = self._nfc_handler.lock().unwrap().start(request);
             let ctx = self.ctx.clone();
             Box::pin(NfcStateStream { inner: stream, ctx })
         } else {
@@ -324,6 +327,7 @@ where
     }
 }
 
+#[expect(unused)]
 struct NfcStateStream<H> {
     inner: H,
     ctx: Arc<Mutex<Option<RequestContext>>>,

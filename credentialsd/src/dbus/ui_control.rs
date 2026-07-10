@@ -14,7 +14,7 @@ use zbus::{
 };
 
 use credentialsd_common::{
-    model::{Device, Operation, PortalBackendOptions, RequestId, UserInteractedEvent},
+    model::{Device, Operation, PortalBackendOptions, UserInteractedEvent},
     server::{BackgroundEvent, WindowHandle},
 };
 
@@ -26,7 +26,6 @@ pub trait UiController {
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
-        request_id: RequestId,
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
@@ -48,7 +47,6 @@ trait UiControlService2 {
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
-        request_id: RequestId,
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
@@ -117,7 +115,6 @@ impl UiController for UiControlServiceClient {
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
-        request_id: RequestId,
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
@@ -138,7 +135,6 @@ impl UiController for UiControlServiceClient {
                 parent_window.into(),
                 origin,
                 r#type,
-                request_id,
                 devices,
                 app_id,
                 app_pid,
