@@ -19,9 +19,8 @@ use libwebauthn::{
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 
-use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, Transport},
-    server::BackgroundEvent,
+use credentialsd_common::model::{
+    BackgroundEvent, Device, Error as CredentialServiceError, Transport,
 };
 
 use crate::{

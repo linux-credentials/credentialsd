@@ -6,7 +6,7 @@ use std::{sync::Arc, thread::JoinHandle};
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
 use credentialsd_common::model::Device;
-use credentialsd_common::server::{Credential, WindowHandle};
+use credentialsd_common::model::{Credential, WindowHandle};
 
 use crate::{ViewRequest, client::FlowControlClient};
 

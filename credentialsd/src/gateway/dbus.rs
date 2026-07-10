@@ -10,7 +10,7 @@ use zbus::{
     Connection, DBusError,
 };
 
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::WindowHandle;
 
 use crate::{
     gateway::{

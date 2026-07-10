@@ -4,7 +4,8 @@ use async_std::{
 };
 
 use credentialsd_common::{
-    memfd::write_secret, model::UserInteractedEvent, server::BackgroundEvent,
+    memfd::write_secret,
+    model::{BackgroundEvent, UserInteractedEvent},
 };
 
 const CTAP_CLIENT_SECRET_MAX_LEN: usize = 63;

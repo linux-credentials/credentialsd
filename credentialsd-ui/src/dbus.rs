@@ -18,9 +18,8 @@ use zbus::{
     zvariant::{Optional, OwnedObjectPath},
 };
 
-use credentialsd_common::{
-    model::{Device, Operation, PortalBackendOptions, UserInteractedEvent},
-    server::{BackgroundEvent, WindowHandle},
+use credentialsd_common::model::{
+    BackgroundEvent, Device, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
