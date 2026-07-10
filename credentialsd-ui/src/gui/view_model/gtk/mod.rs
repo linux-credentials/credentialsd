@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::WindowHandle;
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
 use gtk::gdk::Texture;

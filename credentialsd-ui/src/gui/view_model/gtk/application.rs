@@ -1,5 +1,5 @@
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::WindowHandle;
 use tracing::{debug, info};
 
 use gtk::prelude::*;
@@ -14,7 +14,7 @@ mod imp {
     use crate::gui::view_model::gtk::ModelState;
 
     use super::*;
-    use credentialsd_common::server::WindowHandle;
+    use credentialsd_common::model::WindowHandle;
     use glib::{WeakRef, clone};
     use std::{
         cell::{OnceCell, RefCell},

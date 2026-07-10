@@ -8,7 +8,7 @@ use async_std::{
     sync::Mutex as AsyncMutex,
 };
 use credentialsd_common::memfd::read_secret;
-use credentialsd_common::server::{BackgroundEvent, Credential};
+use credentialsd_common::model::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};

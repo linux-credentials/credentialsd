@@ -8,10 +8,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use credentialsd_common::{
     memfd::read_secret,
-    model::{Error as CredentialServiceError, PortalBackendOptions, UserInteractedEvent},
+    model::{
+        BackgroundEvent, Error as CredentialServiceError, PortalBackendOptions,
+        UserInteractedEvent, WindowHandle,
+    },
 };
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;

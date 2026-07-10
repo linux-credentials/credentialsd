@@ -6,8 +6,8 @@ mod gui;
 
 use std::error::Error;
 
+use credentialsd_common::model::WindowHandle;
 use credentialsd_common::model::{Device, Operation};
-use credentialsd_common::server::WindowHandle;
 
 use crate::dbus::CredentialPortalBackend;
 

@@ -16,7 +16,10 @@ use libwebauthn::transport::cable::qr_code_device::{
 use libwebauthn::transport::{Channel, ChannelSettings, Device};
 use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
 
-use credentialsd_common::{memfd::write_secret, model::Error, server::BackgroundEvent};
+use credentialsd_common::{
+    memfd::write_secret,
+    model::{BackgroundEvent, Error},
+};
 
 use crate::model::CredentialRequest;
 

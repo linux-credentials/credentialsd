@@ -13,9 +13,8 @@ use zbus::{
     Connection,
 };
 
-use credentialsd_common::{
-    model::{Device, Operation, PortalBackendOptions, UserInteractedEvent},
-    server::{BackgroundEvent, WindowHandle},
+use credentialsd_common::model::{
+    BackgroundEvent, Device, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.

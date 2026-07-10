@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
