@@ -36,7 +36,6 @@ pub struct CredentialPortalBackend {
 #[derive(Debug, Clone)]
 pub(crate) struct UiContext {
     parent_window: Option<WindowHandle>,
-    origin: String,
     r#type: Operation,
     devices: Vec<Device>,
     app_id: String,
@@ -55,7 +54,7 @@ impl CredentialPortalBackend {
         #[zbus(object_server)] object_server: &ObjectServer,
         handle: OwnedObjectPath,
         parent_window: Optional<WindowHandle>,
-        origin: String,
+        _origin: String,
         r#type: Operation,
         devices: Vec<Device>,
         app_id: String,
@@ -128,7 +127,6 @@ impl CredentialPortalBackend {
 
         let ui_context = UiContext {
             parent_window: parent_window.into(),
-            origin,
             r#type,
             devices,
             app_id,
