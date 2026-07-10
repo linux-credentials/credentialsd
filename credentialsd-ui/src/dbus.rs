@@ -251,20 +251,28 @@ impl CeremonyObject {
             };
         }));
 
-        // Assuming this is a PublicKey request, require the rp_id
-        let rp_id = self
-            .ui_context
-            .options
-            .rp_id
-            .as_ref()
-            .ok_or_else(|| {
-                {
-                    fdo::Error::InvalidArgs(
-                        "rp_id is required for public key credential requests".to_string(),
-                    )
-                }
-            })?
-            .to_string();
+        // TODO:
+        // - calculate the registrable domain of the origin's hostname using Public Suffix List.
+        // - if rp_id does not match origin, then send both origin's domain and the
+        // domain and RP ID, and follow the guidance in WebAuthn level 3 for
+        // displaying dialogs for cross-origin ceremonies.
+        // https://www.w3.org/TR/webauthn-3/#sctn-cross-origin-use
+        let rp_id = match self.ui_context.r#type {
+            Operation::PublicKeyCreate | Operation::PublicKeyGet => self
+                .ui_context
+                .options
+                .rp_id
+                .as_ref()
+                .ok_or_else(|| {
+                    {
+                        fdo::Error::InvalidArgs(
+                            "rp_id is required for public key credential requests".to_string(),
+                        )
+                    }
+                })?
+                .to_string(),
+        };
+
         let req = (
             ViewRequest {
                 operation: self.ui_context.r#type.clone(),
