@@ -438,38 +438,6 @@ impl From<NfcStateInternal> for NfcState {
     }
 }
 
-impl From<NfcState> for credentialsd_common::model::NfcState {
-    fn from(value: NfcState) -> Self {
-        Self::from(&value)
-    }
-}
-impl From<&NfcState> for credentialsd_common::model::NfcState {
-    fn from(value: &NfcState) -> Self {
-        match value {
-            NfcState::Idle => credentialsd_common::model::NfcState::Idle,
-            NfcState::Waiting => credentialsd_common::model::NfcState::Waiting,
-            NfcState::Connected => credentialsd_common::model::NfcState::Connected,
-            NfcState::NeedsPin { attempts_left, .. } => {
-                credentialsd_common::model::NfcState::NeedsPin {
-                    attempts_left: *attempts_left,
-                }
-            }
-            NfcState::NeedsUserVerification { attempts_left } => {
-                credentialsd_common::model::NfcState::NeedsUserVerification {
-                    attempts_left: *attempts_left,
-                }
-            }
-            NfcState::SelectingCredential { creds, .. } => {
-                credentialsd_common::model::NfcState::SelectingCredential {
-                    creds: creds.to_owned(),
-                }
-            }
-            NfcState::Completed => credentialsd_common::model::NfcState::Completed,
-            NfcState::Failed(err) => credentialsd_common::model::NfcState::Failed(err.to_owned()),
-        }
-    }
-}
-
 impl From<&NfcState> for BackgroundEvent {
     fn from(value: &NfcState) -> Self {
         match value {

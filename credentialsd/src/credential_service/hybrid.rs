@@ -225,19 +225,6 @@ impl From<HybridStateInternal> for HybridState {
     }
 }
 
-impl From<HybridState> for credentialsd_common::model::HybridState {
-    fn from(value: HybridState) -> Self {
-        match value {
-            HybridState::Init(qr_code) => credentialsd_common::model::HybridState::Started(qr_code),
-            HybridState::Connecting => credentialsd_common::model::HybridState::Connecting,
-            HybridState::Connected => credentialsd_common::model::HybridState::Connected,
-            HybridState::Completed => credentialsd_common::model::HybridState::Completed,
-            HybridState::UserCancelled => credentialsd_common::model::HybridState::UserCancelled,
-            HybridState::Failed => credentialsd_common::model::HybridState::Failed,
-        }
-    }
-}
-
 impl From<&HybridState> for BackgroundEvent {
     fn from(value: &HybridState) -> Self {
         match value {

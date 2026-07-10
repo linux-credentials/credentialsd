@@ -539,40 +539,6 @@ impl From<UsbStateInternal> for UsbState {
     }
 }
 
-impl From<UsbState> for credentialsd_common::model::UsbState {
-    fn from(value: UsbState) -> Self {
-        Self::from(&value)
-    }
-}
-impl From<&UsbState> for credentialsd_common::model::UsbState {
-    fn from(value: &UsbState) -> Self {
-        match value {
-            UsbState::Idle => credentialsd_common::model::UsbState::Idle,
-            UsbState::Waiting => credentialsd_common::model::UsbState::Waiting,
-            UsbState::SelectingDevice => credentialsd_common::model::UsbState::SelectingDevice,
-            UsbState::Connected => credentialsd_common::model::UsbState::Connected,
-            UsbState::NeedsPin { attempts_left, .. } => {
-                credentialsd_common::model::UsbState::NeedsPin {
-                    attempts_left: *attempts_left,
-                }
-            }
-            UsbState::NeedsUserVerification { attempts_left } => {
-                credentialsd_common::model::UsbState::NeedsUserVerification {
-                    attempts_left: *attempts_left,
-                }
-            }
-            UsbState::NeedsUserPresence => credentialsd_common::model::UsbState::NeedsUserPresence,
-            UsbState::SelectingCredential { creds, .. } => {
-                credentialsd_common::model::UsbState::SelectingCredential {
-                    creds: creds.to_owned(),
-                }
-            }
-            UsbState::Completed => credentialsd_common::model::UsbState::Completed,
-            UsbState::Failed(err) => credentialsd_common::model::UsbState::Failed(err.to_owned()),
-        }
-    }
-}
-
 impl From<&UsbState> for BackgroundEvent {
     fn from(value: &UsbState) -> Self {
         match value {
