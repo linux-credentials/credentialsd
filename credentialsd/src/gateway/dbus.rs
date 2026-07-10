@@ -10,12 +10,12 @@ use zbus::{
     Connection, DBusError,
 };
 
-use credentialsd_common::{model::WebAuthnError, server::WindowHandle};
+use credentialsd_common::server::WindowHandle;
 
 use crate::{
     gateway::{
         CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
-        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest,
+        GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WebAuthnError,
     },
     webauthn::AppId,
     DBUS_SERVICE_NAME,

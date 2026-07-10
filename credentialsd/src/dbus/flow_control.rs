@@ -13,7 +13,6 @@ use credentialsd_common::{
     memfd::read_secret,
     model::{
         Error as CredentialServiceError, Operation, PortalBackendOptions, UserInteractedEvent,
-        WebAuthnError,
     },
 };
 use futures_lite::{Stream, StreamExt};
@@ -24,7 +23,6 @@ use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::dbus::ui_control::Ceremony;
 use crate::dbus::UiControlServiceClient;
 use crate::{
     credential_service::UsbState,
@@ -35,6 +33,7 @@ use crate::{
     credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice},
     model::ClientDetails,
 };
+use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
 
 pub struct UiRequestContext {
     request: CredentialRequest,
