@@ -13,7 +13,7 @@ use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::model::{Device, HybridState, Operation, Transport, ViewUpdate};
+use credentialsd_common::model::{Device, Operation, Transport, ViewUpdate};
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
 

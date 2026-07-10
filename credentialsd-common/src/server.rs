@@ -7,11 +7,11 @@ use serde::{
     de::{DeserializeSeed, Error, Visitor},
 };
 use zvariant::{
-    self, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, Optional, OwnedFd, OwnedValue,
+    self, Array, DeserializeDict, DynamicDeserialize, Fd, NoneValue, OwnedFd, OwnedValue,
     SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{Device, Operation, UserInteractedEvent};
+use crate::model::UserInteractedEvent;
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U32, &Signature::Variant],
@@ -638,10 +638,7 @@ fn tag_value_to_struct(tag: u32, value: Option<Value<'_>>) -> Structure<'static>
 mod test {
     use std::os::fd::{FromRawFd, OwnedFd};
 
-    use zvariant::{
-        Type,
-        serialized::{Context, Data, Format},
-    };
+    use zvariant::Type;
 
     use super::{BackgroundEvent, Credential};
 
