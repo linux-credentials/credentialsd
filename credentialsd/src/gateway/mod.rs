@@ -62,8 +62,6 @@ impl From<RequestContext> for ClientDetails {
     fn from(value: RequestContext) -> Self {
         ClientDetails {
             app_id: value.app_id.as_ref().to_string(),
-            // TODO: put path in RequestContext
-            path: value.app_id.as_ref().to_string(),
             pid: value.pid,
         }
     }

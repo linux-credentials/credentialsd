@@ -105,7 +105,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
 
     let ClientDetails {
         app_id,
-        path: app_path,
         pid: app_pid,
     } = requesting_app;
     let handle: OwnedObjectPath = format!(
@@ -123,7 +122,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             initial_devices,
             app_id,
             app_pid,
-            app_path,
             PortalBackendOptions {
                 activation_token: activation_token.into(),
                 top_origin: top_origin.into(),

@@ -105,6 +105,5 @@ impl GetAssertionResponseInternal {
 
 pub struct ClientDetails {
     pub app_id: String,
-    pub path: String,
     pub pid: u32,
 }

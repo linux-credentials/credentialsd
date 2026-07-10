@@ -42,7 +42,6 @@ pub(crate) struct UiContext {
     app_id: String,
     app_display_name: String,
     app_pid: u32,
-    app_path: String,
     options: PortalBackendOptions,
 }
 
@@ -61,7 +60,6 @@ impl CredentialPortalBackend {
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
-        app_path: String,
         options: PortalBackendOptions,
     ) -> fdo::Result<()> {
         let Some(sender) = header.sender().map(|h| h.to_owned()) else {
@@ -136,7 +134,6 @@ impl CredentialPortalBackend {
             app_id,
             app_display_name,
             app_pid,
-            app_path,
             options,
         };
         let ui_events_forwarder_task = Arc::new(AsyncMutex::new(None));
