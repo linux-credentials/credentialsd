@@ -11,7 +11,7 @@ use zvariant::{
     SerializeDict, Signature, Str, Structure, StructureBuilder, Type, Value, signature::Fields,
 };
 
-use crate::model::{Device, Operation, RequestId, UserInteractedEvent};
+use crate::model::{Device, Operation, UserInteractedEvent};
 
 const TAG_VALUE_SIGNATURE: &Signature = &Signature::Structure(Fields::Static {
     fields: &[&Signature::U32, &Signature::Variant],

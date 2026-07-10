@@ -19,7 +19,7 @@ use zbus::{
 };
 
 use credentialsd_common::{
-    model::{Device, Operation, PortalBackendOptions, RequestId, UserInteractedEvent},
+    model::{Device, Operation, PortalBackendOptions, UserInteractedEvent},
     server::{BackgroundEvent, WindowHandle},
 };
 
@@ -38,7 +38,6 @@ pub(crate) struct UiContext {
     parent_window: Option<WindowHandle>,
     origin: String,
     r#type: Operation,
-    request_id: RequestId,
     devices: Vec<Device>,
     app_id: String,
     app_display_name: String,
@@ -59,7 +58,6 @@ impl CredentialPortalBackend {
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
-        request_id: RequestId,
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
@@ -134,7 +132,6 @@ impl CredentialPortalBackend {
             parent_window: parent_window.into(),
             origin,
             r#type,
-            request_id,
             devices,
             app_id,
             app_display_name,
@@ -271,7 +268,6 @@ impl CeremonyObject {
         let req = (
             ViewRequest {
                 operation: self.ui_context.r#type.clone(),
-                id: self.ui_context.request_id,
                 rp_id,
                 requesting_app: RequestingApplication {
                     path_or_app_id: self.ui_context.app_id.clone(),

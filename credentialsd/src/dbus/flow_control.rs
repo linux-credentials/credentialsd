@@ -139,7 +139,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             window_handle,
             origin,
             operation,
-            request_id,
             initial_devices,
             app_id,
             app_pid,

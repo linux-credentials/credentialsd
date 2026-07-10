@@ -6,7 +6,7 @@ mod gui;
 
 use std::error::Error;
 
-use credentialsd_common::model::{Device, Operation, RequestId};
+use credentialsd_common::model::{Device, Operation};
 use credentialsd_common::server::WindowHandle;
 
 use crate::dbus::CredentialPortalBackend;
@@ -61,9 +61,6 @@ pub struct RequestingApplication {
 #[derive(Clone, Debug)]
 pub struct ViewRequest {
     pub operation: Operation,
-
-    /// ID of the request.
-    pub id: RequestId,
 
     /// The RP ID
     pub rp_id: String,
