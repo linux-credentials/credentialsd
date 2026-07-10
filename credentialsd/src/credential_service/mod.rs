@@ -20,7 +20,7 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 
 use credentialsd_common::{
-    model::{Device, Error as CredentialServiceError, RequestId, Transport},
+    model::{Device, Error as CredentialServiceError, Transport},
     server::BackgroundEvent,
 };
 
@@ -35,6 +35,9 @@ use self::{
 };
 
 pub use usb::UsbState;
+
+/// Identifier for a request to be used for cancellation.
+pub type RequestId = u32;
 
 /// Process-wide in-memory store so a security key's pinUvAuthToken is reused across ceremonies.
 fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
