@@ -121,39 +121,6 @@ pub struct RequestingParty {
     pub origin: String,
 }
 
-// TODO: Move to credentialsd-ui
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ViewUpdate {
-    SetTitle {
-        title: String,
-        subtitle: String,
-        qr_prompt: String,
-        usb_prompt: String,
-    },
-    SetDevices(Vec<Device>),
-    // TODO: Fix this
-    SetCredentials(Vec<crate::server::Credential>),
-
-    WaitingForDevice(Device),
-    SelectingDevice,
-
-    NeedsPin {
-        attempts_left: Option<u32>,
-    },
-    NeedsUserVerification {
-        attempts_left: Option<u32>,
-    },
-    NeedsUserPresence,
-
-    HybridNeedsQrCode(String),
-    HybridConnecting,
-    HybridConnected,
-
-    Completed,
-    Cancelled,
-    Failed(String),
-}
-
 #[derive(Clone, Debug, Default)]
 pub enum HybridState {
     /// Default state, not listening for hybrid transport.
