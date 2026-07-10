@@ -36,13 +36,11 @@ pub struct CredentialPortalBackend {
 #[derive(Debug, Clone)]
 pub(crate) struct UiContext {
     parent_window: Option<WindowHandle>,
-    origin: String,
     r#type: Operation,
     devices: Vec<Device>,
     app_id: String,
     app_display_name: String,
     app_pid: u32,
-    app_path: String,
     options: PortalBackendOptions,
 }
 
@@ -56,12 +54,11 @@ impl CredentialPortalBackend {
         #[zbus(object_server)] object_server: &ObjectServer,
         handle: OwnedObjectPath,
         parent_window: Optional<WindowHandle>,
-        origin: String,
+        _origin: String,
         r#type: Operation,
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
-        app_path: String,
         options: PortalBackendOptions,
     ) -> fdo::Result<()> {
         let Some(sender) = header.sender().map(|h| h.to_owned()) else {
@@ -130,13 +127,11 @@ impl CredentialPortalBackend {
 
         let ui_context = UiContext {
             parent_window: parent_window.into(),
-            origin,
             r#type,
             devices,
             app_id,
             app_display_name,
             app_pid,
-            app_path,
             options,
         };
         let ui_events_forwarder_task = Arc::new(AsyncMutex::new(None));
@@ -251,20 +246,28 @@ impl CeremonyObject {
             };
         }));
 
-        // Assuming this is a PublicKey request, require the rp_id
-        let rp_id = self
-            .ui_context
-            .options
-            .rp_id
-            .as_ref()
-            .ok_or_else(|| {
-                {
-                    fdo::Error::InvalidArgs(
-                        "rp_id is required for public key credential requests".to_string(),
-                    )
-                }
-            })?
-            .to_string();
+        // TODO:
+        // - calculate the registrable domain of the origin's hostname using Public Suffix List.
+        // - if rp_id does not match origin, then send both origin's domain and the
+        // domain and RP ID, and follow the guidance in WebAuthn level 3 for
+        // displaying dialogs for cross-origin ceremonies.
+        // https://www.w3.org/TR/webauthn-3/#sctn-cross-origin-use
+        let rp_id = match self.ui_context.r#type {
+            Operation::PublicKeyCreate | Operation::PublicKeyGet => self
+                .ui_context
+                .options
+                .rp_id
+                .as_ref()
+                .ok_or_else(|| {
+                    {
+                        fdo::Error::InvalidArgs(
+                            "rp_id is required for public key credential requests".to_string(),
+                        )
+                    }
+                })?
+                .to_string(),
+        };
+
         let req = (
             ViewRequest {
                 operation: self.ui_context.r#type.clone(),

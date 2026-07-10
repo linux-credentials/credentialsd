@@ -29,7 +29,6 @@ pub trait UiController {
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
-        app_path: String,
         options: PortalBackendOptions,
     ) -> impl Future<Output = std::result::Result<Ceremony, Box<dyn Error>>> + Send;
 }
@@ -50,7 +49,6 @@ trait UiControlService2 {
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
-        app_path: String,
         options: PortalBackendOptions,
     ) -> fdo::Result<()>;
 }
@@ -118,7 +116,6 @@ impl UiController for UiControlServiceClient {
         devices: Vec<Device>,
         app_id: String,
         app_pid: u32,
-        app_path: String,
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
         let ceremony = CeremonyObjectProxy::new(&self.conn, handle.clone()).await?;
@@ -138,7 +135,6 @@ impl UiController for UiControlServiceClient {
                 devices,
                 app_id,
                 app_pid,
-                app_path,
                 options,
             )
             .await?;

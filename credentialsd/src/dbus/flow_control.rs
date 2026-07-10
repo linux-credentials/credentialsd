@@ -11,9 +11,7 @@ use async_trait::async_trait;
 use credentialsd_common::server::{BackgroundEvent, WindowHandle};
 use credentialsd_common::{
     memfd::read_secret,
-    model::{
-        Error as CredentialServiceError, Operation, PortalBackendOptions, UserInteractedEvent,
-    },
+    model::{Error as CredentialServiceError, PortalBackendOptions, UserInteractedEvent},
 };
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
@@ -92,28 +90,12 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
     let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
-    let operation = match &msg {
-        CredentialRequest::CreatePublicKeyCredentialRequest(_) => Operation::PublicKeyCreate,
-        CredentialRequest::GetPublicKeyCredentialRequest(_) => Operation::PublicKeyGet,
-    };
-    let rp_id = match &msg {
-        CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.clone(),
-        CredentialRequest::GetPublicKeyCredentialRequest(r) => r.relying_party_id.clone(),
-    };
+    let operation = msg.operation();
+    let rp_id = msg.relying_party_id().to_string();
 
-    // TODO: pass origin to this method so we can do this correctly.
-    let origin = match &msg {
-        CredentialRequest::CreatePublicKeyCredentialRequest(r) => r.origin.clone(),
-        CredentialRequest::GetPublicKeyCredentialRequest(r) => {
-            format!("https://{}", r.relying_party_id.clone())
-        }
-    };
+    let origin = msg.origin().to_string();
 
-    // TODO: pass top_origin to this method so we can do this correctly.
-    let top_origin = match &msg {
-        CredentialRequest::CreatePublicKeyCredentialRequest(r) => None,
-        CredentialRequest::GetPublicKeyCredentialRequest(r) => None,
-    };
+    let top_origin = msg.top_origin().map(|o| o.to_string());
     let initial_devices = svc
         .lock()
         .await
@@ -123,7 +105,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
 
     let ClientDetails {
         app_id,
-        path: app_path,
         pid: app_pid,
     } = requesting_app;
     let handle: OwnedObjectPath = format!(
@@ -141,7 +122,6 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             initial_devices,
             app_id,
             app_pid,
-            app_path,
             PortalBackendOptions {
                 activation_token: activation_token.into(),
                 top_origin: top_origin.into(),
