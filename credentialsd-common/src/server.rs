@@ -1,6 +1,6 @@
 //! Types for serializing across D-Bus instances
 
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use serde::{
     Deserialize, Serialize,
@@ -272,55 +272,6 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
     }
 }
 
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreateCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
-    #[zvariant(rename = "type")]
-    pub r#type: String,
-    #[zvariant(rename = "publicKey")]
-    pub public_key: Option<CreatePublicKeyCredentialRequest>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreateCredentialResponse {
-    #[zvariant(rename = "type")]
-    r#type: String,
-    public_key: Option<CreatePublicKeyCredentialResponse>,
-}
-
-impl NoneValue for CreateCredentialResponse {
-    type NoneType = HashMap<String, OwnedValue>;
-
-    fn null_value() -> Self::NoneType {
-        HashMap::new()
-    }
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreatePublicKeyCredentialRequest {
-    pub request_json: String,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct CreatePublicKeyCredentialResponse {
-    pub registration_response_json: String,
-}
-
-impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
-    fn from(response: CreatePublicKeyCredentialResponse) -> Self {
-        CreateCredentialResponse {
-            // TODO: Decide on camelCase or kebab-case for cred types
-            r#type: "public-key".to_string(),
-            public_key: Some(response),
-        }
-    }
-}
-
 #[derive(Debug, Clone, SerializeDict, DeserializeDict, PartialEq, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct Credential {
@@ -375,45 +326,6 @@ impl TryFrom<&Value<'_>> for crate::model::Error {
             s => crate::model::Error::Internal(String::from(s)),
         };
         Ok(err)
-    }
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
-    #[zvariant(rename = "publicKey")]
-    pub public_key: Option<GetPublicKeyCredentialRequest>,
-}
-
-#[derive(Clone, Debug, DeserializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetPublicKeyCredentialRequest {
-    pub request_json: String,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetCredentialResponse {
-    #[zvariant(rename = "type")]
-    r#type: String,
-    public_key: Option<GetPublicKeyCredentialResponse>,
-}
-
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-pub struct GetPublicKeyCredentialResponse {
-    pub authentication_response_json: String,
-}
-
-impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
-    fn from(response: GetPublicKeyCredentialResponse) -> Self {
-        GetCredentialResponse {
-            // TODO: Decide on camelCase or kebab-case for cred types
-            r#type: "public-key".to_string(),
-            public_key: Some(response),
-        }
     }
 }
 

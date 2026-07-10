@@ -2,13 +2,7 @@
 //!
 //! Types shared between components within this service belong in credentialsd_common::model.
 
-use credentialsd_common::{
-    model::WebAuthnError,
-    server::{
-        CreateCredentialRequest, CreatePublicKeyCredentialResponse, GetCredentialRequest,
-        GetPublicKeyCredentialResponse,
-    },
-};
+use credentialsd_common::model::WebAuthnError;
 use libwebauthn::ops::webauthn::idl::origin::{
     Origin as LibwebauthnOrigin, RequestOrigin as LibwebauthnRequestOrigin,
 };
@@ -18,9 +12,13 @@ use libwebauthn::ops::webauthn::{
     ReqwestRelatedOriginsSource,
 };
 
-use crate::model::{GetAssertionResponseInternal, MakeCredentialResponseInternal};
+use crate::gateway::{GetCredentialRequest, GetPublicKeyCredentialResponse};
 use crate::webauthn::{
     GetAssertionRequest, MakeCredentialRequest, NavigationContext, Origin, WebAuthnIDLResponse,
+};
+use crate::{
+    gateway::{CreateCredentialRequest, CreatePublicKeyCredentialResponse},
+    model::{GetAssertionResponseInternal, MakeCredentialResponseInternal},
 };
 
 impl TryFrom<&Origin> for LibwebauthnOrigin {
