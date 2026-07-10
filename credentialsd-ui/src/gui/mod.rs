@@ -43,10 +43,10 @@ fn run_gui(
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
     let tx_event2 = tx_event.clone();
     let cancel_task = async_std::task::spawn(async move {
-        if let Ok(_) = cancel_rx.recv().await {
-            if tx_event2.send(ViewEvent::UserCancelled).await.is_err() {
-                tracing::error!("Failed to send cancellation to view model");
-            }
+        if let Ok(_) = cancel_rx.recv().await
+            && tx_event2.send(ViewEvent::UserCancelled).await.is_err()
+        {
+            tracing::error!("Failed to send cancellation to view model");
         }
     });
     let event_loop = async_std::task::spawn(async move {

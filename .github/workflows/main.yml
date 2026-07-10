@@ -85,7 +85,7 @@ jobs:
         working-directory: build/
 
       - name: Check clippy recommendations
-        run: cargo clippy --locked --workspace --all-features --target-dir build/target
+        run: cargo clippy --locked --workspace --all-features --target-dir build/target -- -Dwarnings
 
       - name: Check formatting
         run: cargo fmt --all --check

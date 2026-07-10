@@ -72,7 +72,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
                 activation_token,
             )
             .await;
-            if let Err(_) = response_channel.send(response) {
+            if response_channel.send(response).is_err() {
                 tracing::error!(
                     "Received response to credential request, but failed to forward it to gateway"
                 );
@@ -179,7 +179,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                 }
                 UserInteractedEvent::ClientPinEntered(pin_fd) => {
                     let pin_fd = OwnedFd::from(pin_fd);
-                    let pin = match read_secret(pin_fd.into())
+                    let pin = match read_secret(pin_fd)
                         .map_err(|err| format!("Could not read from file descriptor: {err}"))
                         .and_then(|bytes| {
                             String::from_utf8(bytes).map_err(|err| {
@@ -227,8 +227,8 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     let cred_response = request_rx
         .await
         .expect("Credential service not to drop request channel before responding.");
-    let f = cred_response.map_err(|err| err.into());
-    f
+
+    cred_response
 }
 
 fn forward_background_event_stream(

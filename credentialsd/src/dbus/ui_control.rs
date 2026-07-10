@@ -19,6 +19,8 @@ use credentialsd_common::model::{
 
 /// Used by the credential service to control the UI.
 pub trait UiController {
+    // D-Bus has a lot of arguments
+    #[expect(clippy::too_many_arguments)]
     fn initialize(
         &self,
         handle: OwnedObjectPath,
@@ -39,6 +41,8 @@ pub trait UiController {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait UiControlService2 {
+    // D-Bus has a lot of arguments
+    #[expect(clippy::too_many_arguments)]
     fn initialize(
         &self,
         handle: ObjectPath<'_>,
@@ -153,7 +157,7 @@ async fn forward_ui_events(
     while let Some(signal) = ui_event_stream.next().await {
         tracing::trace!(?signal, "Received event from UI");
         let event = signal.args()?.update;
-        if let Err(_) = tx.send(event).await {
+        if tx.send(event).await.is_err() {
             tracing::trace!("credential service event listener stopped listening for UI events. Ending event stream listener");
             break;
         }

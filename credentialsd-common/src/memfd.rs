@@ -76,12 +76,12 @@ impl Mmap {
                 .ok_or_else(|| io::Error::other("mmap returned NULL pointer"))?
         };
 
-        return Ok(Self {
+        Ok(Self {
             inner: ptr,
             fd,
             size,
             pos: 0,
-        });
+        })
     }
 
     fn into_fd(self) -> OwnedFd {

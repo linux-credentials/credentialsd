@@ -281,9 +281,9 @@ async fn should_trust_app_id(pid: u32) -> bool {
     );
     if !trusted_callers.as_slice().contains(&exe_path) {
         tracing::warn!(?exe_path, "Request received from untrusted caller");
-        return false;
+        false
     } else {
-        return true;
+        true
     }
 }
 
@@ -426,6 +426,8 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
     }
 }
 
+// We want to keep these aligned with how the spec names them.
+#[expect(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum WebAuthnError {
     /// The ceremony was cancelled by an AbortController. See § 5.6 Abort

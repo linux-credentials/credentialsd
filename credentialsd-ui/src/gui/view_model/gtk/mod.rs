@@ -158,7 +158,7 @@ impl ViewModel {
                                         let localized = ngettext(
                                             "Enter your PIN. One attempt remaining.",
                                             "Enter your PIN. %d attempts remaining.",
-                                            left.into(),
+                                            left,
                                         );
                                         localized.replace("%d", &format!("{}", left))
                                     } else {
@@ -173,7 +173,7 @@ impl ViewModel {
                                             let localized = ngettext(
                                                 "Touch your device again. One attempt remaining.",
                                                 "Touch your device again. %d attempts remaining.",
-                                                left.into(),
+                                                left,
                                             );
                                             localized.replace("%d", &format!("{}", left))
                                         }
@@ -192,7 +192,7 @@ impl ViewModel {
                                 }
                                 ViewUpdate::HybridConnecting => {
                                     view_model.set_qr_code_visible(false);
-                                    _ = view_model.qr_code_paintable().take();
+                                    _ = view_model.qr_code_paintable();
                                     view_model.waiting_for_device(&Device {
                                         id: "x".to_string(),
                                         transport: Transport::HybridQr,
@@ -204,7 +204,7 @@ impl ViewModel {
                                 }
                                 ViewUpdate::HybridConnected => {
                                     view_model.set_qr_code_visible(false);
-                                    _ = view_model.qr_code_paintable().take();
+                                    _ = view_model.qr_code_paintable();
                                     view_model.set_prompt(gettext(
                                         "Device connected. Follow the instructions on your device",
                                     ));

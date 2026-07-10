@@ -55,6 +55,8 @@ struct CredentialPortalGateway {
 /// The D-Bus interface is responsible for authorizing the client and collecting
 /// the contextual information about the client to pass onto the GatewayService
 /// for evaluation.
+// D-Bus has long argument signatures.
+#[expect(clippy::too_many_arguments)]
 #[interface(name = "org.freedesktop.handler.portal.experimental.Credential")]
 impl CredentialPortalGateway {
     #[zbus(out_args("response", "results"))]
@@ -87,7 +89,7 @@ impl CredentialPortalGateway {
             &header,
             claimed_app_id,
             origin.clone(),
-            top_origin.clone().into(),
+            top_origin.clone(),
         )
         .await;
         let context = match app_validation_result {
@@ -111,12 +113,7 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_create_credential(
-                request,
-                context,
-                parent_window.into(),
-                activation_token.into(),
-            )
+            .handle_create_credential(request, context, parent_window.into(), activation_token)
             .await
             .map_err(Error::from);
 
@@ -143,7 +140,7 @@ impl CredentialPortalGateway {
             &header,
             claimed_app_id,
             origin.clone(),
-            top_origin.clone().into(),
+            top_origin.clone(),
         )
         .await;
 
@@ -172,12 +169,7 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_get_credential(
-                request,
-                context,
-                parent_window.into(),
-                activation_token.into(),
-            )
+            .handle_get_credential(request, context, parent_window.into(), activation_token)
             .await
             .map_err(Error::from);
         response.into()
@@ -292,7 +284,7 @@ impl From<WebAuthnError> for Error {
 #[derive(Serialize)]
 enum PortalResponse {
     Success = 0,
-    Cancelled = 1,
+    // Cancelled = 1,
     Other = 2,
 }
 
