@@ -145,16 +145,6 @@ pub(crate) enum NavigationContext {
     CrossOrigin((Origin, Origin)),
 }
 
-impl NavigationContext {
-    /// Retrieve the origin from the context.
-    pub(crate) fn origin(&self) -> &Origin {
-        match self {
-            NavigationContext::SameOrigin(origin) => origin,
-            NavigationContext::CrossOrigin((origin, _)) => origin,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum OriginParseError {
     InvalidScheme,

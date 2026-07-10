@@ -1,3 +1,4 @@
+use credentialsd_common::model::Operation;
 use libwebauthn::ops::webauthn::{
     Assertion, GetAssertionRequest, MakeCredentialRequest, MakeCredentialResponse,
 };
@@ -6,6 +7,36 @@ use libwebauthn::ops::webauthn::{
 pub enum CredentialRequest {
     CreatePublicKeyCredentialRequest(MakeCredentialRequest),
     GetPublicKeyCredentialRequest(GetAssertionRequest),
+}
+
+impl CredentialRequest {
+    pub fn operation(&self) -> Operation {
+        match self {
+            Self::CreatePublicKeyCredentialRequest(_) => Operation::PublicKeyCreate,
+            Self::GetPublicKeyCredentialRequest(_) => Operation::PublicKeyGet,
+        }
+    }
+
+    pub fn relying_party_id(&self) -> &str {
+        match self {
+            Self::CreatePublicKeyCredentialRequest(r) => r.relying_party.id.as_str(),
+            Self::GetPublicKeyCredentialRequest(r) => r.relying_party_id.as_str(),
+        }
+    }
+
+    pub fn origin(&self) -> &str {
+        match self {
+            Self::CreatePublicKeyCredentialRequest(r) => r.origin.as_str(),
+            Self::GetPublicKeyCredentialRequest(r) => r.origin.as_str(),
+        }
+    }
+
+    pub fn top_origin(&self) -> Option<&str> {
+        match self {
+            Self::CreatePublicKeyCredentialRequest(r) => r.top_origin.as_deref(),
+            Self::GetPublicKeyCredentialRequest(r) => r.top_origin.as_deref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

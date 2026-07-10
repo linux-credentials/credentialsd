@@ -347,8 +347,6 @@ fn check_origin_from_privileged_client(
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct GetCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
     #[zvariant(rename = "publicKey")]
     pub public_key: Option<GetPublicKeyCredentialRequest>,
 }
@@ -386,8 +384,6 @@ impl From<GetPublicKeyCredentialResponse> for GetCredentialResponse {
 #[derive(Clone, Debug, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreateCredentialRequest {
-    pub origin: Option<String>,
-    pub is_same_origin: Option<bool>,
     #[zvariant(rename = "type")]
     pub r#type: String,
     #[zvariant(rename = "publicKey")]

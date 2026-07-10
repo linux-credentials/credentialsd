@@ -103,8 +103,6 @@ impl CredentialPortalGateway {
         );
 
         let request = CreateCredentialRequest {
-            origin: Some(origin.clone()),
-            is_same_origin: Some(top_origin.is_none()),
             r#type: cred_type.to_string(),
             public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
         };
@@ -167,8 +165,6 @@ impl CredentialPortalGateway {
         );
 
         let request = GetCredentialRequest {
-            origin: Some(origin),
-            is_same_origin: Some(top_origin.is_none()),
             public_key: Some(GetPublicKeyCredentialRequest { request_json }),
         };
 
