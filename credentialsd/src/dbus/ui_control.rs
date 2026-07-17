@@ -10,7 +10,7 @@ use tokio::sync::{
 use zbus::{
     fdo, proxy,
     zvariant::{ObjectPath, Optional, OwnedObjectPath},
-    Connection,
+    Connection, MatchRule, MessageStream,
 };
 
 use credentialsd_common::model::{
@@ -21,9 +21,9 @@ use credentialsd_common::model::{
 pub trait UiController {
     // D-Bus has a lot of arguments
     #[expect(clippy::too_many_arguments)]
-    fn initialize(
+    fn create_session(
         &self,
-        handle: OwnedObjectPath,
+        session_handle: OwnedObjectPath,
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -40,12 +40,12 @@ pub trait UiController {
     default_service = "xyz.iinuwa.credentialsd.UiControl",
     default_path = "/org/freedesktop/portal/desktop"
 )]
-trait UiControlService2 {
+trait UiControlService {
     // D-Bus has a lot of arguments
     #[expect(clippy::too_many_arguments)]
-    fn initialize(
+    fn create_session(
         &self,
-        handle: ObjectPath<'_>,
+        session_handle: ObjectPath<'_>,
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -54,12 +54,26 @@ trait UiControlService2 {
         app_pid: u32,
         options: PortalBackendOptions,
     ) -> fdo::Result<()>;
+
+    async fn notify_state_changed(
+        &self,
+        session_handle: ObjectPath<'_>,
+        event: BackgroundEvent,
+    ) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn user_interacted(
+        &self,
+        session_handle: ObjectPath<'_>,
+        update: UserInteractedEvent,
+    ) -> zbus::Result<()>;
 }
 
 #[derive(Clone, Debug)]
 pub struct Ceremony {
-    proxy: Arc<CeremonyObjectProxy<'static>>,
+    proxy: Arc<UiControlServiceProxy<'static>>,
     ui_events_rx: Arc<AsyncMutex<Receiver<UserInteractedEvent>>>,
+    session_handle: OwnedObjectPath,
 }
 
 impl Ceremony {
@@ -68,7 +82,11 @@ impl Ceremony {
     }
 
     pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
-        if let Err(err) = self.proxy.notify_state_changed(event).await {
+        if let Err(err) = self
+            .proxy
+            .notify_state_changed(self.session_handle.as_ref(), event)
+            .await
+        {
             match err {
                 fdo::Error::UnknownObject(description) => {
                     tracing::error!(%description, "Flow D-Bus object no longer available at path");
@@ -80,18 +98,13 @@ impl Ceremony {
         Ok(())
     }
 }
+
 #[proxy(
     gen_blocking = false,
-    interface = "org.freedesktop.impl.portal.experimental.Credential.Ceremony",
-    default_service = "xyz.iinuwa.credentialsd.UiControl"
+    interface = "org.freedesktop.impl.portal.Session"
 )]
-trait CeremonyObject {
-    async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()>;
-
-    async fn cancel(&self) -> fdo::Result<()>;
-
-    #[zbus(signal)]
-    async fn user_interacted(&self, update: UserInteractedEvent) -> zbus::Result<()>;
+trait CeremonySession {
+    async fn close(&self) -> fdo::Result<()>;
 }
 
 #[derive(Debug)]
@@ -103,16 +116,12 @@ impl UiControlServiceClient {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
     }
-
-    async fn proxy2(&self) -> Result<UiControlService2Proxy<'_>, zbus::Error> {
-        UiControlService2Proxy::new(&self.conn).await
-    }
 }
 
 impl UiController for UiControlServiceClient {
-    async fn initialize(
+    async fn create_session(
         &self,
-        handle: OwnedObjectPath,
+        session_handle: OwnedObjectPath,
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
@@ -121,17 +130,13 @@ impl UiController for UiControlServiceClient {
         app_pid: u32,
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
-        let ceremony = CeremonyObjectProxy::new(&self.conn, handle.clone()).await?;
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
-        let from_ui_tx2 = from_ui_tx.clone();
-        let ui_event_stream = ceremony.receive_user_interacted().await?;
-        tokio::task::spawn(async move {
-            _ = forward_ui_events(ui_event_stream, from_ui_tx2).await;
-        });
-        self.proxy2()
-            .await?
-            .initialize(
-                handle.as_ref(),
+        subscribe_ui_events(self.conn.clone(), session_handle.clone(), from_ui_tx).await?;
+
+        let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
+        backend_proxy
+            .create_session(
+                session_handle.as_ref(),
                 parent_window.into(),
                 origin,
                 r#type,
@@ -141,27 +146,60 @@ impl UiController for UiControlServiceClient {
                 options,
             )
             .await?;
-        tracing::debug!(path = ?handle, "Path initialized");
+        tracing::debug!(path = ?session_handle, "Session initialized");
         Ok(Ceremony {
-            proxy: Arc::new(ceremony),
+            proxy: Arc::new(backend_proxy),
             ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
+            session_handle,
         })
     }
 }
 
-async fn forward_ui_events(
-    mut ui_event_stream: UserInteractedStream,
+async fn subscribe_ui_events(
+    connection: Connection,
+    session_handle: OwnedObjectPath,
     tx: mpsc::Sender<UserInteractedEvent>,
-) -> Result<(), Box<dyn Error>> {
-    tracing::debug!("Listening for events from UI");
-    while let Some(signal) = ui_event_stream.next().await {
-        tracing::trace!(?signal, "Received event from UI");
-        let event = signal.args()?.update;
-        if tx.send(event).await.is_err() {
-            tracing::trace!("credential service event listener stopped listening for UI events. Ending event stream listener");
-            break;
+) -> zbus::Result<()> {
+    let match_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.impl.portal.experimental.Credential")?
+        .member("UserInteracted")?
+        .arg_path(0, session_handle.clone())?
+        .build();
+
+    let session_handle2 = session_handle.clone();
+    let mut ui_event_stream = MessageStream::for_match_rule(match_rule, &connection, Some(16)).await?
+        .filter_map(move |response| match response {
+            Ok(msg) => Some(msg),
+            Err(err) => {
+                tracing::error!(%session_handle, %err, "Error receiving a message the UserInteracted stream");
+                None
+            }
+        })
+        .filter_map(move |msg| match UserInteracted::from_message(msg) {
+            Some(ui_event) => Some(ui_event),
+            None => {
+                tracing::error!(session_handle = %session_handle2, "Error parsing message as {}", stringify!(UserInteracted));
+                None
+            },
+        });
+
+    // Forward the events to the receiver in the background.
+    tokio::task::spawn(async move {
+        // _ = forward_ui_events(Box::pin(ui_event_stream), from_ui_tx2).await;
+        tracing::debug!("Listening for events from UI");
+        while let Some(signal) = ui_event_stream.next().await {
+            tracing::trace!(?signal, "Received event from UI");
+            let event = signal.args()?.update;
+            if tx.send(event).await.is_err() {
+                tracing::trace!(
+                    "UI event listener stopped listening events. Ending event stream listener"
+                );
+                break;
+            }
         }
-    }
-    tracing::trace!("Stopping UI event forwarder");
+        tracing::trace!("Stopping UI event forwarder");
+        Ok::<_, zbus::Error>(())
+    });
     Ok(())
 }

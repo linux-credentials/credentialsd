@@ -55,7 +55,9 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
     let task = tokio::spawn(async move {
         while let Some(ui_request_ctx) = listener.recv().await {
             let svc = svc2.clone();
+
             let ui_control_client = UiControlServiceClient::new(conn.clone());
+
             let UiRequestContext {
                 request,
                 app,
@@ -63,6 +65,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
                 activation_token,
                 response_channel,
             } = ui_request_ctx;
+
             let response = handle(
                 svc,
                 ui_control_client,
@@ -72,6 +75,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
                 activation_token,
             )
             .await;
+
             if response_channel.send(response).is_err() {
                 tracing::error!(
                     "Received response to credential request, but failed to forward it to gateway"
@@ -110,13 +114,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         pid: app_pid,
     } = requesting_app;
     let handle: OwnedObjectPath = format!(
-        "/org/freedesktop/portal/desktop/request/CREDENTIALSD_{}",
+        "/org/freedesktop/portal/desktop/session/CREDENTIALSD_{}",
         rand::random::<u32>()
     )
     .try_into()
     .expect("valid object path");
     let flow = match ui_control_client
-        .initialize(
+        .create_session(
             handle,
             window_handle,
             origin,

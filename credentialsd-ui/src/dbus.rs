@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use async_std::{
     channel::{self, Receiver, Sender},
@@ -8,14 +11,15 @@ use async_std::{
 use futures_lite::{FutureExt, StreamExt};
 use gio_unix::DesktopAppInfo;
 use gio_unix::prelude::AppInfoExt;
+use tracing::Instrument;
 use zbus::{
     Connection, ObjectServer,
     fdo::{self, DBusProxy},
     interface,
     message::Header,
     names::{BusName, OwnedUniqueName},
-    object_server::SignalEmitter,
-    zvariant::{Optional, OwnedObjectPath},
+    object_server::{InterfaceRef, SignalEmitter},
+    zvariant::{ObjectPath, Optional, OwnedObjectPath},
 };
 
 use credentialsd_common::model::{
@@ -48,12 +52,13 @@ pub(crate) struct UiContext {
 impl CredentialPortalBackend {
     // D-Bus has long argument signatures.
     #[expect(clippy::too_many_arguments)]
-    async fn initialize(
+    async fn create_session(
         &self,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
-        handle: OwnedObjectPath,
+        #[zbus(signal_emitter)] signal_emitter: SignalEmitter<'_>,
+        session_handle: OwnedObjectPath,
         parent_window: Optional<WindowHandle>,
         _origin: String,
         r#type: Operation,
@@ -76,7 +81,7 @@ impl CredentialPortalBackend {
             connection,
             object_server.to_owned(),
             sender.to_owned().into(),
-            handle.clone(),
+            session_handle.clone(),
         )
         .await?;
 
@@ -99,29 +104,81 @@ impl CredentialPortalBackend {
             options,
         };
         let ui_events_forwarder_task = Arc::new(AsyncMutex::new(None));
-        let mut ceremony = CeremonyObject {
+        let ceremony = CeremonyObject {
             ui_context,
             request_tx: self.request_tx.clone(),
             return_address: sender.to_owned().into(),
             ui_events_forwarder_task: ui_events_forwarder_task.clone(),
             bg_events_tx: None,
+            session_handle: session_handle.clone(),
         };
-        let request = CeremonyRequest {
+
+        let mut session = CeremonySession::new(
             ui_events_forwarder_task,
-            cancel_task: Arc::new(AsyncMutex::new(Some(cancel_task))),
+            Arc::new(AsyncMutex::new(Some(cancel_task))),
             client_cancelled_tx,
-        };
-        object_server.at(handle.clone(), request).await?;
-
-        let emitter = SignalEmitter::new(connection, handle.clone())?;
-        ceremony
-            .start(gui_stopped_tx, cancel_gui_rx, emitter.to_owned())
+            ceremony,
+            session_handle.clone(),
+        );
+        session
+            .start(gui_stopped_tx, cancel_gui_rx, signal_emitter.to_owned())
             .await?;
-        object_server.at(handle, ceremony).await?;
+        let session_created = object_server.at(session_handle.clone(), session).await?;
+        if !session_created {
+            tracing::warn!(%session_handle, "Client requested session that already exists");
+            return Err(fdo::Error::Failed("Could not create session".to_string()));
+        }
 
-        tracing::debug!("Received UI launch request");
+        tracing::debug!(%session_handle, "Received UI launch request");
         Ok(())
     }
+
+    async fn notify_state_changed(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        event: BackgroundEvent,
+    ) -> fdo::Result<()> {
+        let span = tracing::info_span!("NotifyStateChanged", %session_handle);
+        match object_server
+            .interface::<_, CeremonySession>(&session_handle)
+            .instrument(span)
+            .await
+        {
+            Ok(session_iface) => {
+                let session = session_iface.get_mut().await;
+                if let Err(err) = session.ceremony.on_state_changed(event).await {
+                    tracing::debug!(
+                        %err, "Error occurred while forwarding state update to ceremony session. Closing session."
+                    );
+                    CeremonySession::shutdown(object_server, session_handle).await?;
+                    return Err(fdo::Error::Failed(
+                        "Error sending state notification. Closing session.".to_string(),
+                    ));
+                };
+                Ok(())
+            }
+            Err(zbus::Error::InterfaceNotFound) => {
+                tracing::info!(%session_handle, "No session exists at the requested path");
+                Err(fdo::Error::Failed(format!(
+                    "No session exists at {session_handle}"
+                )))
+            }
+            Err(err) => {
+                tracing::error!(%session_handle, %err, "Unknown error occurred while looking up session");
+                Err(fdo::Error::Failed(format!(
+                    "Unknown error occurred while looking up session for {session_handle}"
+                )))
+            }
+        }
+    }
+
+    #[zbus(signal)]
+    async fn user_interacted(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        event: &UserInteractedEvent,
+    ) -> zbus::Result<()>;
 }
 
 struct CancelHandle {
@@ -135,7 +192,7 @@ async fn setup_cancellation(
     connection: &Connection,
     object_server: ObjectServer,
     sender: OwnedUniqueName,
-    object_path: OwnedObjectPath,
+    session_handle: OwnedObjectPath,
 ) -> fdo::Result<CancelHandle> {
     let (client_cancelled_tx, client_cancelled_rx) = channel::bounded(1);
     let (gui_stopped_tx, gui_stopped_rx) = channel::bounded(1);
@@ -161,18 +218,16 @@ async fn setup_cancellation(
         if cancel_gui_tx.send(()).await.is_err() {
             tracing::error!("Failed to send cancellation request to GUI");
         };
-        if let Err(err) = object_server
-            .remove::<CeremonyObject, _>(&object_path)
-            .await
-        {
-            tracing::warn!(%object_path, %err, "Failed to remove Ceremony request");
-        }
-        if let Err(err) = object_server
-            .remove::<CeremonyRequest, _>(&object_path)
-            .await
-        {
-            tracing::warn!(%object_path, %err, "Failed to remove org.freedesktop.impl.portal.Request");
-        }
+
+        match CeremonySession::shutdown(&object_server, session_handle.as_ref()).await {
+            Ok(_) => {}
+            Err(zbus::Error::InterfaceNotFound) => {
+                tracing::debug!(%session_handle, "Session handle not found");
+            }
+            Err(err) => {
+                tracing::error!(%session_handle, %err, "Error occurred while shutting down session");
+            }
+        };
     });
     Ok(CancelHandle {
         cancel_task,
@@ -224,11 +279,11 @@ pub struct CeremonyObject {
     pub return_address: OwnedUniqueName,
     ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     bg_events_tx: Option<Sender<BackgroundEvent>>,
+    session_handle: OwnedObjectPath,
 }
 
 impl CeremonyObject {
     /// Start the UI ceremony with an initial set of available credential interfaces.
-    /// Call this method after subscribing to the signals.
     async fn start(
         &mut self,
         stopped_tx: Sender<fdo::Result<()>>,
@@ -250,13 +305,15 @@ impl CeremonyObject {
         self.bg_events_tx = Some(bg_events_tx);
 
         let emitter = emitter
-            .set_destination(BusName::Unique((&self.return_address).into()))
+            .set_destination(BusName::Unique(self.return_address.as_ref()))
             .to_owned();
+        let session_handle = self.session_handle.clone();
         *ui_events_task = Some(async_std::task::spawn(async move {
             while let Ok(ui_event) = ui_events_rx.recv().await {
-                tracing::trace!(?ui_event, "Sending UI event signal to portal");
-                if emitter.user_interacted(&ui_event).await.is_err() {
-                    tracing::trace!("Failed to send UI event signal.");
+                if let Err(err) =
+                    Self::on_user_interacted(&emitter, session_handle.as_ref(), &ui_event).await
+                {
+                    tracing::trace!(%session_handle, %err, "Failed to send UI event signal.");
                     break;
                 }
             }
@@ -311,11 +368,8 @@ impl CeremonyObject {
         }
         Ok(())
     }
-}
 
-#[interface(name = "org.freedesktop.impl.portal.experimental.Credential.Ceremony")]
-impl CeremonyObject {
-    async fn notify_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()> {
+    async fn on_state_changed(&self, event: BackgroundEvent) -> fdo::Result<()> {
         tracing::trace!(?event, "Received background event");
         if let Some(tx) = &self.bg_events_tx {
             if tx.send(event).await.is_ok() {
@@ -328,23 +382,33 @@ impl CeremonyObject {
         Err(fdo::Error::Failed("Failed to handle event".to_string()))
     }
 
-    #[zbus(signal)]
-    async fn user_interacted(
-        emitter: SignalEmitter<'_>,
-        event: &UserInteractedEvent,
-    ) -> zbus::Result<()>;
+    async fn on_user_interacted(
+        emitter: &SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        ui_event: &UserInteractedEvent,
+    ) -> zbus::Result<()> {
+        tracing::trace!(?ui_event, "Sending UI event signal to portal");
+        emitter.user_interacted(session_handle, &ui_event).await
+    }
 }
 
-struct CeremonyRequest {
+struct CeremonySession {
     ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     cancel_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     client_cancelled_tx: Sender<fdo::Result<()>>,
+    ceremony: CeremonyObject,
+    object_path: OwnedObjectPath,
+    emit_closed_signal: AtomicBool,
 }
 
-#[interface(name = "org.freedesktop.impl.portal.Request")]
-impl CeremonyRequest {
-    async fn close(&mut self) -> fdo::Result<()> {
-        tracing::debug!("Client requested cancellation");
+#[interface(name = "org.freedesktop.impl.portal.Session")]
+impl CeremonySession {
+    async fn close(
+        &mut self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+    ) -> fdo::Result<()> {
+        let session_handle = &self.object_path;
+        tracing::debug!(%session_handle, "Client requested cancellation");
         if let Some(task) = self.ui_events_forwarder_task.lock().await.take() {
             task.cancel().await;
         }
@@ -352,8 +416,78 @@ impl CeremonyRequest {
             task.cancel().await;
         }
         if self.client_cancelled_tx.send(Ok(())).await.is_err() {
-            tracing::warn!("Request already cancelled");
+            tracing::warn!(%session_handle, "Session already cancelled");
         }
+        // Don't emit the signal when the caller initiates close
+        self.emit_closed_signal.store(false, Ordering::Relaxed);
+        tracing::debug!(%session_handle, "Removing session");
+        if let Err(err) = Self::shutdown(object_server, session_handle.as_ref()).await {
+            tracing::warn!(%session_handle, %err, "Failed to tear down session");
+        };
         Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn closed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+}
+
+impl CeremonySession {
+    fn new(
+        ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
+        cancel_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
+        client_cancelled_tx: Sender<fdo::Result<()>>,
+        ceremony: CeremonyObject,
+        object_path: OwnedObjectPath,
+    ) -> Self {
+        Self {
+            ui_events_forwarder_task,
+            cancel_task,
+            client_cancelled_tx,
+            ceremony,
+            object_path,
+            emit_closed_signal: AtomicBool::new(true),
+        }
+    }
+
+    async fn start(
+        &mut self,
+        stopped_tx: Sender<fdo::Result<()>>,
+        cancel_rx: Receiver<()>,
+        emitter: SignalEmitter<'static>,
+    ) -> fdo::Result<()> {
+        self.ceremony.start(stopped_tx, cancel_rx, emitter).await
+    }
+
+    async fn shutdown(
+        object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+    ) -> zbus::Result<()> {
+        let iface: InterfaceRef<CeremonySession> =
+            match object_server.interface(&session_handle).await {
+                Ok(iface) => iface,
+                Err(zbus::Error::InterfaceNotFound) => {
+                    tracing::warn!(%session_handle, "Session not found");
+                    return Ok(());
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            };
+        // Emit the signal once.
+        let session = iface.get().await;
+        if session.emit_closed_signal.swap(false, Ordering::Relaxed)
+            && let Err(err) = iface.closed().await
+        {
+            tracing::error!(%session_handle, %err, "Failed to emit Session::Closed signal");
+        }
+
+        match object_server.remove::<Self, _>(&session_handle).await {
+            Ok(_) => Ok(()),
+            Err(zbus::Error::InterfaceNotFound) => {
+                tracing::warn!(%session_handle, "Session not found, may have already been cleaned up");
+                return Ok(());
+            }
+            Err(err) => Err(err),
+        }
     }
 }
