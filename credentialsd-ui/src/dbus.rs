@@ -67,55 +67,18 @@ impl CredentialPortalBackend {
         };
 
         // Set up cancellation background task.
-        let (cancel_task, client_cancelled_tx, gui_stopped_tx, cancel_gui_rx) = {
-            let sender = sender.clone();
-            let object_path = handle.clone();
-            let (client_cancelled_tx, client_cancelled_rx) = channel::bounded(1);
-            let (gui_stopped_tx, gui_stopped_rx) = channel::bounded(1);
-            let (cancel_gui_tx, cancel_gui_rx) = channel::bounded(1);
-            let client_disconnected_rx =
-                notify_on_disconnected(connection, sender.clone().into()).await?;
-            let object_server = object_server.clone();
-            let cancel_task = async_std::task::spawn(async move {
-                let disconnect_fut = client_disconnected_rx.recv();
-                let cancel_fut = client_cancelled_rx.recv();
-                let gui_stopped_fut = gui_stopped_rx.recv();
-
-                match disconnect_fut.race(cancel_fut).race(gui_stopped_fut).await {
-                    Ok(Ok(())) => {
-                        tracing::debug!(%sender, "Client cancelled or disconnected, dropping request")
-                    }
-                    Ok(Err(err)) => {
-                        tracing::error!(%sender, %err, "Failed to watch for client disconnection")
-                    }
-                    Err(_) => {
-                        tracing::error!(%sender, "Client disconnection task dropped prematurely")
-                    }
-                }
-
-                if cancel_gui_tx.send(()).await.is_err() {
-                    tracing::error!("Failed to send cancellation request to GUI");
-                };
-                if let Err(err) = object_server
-                    .remove::<CeremonyObject, _>(&object_path)
-                    .await
-                {
-                    tracing::warn!(%object_path, %err, "Failed to remove Ceremony request");
-                }
-                if let Err(err) = object_server
-                    .remove::<CeremonyRequest, _>(&object_path)
-                    .await
-                {
-                    tracing::warn!(%object_path, %err, "Failed to remove org.freedesktop.impl.portal.Request");
-                }
-            });
-            (
-                cancel_task,
-                client_cancelled_tx,
-                gui_stopped_tx,
-                cancel_gui_rx,
-            )
-        };
+        let CancelHandle {
+            cancel_task,
+            client_cancelled_tx,
+            gui_stopped_tx,
+            cancel_gui_rx,
+        } = setup_cancellation(
+            connection,
+            object_server.to_owned(),
+            sender.to_owned().into(),
+            handle.clone(),
+        )
+        .await?;
 
         let app_display_name = DesktopAppInfo::new(&format!("{app_id}.desktop"))
             .ok_or_else(|| {
@@ -159,6 +122,64 @@ impl CredentialPortalBackend {
         tracing::debug!("Received UI launch request");
         Ok(())
     }
+}
+
+struct CancelHandle {
+    cancel_task: JoinHandle<()>,
+    client_cancelled_tx: Sender<Result<(), fdo::Error>>,
+    gui_stopped_tx: Sender<Result<(), fdo::Error>>,
+    cancel_gui_rx: Receiver<()>,
+}
+
+async fn setup_cancellation(
+    connection: &Connection,
+    object_server: ObjectServer,
+    sender: OwnedUniqueName,
+    object_path: OwnedObjectPath,
+) -> fdo::Result<CancelHandle> {
+    let (client_cancelled_tx, client_cancelled_rx) = channel::bounded(1);
+    let (gui_stopped_tx, gui_stopped_rx) = channel::bounded(1);
+    let (cancel_gui_tx, cancel_gui_rx) = channel::bounded(1);
+    let client_disconnected_rx = notify_on_disconnected(connection, sender.clone().into()).await?;
+    let cancel_task = async_std::task::spawn(async move {
+        let disconnect_fut = client_disconnected_rx.recv();
+        let cancel_fut = client_cancelled_rx.recv();
+        let gui_stopped_fut = gui_stopped_rx.recv();
+
+        match disconnect_fut.race(cancel_fut).race(gui_stopped_fut).await {
+            Ok(Ok(())) => {
+                tracing::debug!(%sender, "Client cancelled or disconnected, dropping request")
+            }
+            Ok(Err(err)) => {
+                tracing::error!(%sender, %err, "Failed to watch for client disconnection")
+            }
+            Err(_) => {
+                tracing::error!(%sender, "Client disconnection task dropped prematurely")
+            }
+        }
+
+        if cancel_gui_tx.send(()).await.is_err() {
+            tracing::error!("Failed to send cancellation request to GUI");
+        };
+        if let Err(err) = object_server
+            .remove::<CeremonyObject, _>(&object_path)
+            .await
+        {
+            tracing::warn!(%object_path, %err, "Failed to remove Ceremony request");
+        }
+        if let Err(err) = object_server
+            .remove::<CeremonyRequest, _>(&object_path)
+            .await
+        {
+            tracing::warn!(%object_path, %err, "Failed to remove org.freedesktop.impl.portal.Request");
+        }
+    });
+    Ok(CancelHandle {
+        cancel_task,
+        client_cancelled_tx,
+        gui_stopped_tx,
+        cancel_gui_rx,
+    })
 }
 
 async fn notify_on_disconnected(
