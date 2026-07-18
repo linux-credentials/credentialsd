@@ -23,7 +23,8 @@ use zbus::{
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, Device, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BackgroundEvent, ClientPinEnteredEvent, CredentialSelectedEvent, Device,
+    DiscoveryRequestedEvent, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -121,7 +122,12 @@ impl CredentialPortalBackend {
             session_handle.clone(),
         );
         session
-            .start(gui_stopped_tx, cancel_gui_rx, signal_emitter.to_owned())
+            .start(
+                object_server.to_owned(),
+                gui_stopped_tx,
+                cancel_gui_rx,
+                signal_emitter.to_owned(),
+            )
             .await?;
         let session_created = object_server.at(session_handle.clone(), session).await?;
         if !session_created {
@@ -174,10 +180,24 @@ impl CredentialPortalBackend {
     }
 
     #[zbus(signal)]
-    async fn user_interacted(
+    async fn discovery_requested(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        event: &UserInteractedEvent,
+        event: &DiscoveryRequestedEvent,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn client_pin_entered(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        event: &ClientPinEnteredEvent,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn credential_selected(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        event: &CredentialSelectedEvent,
     ) -> zbus::Result<()>;
 }
 
@@ -286,6 +306,7 @@ impl CeremonyObject {
     /// Start the UI ceremony with an initial set of available credential interfaces.
     async fn start(
         &mut self,
+        object_server: ObjectServer,
         stopped_tx: Sender<fdo::Result<()>>,
         cancel_rx: Receiver<()>,
         emitter: SignalEmitter<'static>,
@@ -310,8 +331,13 @@ impl CeremonyObject {
         let session_handle = self.session_handle.clone();
         *ui_events_task = Some(async_std::task::spawn(async move {
             while let Ok(ui_event) = ui_events_rx.recv().await {
-                if let Err(err) =
-                    Self::on_user_interacted(&emitter, session_handle.as_ref(), &ui_event).await
+                if let Err(err) = Self::on_user_interacted(
+                    &object_server,
+                    &emitter,
+                    session_handle.as_ref(),
+                    ui_event,
+                )
+                .await
                 {
                     tracing::trace!(%session_handle, %err, "Failed to send UI event signal.");
                     break;
@@ -383,12 +409,33 @@ impl CeremonyObject {
     }
 
     async fn on_user_interacted(
+        object_server: &ObjectServer,
         emitter: &SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        ui_event: &UserInteractedEvent,
+        ui_event: UserInteractedEvent,
     ) -> zbus::Result<()> {
         tracing::trace!(?ui_event, "Sending UI event signal to portal");
-        emitter.user_interacted(session_handle, &ui_event).await
+        match ui_event {
+            UserInteractedEvent::DiscoveryRequested => {
+                emitter
+                    .discovery_requested(session_handle, &DiscoveryRequestedEvent {})
+                    .await?;
+            }
+            UserInteractedEvent::ClientPinEntered(pin_fd) => {
+                emitter
+                    .client_pin_entered(session_handle, &ClientPinEnteredEvent { pin_fd })
+                    .await?;
+            }
+            UserInteractedEvent::CredentialSelected(id) => {
+                emitter
+                    .credential_selected(session_handle, &CredentialSelectedEvent { id })
+                    .await?;
+            }
+            UserInteractedEvent::RequestCancelled => {
+                CeremonySession::shutdown(object_server, session_handle).await?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -451,11 +498,14 @@ impl CeremonySession {
 
     async fn start(
         &mut self,
+        object_server: ObjectServer,
         stopped_tx: Sender<fdo::Result<()>>,
         cancel_rx: Receiver<()>,
         emitter: SignalEmitter<'static>,
     ) -> fdo::Result<()> {
-        self.ceremony.start(stopped_tx, cancel_rx, emitter).await
+        self.ceremony
+            .start(object_server, stopped_tx, cancel_rx, emitter)
+            .await
     }
 
     async fn shutdown(
@@ -485,7 +535,7 @@ impl CeremonySession {
             Ok(_) => Ok(()),
             Err(zbus::Error::InterfaceNotFound) => {
                 tracing::warn!(%session_handle, "Session not found, may have already been cleaned up");
-                return Ok(());
+                Ok(())
             }
             Err(err) => Err(err),
         }

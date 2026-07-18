@@ -2,19 +2,22 @@
 
 use std::{error::Error, future::Future, sync::Arc};
 
-use futures_lite::StreamExt;
 use tokio::sync::{
     mpsc::{self, Receiver},
     Mutex as AsyncMutex,
 };
+use tokio_stream::StreamExt;
 use zbus::{
-    fdo, proxy,
+    fdo::{self, DBusProxy},
+    names::OwnedUniqueName,
+    proxy,
     zvariant::{ObjectPath, Optional, OwnedObjectPath},
     Connection, MatchRule, MessageStream,
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, Device, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BackgroundEvent, ClientPinEnteredEvent, CredentialSelectedEvent, Device,
+    DiscoveryRequestedEvent, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -67,6 +70,27 @@ trait UiControlService {
         session_handle: ObjectPath<'_>,
         update: UserInteractedEvent,
     ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn discovery_requested(
+        &self,
+        session_handle: ObjectPath<'_>,
+        event: DiscoveryRequestedEvent,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn client_pin_entered(
+        &self,
+        session_handle: ObjectPath<'_>,
+        event: ClientPinEnteredEvent,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn credential_selected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        event: CredentialSelectedEvent,
+    ) -> zbus::Result<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -105,6 +129,9 @@ impl Ceremony {
 )]
 trait CeremonySession {
     async fn close(&self) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn closed(&self) -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -131,9 +158,19 @@ impl UiController for UiControlServiceClient {
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
-        subscribe_ui_events(self.conn.clone(), session_handle.clone(), from_ui_tx).await?;
-
         let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
+        let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        let sender = dbus_proxy
+            .get_name_owner(backend_proxy.as_ref().destination().clone())
+            .await?;
+        subscribe_ui_events(
+            self.conn.clone(),
+            sender,
+            session_handle.clone(),
+            from_ui_tx,
+        )
+        .await?;
+
         backend_proxy
             .create_session(
                 session_handle.as_ref(),
@@ -157,41 +194,89 @@ impl UiController for UiControlServiceClient {
 
 async fn subscribe_ui_events(
     connection: Connection,
+    sender: OwnedUniqueName,
     session_handle: OwnedObjectPath,
     tx: mpsc::Sender<UserInteractedEvent>,
 ) -> zbus::Result<()> {
     let match_rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface("org.freedesktop.impl.portal.experimental.Credential")?
-        .member("UserInteracted")?
+        .destination(
+            connection
+                .unique_name()
+                .expect("unique name to be set for connection")
+                .clone(),
+        )?
+        .path("/org/freedesktop/portal/desktop")?
+        .sender(sender.clone())?
         .arg_path(0, session_handle.clone())?
         .build();
 
     let session_handle2 = session_handle.clone();
-    let mut ui_event_stream = MessageStream::for_match_rule(match_rule, &connection, Some(16)).await?
+    let ui_event_stream = MessageStream::for_match_rule(match_rule, &connection, Some(16)).await?
         .filter_map(move |response| match response {
-            Ok(msg) => Some(msg),
+            Ok(msg) => {
+                Some(msg)
+            },
             Err(err) => {
-                tracing::error!(%session_handle, %err, "Error receiving a message the UserInteracted stream");
+                tracing::error!(session_handle = %session_handle2, %err, "Error receiving a message from the UI event stream");
                 None
             }
         })
-        .filter_map(move |msg| match UserInteracted::from_message(msg) {
-            Some(ui_event) => Some(ui_event),
-            None => {
-                tracing::error!(session_handle = %session_handle2, "Error parsing message as {}", stringify!(UserInteracted));
-                None
-            },
+        .filter_map(|msg| {
+            let signal_name = msg.header().member().map(|name| name.to_string())?;
+
+            match signal_name.as_str() {
+                stringify!(DiscoveryRequested) => {
+                    DiscoveryRequested::from_message(msg)?
+                        .args().ok()
+                        .map(|args| args.event)
+                        .map(UserInteractedEvent::from)
+                }
+                stringify!(ClientPinEntered) => {
+                    ClientPinEntered::from_message(msg)?
+                        .args().ok()
+                        .map(|args| args.event)
+                        .map(UserInteractedEvent::from)
+                }
+                stringify!(CredentialSelected) => {
+                    CredentialSelected::from_message(msg)?
+                        .args().ok()
+                        .map(|args| args.event)
+                        .map(UserInteractedEvent::from)
+                }
+                _ => None
+            }
         });
+
+    let closed_match_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.impl.portal.Session")?
+        .member("Closed")?
+        .destination(
+            connection
+                .unique_name()
+                .expect("unique name to be set for connection")
+                .clone(),
+        )?
+        .path(session_handle.clone())?
+        .sender(sender.clone())?
+        .build();
+
+    let closed_event_stream =
+        MessageStream::for_match_rule(closed_match_rule, &connection, Some(1))
+            .await?
+            .filter_map(|s| s.ok())
+            .map(|_| UserInteractedEvent::RequestCancelled);
+
+    let mut ui_event_stream = ui_event_stream.merge(closed_event_stream);
 
     // Forward the events to the receiver in the background.
     tokio::task::spawn(async move {
-        // _ = forward_ui_events(Box::pin(ui_event_stream), from_ui_tx2).await;
         tracing::debug!("Listening for events from UI");
-        while let Some(signal) = ui_event_stream.next().await {
-            tracing::trace!(?signal, "Received event from UI");
-            let event = signal.args()?.update;
-            if tx.send(event).await.is_err() {
+        while let Some(ui_event) = ui_event_stream.next().await {
+            tracing::trace!(?ui_event, "Received event from UI");
+            if tx.send(ui_event).await.is_err() {
                 tracing::trace!(
                     "UI event listener stopped listening events. Ending event stream listener"
                 );

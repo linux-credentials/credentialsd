@@ -268,6 +268,21 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
     }
 }
 
+/// Emitted when a client enters a PIN for the selected authenticator.
+#[derive(Debug, SerializeDict, DeserializeDict, PartialEq, Type)]
+#[zvariant(signature = "dict")]
+pub struct ClientPinEnteredEvent {
+    /// Length of the PIN MUST NOT be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    pub pin_fd: OwnedFd,
+}
+
+impl From<ClientPinEnteredEvent> for UserInteractedEvent {
+    fn from(value: ClientPinEnteredEvent) -> Self {
+        UserInteractedEvent::ClientPinEntered(value.pin_fd)
+    }
+}
+
 #[derive(Clone, Debug, Default, SerializeDict, DeserializeDict, PartialEq, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct Credential {
@@ -276,10 +291,36 @@ pub struct Credential {
     pub username: Option<String>,
 }
 
+/// Emitted when an an authenticator presents multiple matching credentials, and
+/// the user selects one of them.
+#[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+pub struct CredentialSelectedEvent {
+    /// ID of the selected credential, from the original
+    /// [BackgroundEvent::SelectingCredential] event.
+    pub id: String,
+}
+
+impl From<CredentialSelectedEvent> for UserInteractedEvent {
+    fn from(value: CredentialSelectedEvent) -> Self {
+        UserInteractedEvent::CredentialSelected(value.id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct Device {
     pub id: String,
     pub transport: Transport,
+}
+
+/// Emitted when the backend is ready to start credential discovery.
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct DiscoveryRequestedEvent {}
+
+impl From<DiscoveryRequestedEvent> for UserInteractedEvent {
+    fn from(_: DiscoveryRequestedEvent) -> Self {
+        UserInteractedEvent::DiscoveryRequested
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -357,14 +398,11 @@ pub struct PortalBackendOptions {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 #[zvariant(signature = "s")]
 pub enum Transport {
-    #[serde(rename = "BLE")]
     Ble,
     HybridLinked,
     HybridQr,
     Internal,
-    #[serde(rename = "NFC")]
     Nfc,
-    #[serde(rename = "USB")]
     Usb,
 }
 
@@ -382,12 +420,12 @@ impl TryInto<Transport> for &str {
 
     fn try_into(self) -> Result<Transport, String> {
         match self {
-            "BLE" => Ok(Transport::Ble),
+            "Ble" => Ok(Transport::Ble),
             "HybridLinked" => Ok(Transport::HybridLinked),
             "HybridQr" => Ok(Transport::HybridQr),
             "Internal" => Ok(Transport::Internal),
-            "NFC" => Ok(Transport::Nfc),
-            "USB" => Ok(Transport::Usb),
+            "Nfc" => Ok(Transport::Nfc),
+            "Usb" => Ok(Transport::Usb),
             _ => Err(format!("Unrecognized transport: {}", self.to_owned())),
         }
     }
@@ -402,12 +440,12 @@ impl From<Transport> for String {
 impl Transport {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Transport::Ble => "BLE",
+            Transport::Ble => "Ble",
             Transport::HybridLinked => "HybridLinked",
             Transport::HybridQr => "HybridQr",
             Transport::Internal => "Internal",
-            Transport::Nfc => "NFC",
-            Transport::Usb => "USB",
+            Transport::Nfc => "Nfc",
+            Transport::Usb => "Usb",
         }
     }
 }

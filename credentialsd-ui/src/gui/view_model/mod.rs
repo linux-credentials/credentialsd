@@ -1,6 +1,6 @@
 pub mod gtk;
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use async_std::prelude::*;
 use async_std::{
@@ -338,12 +338,25 @@ impl ViewModel {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
     CredentialSelected(String),
     PinEntered(String),
     UserCancelled,
+}
+
+impl Debug for ViewEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Initiated => write!(f, "Initiated"),
+            Self::CredentialSelected(arg0) => {
+                f.debug_tuple("CredentialSelected").field(arg0).finish()
+            }
+            Self::PinEntered(_) => f.debug_tuple("PinEntered").field(&"******").finish(),
+            Self::UserCancelled => write!(f, "UserCancelled"),
+        }
+    }
 }
 
 #[derive(Debug)]
