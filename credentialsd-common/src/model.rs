@@ -271,17 +271,7 @@ impl<'de> Deserialize<'de> for BackgroundEvent {
 /// Emitted when a client enters a PIN for the selected authenticator.
 #[derive(Debug, SerializeDict, DeserializeDict, PartialEq, Type)]
 #[zvariant(signature = "dict")]
-pub struct ClientPinEnteredEvent {
-    /// Length of the PIN MUST NOT be greater than 63 bytes.
-    /// File descriptor must be memory-mapped to be read.
-    pub pin_fd: OwnedFd,
-}
-
-impl From<ClientPinEnteredEvent> for UserInteractedEvent {
-    fn from(value: ClientPinEnteredEvent) -> Self {
-        UserInteractedEvent::ClientPinEntered(value.pin_fd)
-    }
-}
+pub struct ClientPinEnteredOptions {}
 
 #[derive(Clone, Debug, Default, SerializeDict, DeserializeDict, PartialEq, Type, Value)]
 #[zvariant(signature = "dict")]
@@ -294,17 +284,7 @@ pub struct Credential {
 /// Emitted when an an authenticator presents multiple matching credentials, and
 /// the user selects one of them.
 #[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
-pub struct CredentialSelectedEvent {
-    /// ID of the selected credential, from the original
-    /// [BackgroundEvent::SelectingCredential] event.
-    pub id: String,
-}
-
-impl From<CredentialSelectedEvent> for UserInteractedEvent {
-    fn from(value: CredentialSelectedEvent) -> Self {
-        UserInteractedEvent::CredentialSelected(value.id)
-    }
-}
+pub struct CredentialSelectedOptions {}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct Device {
@@ -315,10 +295,10 @@ pub struct Device {
 /// Emitted when the backend is ready to start credential discovery.
 #[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
-pub struct DiscoveryRequestedEvent {}
+pub struct DiscoveryRequestedOptions {}
 
-impl From<DiscoveryRequestedEvent> for UserInteractedEvent {
-    fn from(_: DiscoveryRequestedEvent) -> Self {
+impl From<DiscoveryRequestedOptions> for UserInteractedEvent {
+    fn from(_: DiscoveryRequestedOptions) -> Self {
         UserInteractedEvent::DiscoveryRequested
     }
 }

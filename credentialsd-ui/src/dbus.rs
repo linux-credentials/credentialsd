@@ -19,12 +19,12 @@ use zbus::{
     message::Header,
     names::{BusName, OwnedUniqueName},
     object_server::{InterfaceRef, SignalEmitter},
-    zvariant::{ObjectPath, Optional, OwnedObjectPath},
+    zvariant::{Fd, ObjectPath, Optional, OwnedFd, OwnedObjectPath},
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, ClientPinEnteredEvent, CredentialSelectedEvent, Device,
-    DiscoveryRequestedEvent, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BackgroundEvent, ClientPinEnteredOptions, CredentialSelectedOptions, Device,
+    DiscoveryRequestedOptions, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -183,21 +183,23 @@ impl CredentialPortalBackend {
     async fn discovery_requested(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        event: &DiscoveryRequestedEvent,
+        options: DiscoveryRequestedOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn client_pin_entered(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        event: &ClientPinEnteredEvent,
+        pin_fd: OwnedFd,
+        options: ClientPinEnteredOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn credential_selected(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        event: &CredentialSelectedEvent,
+        id: String,
+        options: CredentialSelectedOptions,
     ) -> zbus::Result<()>;
 }
 
@@ -418,17 +420,17 @@ impl CeremonyObject {
         match ui_event {
             UserInteractedEvent::DiscoveryRequested => {
                 emitter
-                    .discovery_requested(session_handle, &DiscoveryRequestedEvent {})
+                    .discovery_requested(session_handle, DiscoveryRequestedOptions {})
                     .await?;
             }
             UserInteractedEvent::ClientPinEntered(pin_fd) => {
                 emitter
-                    .client_pin_entered(session_handle, &ClientPinEnteredEvent { pin_fd })
+                    .client_pin_entered(session_handle, pin_fd, ClientPinEnteredOptions {})
                     .await?;
             }
             UserInteractedEvent::CredentialSelected(id) => {
                 emitter
-                    .credential_selected(session_handle, &CredentialSelectedEvent { id })
+                    .credential_selected(session_handle, id, CredentialSelectedOptions {})
                     .await?;
             }
             UserInteractedEvent::RequestCancelled => {

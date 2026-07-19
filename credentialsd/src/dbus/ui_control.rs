@@ -11,13 +11,13 @@ use zbus::{
     fdo::{self, DBusProxy},
     names::OwnedUniqueName,
     proxy,
-    zvariant::{ObjectPath, Optional, OwnedObjectPath},
+    zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
     Connection, MatchRule, MessageStream,
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, ClientPinEnteredEvent, CredentialSelectedEvent, Device,
-    DiscoveryRequestedEvent, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BackgroundEvent, ClientPinEnteredOptions, CredentialSelectedOptions, Device,
+    DiscoveryRequestedOptions, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -75,21 +75,23 @@ trait UiControlService {
     async fn discovery_requested(
         &self,
         session_handle: ObjectPath<'_>,
-        event: DiscoveryRequestedEvent,
+        options: DiscoveryRequestedOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn client_pin_entered(
         &self,
         session_handle: ObjectPath<'_>,
-        event: ClientPinEnteredEvent,
+        pin_fd: OwnedFd,
+        options: ClientPinEnteredOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn credential_selected(
         &self,
         session_handle: ObjectPath<'_>,
-        event: CredentialSelectedEvent,
+        id: String,
+        options: CredentialSelectedOptions,
     ) -> zbus::Result<()>;
 }
 
@@ -230,20 +232,17 @@ async fn subscribe_ui_events(
                 stringify!(DiscoveryRequested) => {
                     DiscoveryRequested::from_message(msg)?
                         .args().ok()
-                        .map(|args| args.event)
-                        .map(UserInteractedEvent::from)
+                        .map(|_| UserInteractedEvent::DiscoveryRequested)
                 }
                 stringify!(ClientPinEntered) => {
                     ClientPinEntered::from_message(msg)?
                         .args().ok()
-                        .map(|args| args.event)
-                        .map(UserInteractedEvent::from)
+                        .map(|args| UserInteractedEvent::ClientPinEntered(args.pin_fd))
                 }
                 stringify!(CredentialSelected) => {
                     CredentialSelected::from_message(msg)?
                         .args().ok()
-                        .map(|args| args.event)
-                        .map(UserInteractedEvent::from)
+                        .map(|args| UserInteractedEvent::CredentialSelected(args.id))
                 }
                 _ => None
             }
