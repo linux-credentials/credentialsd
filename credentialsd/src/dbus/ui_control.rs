@@ -67,13 +67,6 @@ trait UiControlService {
     ) -> fdo::Result<()>;
 
     #[zbus(no_reply)]
-    async fn notify_state_changed(
-        &self,
-        session_handle: ObjectPath<'_>,
-        event: BackgroundEvent,
-    ) -> fdo::Result<()>;
-
-    #[zbus(no_reply)]
     async fn notify_needs_pin(
         &self,
         session_handle: ObjectPath<'_>,
@@ -156,13 +149,6 @@ trait UiControlService {
         session_handle: ObjectPath<'_>,
         error: u32,
     ) -> fdo::Result<()>;
-
-    #[zbus(signal)]
-    async fn user_interacted(
-        &self,
-        session_handle: ObjectPath<'_>,
-        update: UserInteractedEvent,
-    ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn discovery_requested(
