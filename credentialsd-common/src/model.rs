@@ -37,14 +37,14 @@ const BACKGROUND_EVENT_USB_WAITING: u32 = 0x41;
 const BACKGROUND_EVENT_USB_SELECTING_DEVICE: u32 = 0x42;
 const BACKGROUND_EVENT_USB_CONNECTED: u32 = 0x43;
 
-const BACKGROUND_EVENT_ERROR_INTERNAL: u32 = 0x80000001;
-const BACKGROUND_EVENT_ERROR_TIMED_OUT: u32 = 0x80000002;
-const BACKGROUND_EVENT_ERROR_CANCELLED: u32 = 0x80000003;
-const BACKGROUND_EVENT_ERROR_AUTHENTICATOR: u32 = 0x80000004;
-const BACKGROUND_EVENT_ERROR_NO_CREDENTIALS: u32 = 0x80000005;
-const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
-const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
-const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
+pub const BACKGROUND_EVENT_ERROR_INTERNAL: u32 = 0x80000001;
+pub const BACKGROUND_EVENT_ERROR_TIMED_OUT: u32 = 0x80000002;
+pub const BACKGROUND_EVENT_ERROR_CANCELLED: u32 = 0x80000003;
+pub const BACKGROUND_EVENT_ERROR_AUTHENTICATOR: u32 = 0x80000004;
+pub const BACKGROUND_EVENT_ERROR_NO_CREDENTIALS: u32 = 0x80000005;
+pub const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
+pub const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
+pub const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
 
 const USER_INTERACTED_EVENT_DISCOVERY_REQUESTED: u32 = 0x01;
 const USER_INTERACTED_EVENT_CLIENT_PIN_ENTERED: u32 = 0x04;
@@ -355,6 +355,43 @@ impl TryFrom<&Value<'_>> for Error {
         Ok(err)
     }
 }
+
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsPinOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsUserVerificationOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsUserPresenceOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifySelectingCredentialOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridStartedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridConnectingOptions {}
+
+/// Emitted
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNfcConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyUsbConnectedOptions {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum Operation {

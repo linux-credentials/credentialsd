@@ -16,8 +16,16 @@ use zbus::{
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, ClientPinEnteredOptions, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BackgroundEvent, ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
+    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
+    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PortalBackendOptions,
+    UserInteractedEvent, WindowHandle, BACKGROUND_EVENT_ERROR_AUTHENTICATOR,
+    BACKGROUND_EVENT_ERROR_CANCELLED, BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED,
+    BACKGROUND_EVENT_ERROR_INTERNAL, BACKGROUND_EVENT_ERROR_NO_CREDENTIALS,
+    BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED, BACKGROUND_EVENT_ERROR_PIN_NOT_SET,
+    BACKGROUND_EVENT_ERROR_TIMED_OUT,
 };
 
 /// Used by the credential service to control the UI.
@@ -58,10 +66,95 @@ trait UiControlService {
         options: PortalBackendOptions,
     ) -> fdo::Result<()>;
 
+    #[zbus(no_reply)]
     async fn notify_state_changed(
         &self,
         session_handle: ObjectPath<'_>,
         event: BackgroundEvent,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_needs_pin(
+        &self,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsPinOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator needs a user verification gesture.
+    #[zbus(no_reply)]
+    async fn notify_needs_user_verification(
+        &self,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsUserVerificationOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator needs a user presence gesture.
+    #[zbus(no_reply)]
+    async fn notify_needs_user_presence(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNeedsUserPresenceOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator detects multiple credentials matching
+    /// credentials for a request.
+    #[zbus(no_reply)]
+    async fn notify_selecting_credential(
+        &self,
+        session_handle: ObjectPath<'_>,
+        credentials: Vec<Credential>,
+        _options: NotifySelectingCredentialOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the platform begins scanning for CTAP2 hybrid advertisements.
+    #[zbus(no_reply)]
+    async fn notify_hybrid_started(
+        &self,
+        session_handle: ObjectPath<'_>,
+        invocation_data: OwnedFd,
+        _options: NotifyHybridStartedOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the platform has received a CTAP2 hybrid advertisement and is
+    /// establishing a channel.
+    #[zbus(no_reply)]
+    async fn notify_hybrid_connecting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_hybrid_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_nfc_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNfcConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_usb_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_ceremony_completed(&self, session_handle: ObjectPath<'_>) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_error_occurred(
+        &self,
+        session_handle: ObjectPath<'_>,
+        error: u32,
     ) -> fdo::Result<()>;
 
     #[zbus(signal)]
@@ -108,17 +201,151 @@ impl Ceremony {
     }
 
     pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
-        if let Err(err) = self
-            .proxy
-            .notify_state_changed(self.session_handle.as_ref(), event)
-            .await
-        {
-            match err {
-                fdo::Error::UnknownObject(description) => {
-                    tracing::error!(%description, "Flow D-Bus object no longer available at path");
-                }
-                _ => tracing::error!(%err, "Failed to send update to backend"),
+        let response = match event {
+            // TODO: Remove these events. They are no longer needed by backends, since the user
+            // needs to select a device anyway.
+            BackgroundEvent::NfcIdle
+            | BackgroundEvent::NfcWaiting
+            | BackgroundEvent::UsbIdle
+            | BackgroundEvent::UsbSelectingDevice
+            | BackgroundEvent::UsbWaiting => {
+                return Ok(());
             }
+            BackgroundEvent::NeedsPin { attempts_left } => {
+                self.proxy
+                    .notify_needs_pin(
+                        self.session_handle.as_ref(),
+                        attempts_left.unwrap_or(u32::MAX),
+                        NotifyNeedsPinOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NeedsUserVerification { attempts_left } => {
+                self.proxy
+                    .notify_needs_user_verification(
+                        self.session_handle.as_ref(),
+                        attempts_left.unwrap_or(u32::MAX),
+                        NotifyNeedsUserVerificationOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NeedsUserPresence => {
+                self.proxy
+                    .notify_needs_user_presence(
+                        self.session_handle.as_ref(),
+                        NotifyNeedsUserPresenceOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::SelectingCredential { creds } => {
+                self.proxy
+                    .notify_selecting_credential(
+                        self.session_handle.as_ref(),
+                        creds,
+                        NotifySelectingCredentialOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridIdle => todo!(),
+            BackgroundEvent::HybridStarted(invocation_data_fd) => {
+                self.proxy
+                    .notify_hybrid_started(
+                        self.session_handle.as_ref(),
+                        invocation_data_fd,
+                        NotifyHybridStartedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridConnecting => {
+                self.proxy
+                    .notify_hybrid_connecting(
+                        self.session_handle.as_ref(),
+                        NotifyHybridConnectingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridConnected => {
+                self.proxy
+                    .notify_hybrid_connected(
+                        self.session_handle.as_ref(),
+                        NotifyHybridConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NfcConnected => {
+                self.proxy
+                    .notify_nfc_connected(
+                        self.session_handle.as_ref(),
+                        NotifyNfcConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::UsbConnected => {
+                self.proxy
+                    .notify_usb_connected(
+                        self.session_handle.as_ref(),
+                        NotifyUsbConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::ErrorInternal => {
+                let error = BACKGROUND_EVENT_ERROR_INTERNAL;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorTimedOut => {
+                let error = BACKGROUND_EVENT_ERROR_TIMED_OUT;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorCancelled => {
+                // TODO: Just call org.freedesktop.impl.portal.Session.Close()
+                let error = BACKGROUND_EVENT_ERROR_CANCELLED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorAuthenticator => {
+                let error = BACKGROUND_EVENT_ERROR_AUTHENTICATOR;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorNoCredentials => {
+                let error = BACKGROUND_EVENT_ERROR_NO_CREDENTIALS;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorCredentialExcluded => {
+                let error = BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorPinAttemptsExhausted => {
+                let error = BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorPinNotSet => {
+                let error = BACKGROUND_EVENT_ERROR_PIN_NOT_SET;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::CeremonyCompleted => {
+                self.proxy
+                    .notify_ceremony_completed(self.session_handle.as_ref())
+                    .await
+            }
+        };
+
+        if let Err(err) = response {
+            tracing::error!(%err, "Failed to send update to backend");
             return Err(());
         }
         Ok(())

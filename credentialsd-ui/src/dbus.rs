@@ -19,12 +19,20 @@ use zbus::{
     message::Header,
     names::{BusName, OwnedUniqueName},
     object_server::{InterfaceRef, SignalEmitter},
-    zvariant::{Fd, ObjectPath, Optional, OwnedFd, OwnedObjectPath},
+    zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, ClientPinEnteredOptions, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, Operation, PortalBackendOptions, UserInteractedEvent, WindowHandle,
+    BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
+    BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
+    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
+    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
+    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
+    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
+    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PortalBackendOptions,
+    UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -139,9 +147,217 @@ impl CredentialPortalBackend {
         Ok(())
     }
 
-    async fn notify_state_changed(
+    /// Called when the authenticator needs a client PIN.
+    async fn notify_needs_pin(
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsPinOptions,
+    ) -> fdo::Result<()> {
+        let attempts_left = if attempts_left == u32::MAX {
+            None
+        } else {
+            Some(attempts_left)
+        };
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::NeedsPin { attempts_left },
+        )
+        .await
+    }
+
+    /// Called when the authenticator needs a user verification gesture.
+    async fn notify_needs_user_verification(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsUserVerificationOptions,
+    ) -> fdo::Result<()> {
+        let attempts_left = if attempts_left == u32::MAX {
+            None
+        } else {
+            Some(attempts_left)
+        };
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::NeedsUserVerification { attempts_left },
+        )
+        .await
+    }
+
+    /// Called when the authenticator needs a user presence gesture.
+    async fn notify_needs_user_presence(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNeedsUserPresenceOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::NeedsUserPresence,
+        )
+        .await
+    }
+
+    /// Called when the authenticator detects multiple credentials matching
+    /// credentials for a request.
+    async fn notify_selecting_credential(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        credentials: Vec<Credential>,
+        _options: NotifySelectingCredentialOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::SelectingCredential { creds: credentials },
+        )
+        .await
+    }
+
+    /// Called when the platform begins scanning for CTAP2 hybrid advertisements.
+    async fn notify_hybrid_started(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        invocation_data: OwnedFd,
+        _options: NotifyHybridStartedOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::HybridStarted(invocation_data),
+        )
+        .await
+    }
+
+    /// Called when the platform has received a CTAP2 hybrid advertisement and is
+    /// establishing a channel.
+    async fn notify_hybrid_connecting(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectingOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::HybridConnecting,
+        )
+        .await
+    }
+
+    /// Called when a CTAP2 hybrid channel has been established.
+    async fn notify_hybrid_connected(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectedOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::HybridConnected,
+        )
+        .await
+    }
+
+    /// Called when a NFC authenticator has connected.
+    async fn notify_nfc_connected(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNfcConnectedOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(object_server, session_handle, BackgroundEvent::NfcConnected)
+            .await
+    }
+
+    /// Called when a USB authenticator has been selected by the user.
+    async fn notify_usb_connected(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(object_server, session_handle, BackgroundEvent::UsbConnected)
+            .await
+    }
+
+    /// Called when the authentication ceremony completes successfully.
+    async fn notify_ceremony_completed(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::CeremonyCompleted,
+        )
+        .await
+    }
+
+    /// Called when an error occurs during the authentication ceremony completes successfully.
+    async fn notify_error_occurred(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        error: u32,
+    ) -> fdo::Result<()> {
+        let error_event = match error {
+            BACKGROUND_EVENT_ERROR_INTERNAL => Ok(BackgroundEvent::ErrorInternal),
+            BACKGROUND_EVENT_ERROR_TIMED_OUT => Ok(BackgroundEvent::ErrorTimedOut),
+            BACKGROUND_EVENT_ERROR_CANCELLED => Ok(BackgroundEvent::ErrorCancelled),
+            BACKGROUND_EVENT_ERROR_AUTHENTICATOR => Ok(BackgroundEvent::ErrorAuthenticator),
+            BACKGROUND_EVENT_ERROR_NO_CREDENTIALS => Ok(BackgroundEvent::ErrorNoCredentials),
+            BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED => {
+                Ok(BackgroundEvent::ErrorCredentialExcluded)
+            }
+            BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED => {
+                Ok(BackgroundEvent::ErrorPinAttemptsExhausted)
+            }
+            BACKGROUND_EVENT_ERROR_PIN_NOT_SET => Ok(BackgroundEvent::ErrorPinNotSet),
+            _ => Err(fdo::Error::Failed("Unknown error code".to_string())),
+        }?;
+        self.notify_state_changed(object_server, session_handle, error_event)
+            .await
+    }
+
+    #[zbus(signal)]
+    async fn discovery_requested(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        options: DiscoveryRequestedOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn client_pin_entered(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        pin_fd: OwnedFd,
+        options: ClientPinEnteredOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn credential_selected(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        id: String,
+        options: CredentialSelectedOptions,
+    ) -> zbus::Result<()>;
+}
+
+impl CredentialPortalBackend {
+    async fn notify_state_changed(
+        &self,
+        object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
         event: BackgroundEvent,
     ) -> fdo::Result<()> {
@@ -178,29 +394,6 @@ impl CredentialPortalBackend {
             }
         }
     }
-
-    #[zbus(signal)]
-    async fn discovery_requested(
-        emitter: SignalEmitter<'_>,
-        session_handle: ObjectPath<'_>,
-        options: DiscoveryRequestedOptions,
-    ) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    async fn client_pin_entered(
-        emitter: SignalEmitter<'_>,
-        session_handle: ObjectPath<'_>,
-        pin_fd: OwnedFd,
-        options: ClientPinEnteredOptions,
-    ) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    async fn credential_selected(
-        emitter: SignalEmitter<'_>,
-        session_handle: ObjectPath<'_>,
-        id: String,
-        options: CredentialSelectedOptions,
-    ) -> zbus::Result<()>;
 }
 
 struct CancelHandle {
