@@ -111,17 +111,12 @@ spec.
 For Rust code, we use [rustfmt][] to ensure consistent formatting code and
 [clippy][] to catch common mistakes not caught by the compiler.
 
-```sh
-# if you don't have them installed, install or update the stable toolchain
-rustup install stable
-# … and install prebuilt rustfmt and clippy executables (available for most platforms)
-rustup component add rustfmt clippy
-```
+You can run `rustup install` in the repo directory to install the pinned version of
+the Rust toolchain and linting tools.
 
 Before committing your changes, run `cargo fmt` to format the code (if your
 editor / IDE isn't set up to run it automatically) and `cargo clippy` to run
-lints. You'll need to run this from each Cargo project (`credentialsd/`,
-`credentialsd-ui/`, `credentialsd-common/`).
+lints.
 
 For Python code, we use [ruff][].
 
