@@ -5,28 +5,29 @@ on:
       - main
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_HOME: build/cargo-home
-  CARGO_TARGET_DIR: ${{ github.workspace }}/build/target
-
 jobs:
   build:
     env:
       RUST_LOG: debug
+      CARGO_TERM_COLOR: always
     name: Build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v2
+      - name: Set up environment variables
+        run: |
+          echo "BUILD_DIR=${{ runner.temp }}/build" >> $GITHUB_ENV
+          echo "CARGO_HOME=${{ runner.temp }}/build/cargo-home" >> $GITHUB_ENV
+          echo "CARGO_TARGET_DIR=${{ runner.temp }}/build/target" >> $GITHUB_ENV
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: rustup install
       - run: rustup show active-toolchain
-      - run: rustup component add rustfmt clippy
 
       - name: Configure Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ". -> build/target"
-          cache-workspace-crates: true
+          workspaces: ". -> ${{ env.CARGO_TARGET_DIR }}"
 
       - name: Update apt cache
         run: sudo apt update
@@ -72,20 +73,19 @@ jobs:
           echo ~/.local/bin >> $GITHUB_PATH
 
       - name: Setup meson project
-        run: meson setup -Dprofile=development -Dcargo_locked=true build
+        run: meson setup -Dprofile=development -Dcargo_locked=true $BUILD_DIR
 
       - name: Build
-        run: ninja -C build
+        run: ninja -C $BUILD_DIR
 
       - name: Test
         # We have to use the --interactive flag because of some
         # weird issue with meson hanging after cargo exits due to the TestDBus.
         # Probably has to do with forking the test processes.
-        run: meson test --interactive
-        working-directory: build/
+        run: meson test -C $BUILD_DIR --interactive
 
       - name: Check clippy recommendations
-        run: cargo clippy --locked --workspace --all-features --target-dir build/target -- -Dwarnings
+        run: cargo clippy --locked --workspace --all-features -- -Dwarnings
 
       - name: Check formatting
         run: cargo fmt --all --check
