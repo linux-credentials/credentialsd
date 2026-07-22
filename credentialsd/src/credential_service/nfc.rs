@@ -7,7 +7,7 @@ use libwebauthn::{
     ops::webauthn::GetAssertionResponse,
     proto::CtapError,
     transport::{nfc::device::NfcDevice, Channel, ChannelSettings, Device},
-    webauthn::{Error as WebAuthnError, WebAuthn},
+    webauthn::{error::WebAuthnError, WebAuthn},
     UvUpdate,
 };
 use tokio::sync::broadcast;

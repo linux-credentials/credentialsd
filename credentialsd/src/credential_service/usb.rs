@@ -10,7 +10,7 @@ use libwebauthn::{
         hid::{channel::HidChannelHandle, HidDevice},
         Channel, ChannelSettings, Device,
     },
-    webauthn::{Error as WebAuthnError, WebAuthn},
+    webauthn::{error::WebAuthnError, WebAuthn},
     UvUpdate,
 };
 use tokio::sync::{

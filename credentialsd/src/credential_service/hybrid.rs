@@ -14,7 +14,7 @@ use libwebauthn::transport::cable::qr_code_device::{
     CableQrCodeDevice, CableTransports, QrCodeOperationHint,
 };
 use libwebauthn::transport::{Channel, ChannelSettings, Device};
-use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
+use libwebauthn::webauthn::{WebAuthn, error::WebAuthnError};
 
 use credentialsd_common::{
     memfd::write_secret,
