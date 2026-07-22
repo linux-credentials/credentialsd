@@ -228,11 +228,10 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         }
     });
     tracing::debug!("Finished setting up request {request_id}");
-    let cred_response = request_rx
-        .await
-        .expect("Credential service not to drop request channel before responding.");
 
-    cred_response
+    request_rx
+        .await
+        .expect("Credential service not to drop request channel before responding.")
 }
 
 fn forward_background_event_stream(

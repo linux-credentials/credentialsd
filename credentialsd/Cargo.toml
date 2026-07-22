@@ -2,7 +2,7 @@
 name = "credentialsd"
 version = "0.2.0"
 authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.sirringhaus@suse.com>", "Alfie Fresta <alfie.fresta@gmail.com>"]
-edition = "2021"
+edition = "2024"
 license = "LGPL-3.0-only"
 
 [dependencies]

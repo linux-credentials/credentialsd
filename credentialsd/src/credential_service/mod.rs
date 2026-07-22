@@ -180,8 +180,8 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
 
     async fn cancel_request(&self, request_id: RequestId) {
         let mut guard = self.ctx.lock().expect("Lock to be taken");
-        if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id) {
-            if request_id == ctx.request_id {
+        if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id)
+            && request_id == ctx.request_id {
                 tracing::debug!("Cancelling request {request_id}");
                 // TODO: cancel sub-tasks: hybrid and USB streams.
 
@@ -193,7 +193,6 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                         "Cancelled request {request_id}."
                     ))));
             }
-        }
     }
 
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
@@ -391,10 +390,13 @@ impl From<UsbState> for DeviceStateUpdate {
 }
 
 fn complete_request(ctx: &Mutex<Option<RequestContext>>, response: CredentialResponse) {
-    if let Some(ctx) = ctx.lock().unwrap().take() {
-        ctx.send_response(Ok(response));
-    } else {
-        tracing::error!("Tried to consume context to respond to caller, but none was found.")
+    match ctx.lock().unwrap().take() {
+        Some(ctx) => {
+            ctx.send_response(Ok(response));
+        }
+        _ => {
+            tracing::error!("Tried to consume context to respond to caller, but none was found.")
+        }
     }
 }
 

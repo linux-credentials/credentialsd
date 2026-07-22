@@ -276,10 +276,9 @@ async fn handle_hybrid_updates(
                 }
             },
         };
-        if let Some(state) = new_state {
-            if let Err(err) = state_sender.send(state.clone()).await {
+        if let Some(state) = new_state
+            && let Err(err) = state_sender.send(state.clone()).await {
                 error!({ ?err, ?state }, "Failed to send hybrid update");
             }
-        }
     }
 }
