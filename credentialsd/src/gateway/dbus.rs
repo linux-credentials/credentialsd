@@ -1,15 +1,24 @@
-use std::{collections::HashMap, fmt::Display, os::fd::AsRawFd, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    os::fd::{AsFd, AsRawFd, BorrowedFd},
+    str::FromStr,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    Connection, DBusError, interface,
+    Connection, DBusError,
+    fdo::PropertiesProxy,
+    interface,
     message::Header,
-    names::{BusName, UniqueName},
-    zvariant::{DeserializeDict, Optional, Type, Value},
+    names::{BusName, InterfaceName, UniqueName},
+    zvariant::{self, DeserializeDict, Optional, OwnedFd, OwnedValue, Type, Value},
 };
 
 use credentialsd_common::model::WindowHandle;
+use zbus_systemd::systemd1::ManagerProxy;
 
 use crate::{
     DBUS_SERVICE_NAME,
@@ -337,11 +346,11 @@ async fn validate_app_details(
         return Err(Error::SecurityError);
     };
 
-    let Some(pid) = query_peer_pid_via_fdinfo(connection, unique_name).await else {
+    let Some(service_info) = query_peer_service_info(connection, unique_name).await else {
         return Err(Error::SecurityError);
     };
 
-    if claimed_app_id.is_empty() || !super::should_trust_app_id(pid).await {
+    if claimed_app_id.is_empty() || !super::should_trust_app_id(&service_info).await {
         tracing::warn!(
             ?claimed_app_id,
             "App ID could not be verified. Rejecting request."
@@ -371,19 +380,39 @@ async fn validate_app_details(
 
     Ok(RequestContext {
         app_id,
-        pid,
+        pid: service_info.pid,
         request_kind,
     })
 }
 
-async fn query_peer_pid_via_fdinfo(
+pub struct ServiceInfo {
+    pub names: Vec<String>,
+    pub executable: String,
+    pub pid: u32,
+}
+
+async fn query_peer_service_info(
     connection: &Connection,
     sender_unique_name: &UniqueName<'_>,
-) -> Option<u32> {
+) -> Option<ServiceInfo> {
     let dbus_proxy = match zbus::fdo::DBusProxy::new(connection).await {
         Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to establish DBus proxy to query peer info: {e:?}");
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                "Failed to establish DBus proxy to query service name info."
+            );
+            return None;
+        }
+    };
+
+    let manager_proxy = match ManagerProxy::new(connection).await {
+        Ok(p) => p,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                "Failed to establish DBus proxy to query service name info."
+            );
             return None;
         }
     };
@@ -393,47 +422,123 @@ async fn query_peer_pid_via_fdinfo(
         .await
     {
         Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to get peer credentials: {e:?}");
+        Err(error) => {
+            tracing::error!(?error, "Failed to get peer credentials");
             return None;
         }
     };
 
-    let pidfd = match peer_credentials.process_fd() {
-        Some(p) => p.as_raw_fd(),
-        None => {
-            tracing::error!("Failed to get process fd from peer credentials");
+    let Some(pidfd) = peer_credentials
+        .process_fd()
+        .and_then(|p| p.as_fd().try_clone_to_owned().ok())
+    else {
+        tracing::error!("Failed to get process fd from peer credentials");
+        return None;
+    };
+
+    let Some(pid) = read_pid_from_procfs(pidfd.as_fd()) else {
+        tracing::error!("Failed to read PID from fdinfo");
+        return None;
+    };
+
+    let unit = match manager_proxy.get_unit_by_pidfd(OwnedFd::from(pidfd)).await {
+        Ok(unit) => unit,
+        Err(error) => {
+            tracing::error!(?error, "Failed to get systemd unit from pidfd.");
             return None;
         }
     };
 
-    let fdinfo_str = match std::fs::read_to_string(format!("/proc/self/fdinfo/{pidfd}")) {
-        Ok(fdinfo) => fdinfo,
-        Err(e) => {
-            tracing::error!("Failed to read fdinfo from procfs: {e}");
-            return None;
-        }
+    let properties_proxy =
+        match PropertiesProxy::new(connection, "org.freedesktop.systemd1", unit.0).await {
+            Ok(p) => p,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    "Failed to establish DBus proxy to query unit properties."
+                );
+                return None;
+            }
+        };
+
+    let names = read_dbus_property(
+        &properties_proxy,
+        InterfaceName::from_static_str("org.freedesktop.systemd1.Unit").unwrap(),
+        "Names",
+    )
+    .await?;
+    let executable: Vec<ExecCommand> = read_dbus_property(
+        &properties_proxy,
+        InterfaceName::from_static_str("org.freedesktop.systemd1.Service").unwrap(),
+        "ExecStart",
+    )
+    .await?;
+
+    let Some((executable, pid)) = executable
+        .into_iter()
+        .find(|e| e.pid == pid)
+        .map(|e| (e.path, e.pid))
+    else {
+        tracing::error!(?names, pid, "Couldn't find process in systemd unit.");
+        return None;
     };
 
-    // Find the line that starts with "Pid:"
-    let pid_line = match fdinfo_str.lines().find(|line| line.starts_with("Pid:")) {
-        Some(line) => line,
-        None => {
-            tracing::error!("Failed to read PID from fdinfo");
+    Some(ServiceInfo {
+        names,
+        executable,
+        pid,
+    })
+}
+
+fn read_pid_from_procfs(pidfd: BorrowedFd) -> Option<u32> {
+    std::fs::read_to_string(format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd()))
+        .inspect_err(|error| tracing::error!(%error, "Failed to read fdinfo from procfs"))
+        .ok()?
+        .lines()
+        .find(|line| line.starts_with("Pid:"))
+        .map(|line| line[4..].trim())
+        .and_then(|line| {
+            u32::from_str(line)
+                .inspect_err(
+                    |error| tracing::error!(%error, "Failed to parse PID from fdinfo entry."),
+                )
+                .ok()
+        })
+}
+
+#[derive(Debug, Clone, Type, Deserialize, Value, OwnedValue)]
+struct ExecCommand {
+    pub path: String,
+    pub argv: Vec<String>,
+    pub ignore_failure: bool,
+    pub start_timestamp: u64,
+    pub start_timestamp_monotonic: u64,
+    pub exit_timestamp: u64,
+    pub exit_timestamp_monotonic: u64,
+    pub pid: u32,
+    pub code: i32,
+    pub status: i32,
+}
+
+async fn read_dbus_property<'a, T>(
+    proxy: &PropertiesProxy<'a>,
+    interface: InterfaceName<'a>,
+    name: &str,
+) -> Option<T>
+where
+    T: TryFrom<OwnedValue, Error = zvariant::Error>,
+{
+    Some(match proxy.get(interface, name).await {
+        Ok(n) => match n.try_into() {
+            Ok(n) => n,
+            Err(error) => {
+                tracing::error!(?error, "Failed to read DBus response data.");
+                return None;
+            }
+        },
+        Err(error) => {
+            tracing::error!(?error, property = name, "Failed to read DBus property.");
             return None;
         }
-    };
-
-    let pid_str = pid_line[4..].trim();
-
-    // std::process::id() also returns u32
-    let pid: u32 = match pid_str.parse() {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::error!("Failed to parse PID from fdinfo entry: {e}");
-            return None;
-        }
-    };
-
-    Some(pid)
+    })
 }
