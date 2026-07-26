@@ -18,7 +18,7 @@ use credentialsd_common::{
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
-use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, mpsc::Sender};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
@@ -30,7 +30,7 @@ use crate::{
     model::{CredentialRequest, CredentialResponse},
 };
 use crate::{
-    credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice},
+    credential_service::{DeviceStateUpdate, ManageDevice, nfc::NfcState},
     model::ClientDetails,
 };
 use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};

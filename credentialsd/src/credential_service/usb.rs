@@ -1,22 +1,21 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_stream::stream;
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{self, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::Stream;
 use libwebauthn::{
+    UvUpdate,
     ops::webauthn::GetAssertionResponse,
     proto::CtapError,
     transport::{
-        hid::{channel::HidChannelHandle, HidDevice},
         Channel, ChannelSettings, Device,
+        hid::{HidDevice, channel::HidChannelHandle},
     },
-    webauthn::{error::WebAuthnError, WebAuthn},
-    UvUpdate,
+    webauthn::{WebAuthn, error::WebAuthnError},
 };
 use tokio::sync::{
-    broadcast,
+    Mutex as AsyncMutex, broadcast,
     mpsc::{self, Receiver, Sender, WeakSender},
-    Mutex as AsyncMutex,
 };
 use tracing::{debug, warn};
 
@@ -303,7 +302,10 @@ async fn handle_events(
         .await;
     match channel {
         Err(err) => {
-            tracing::error!("Failed to open channel to USB authenticator, cannot receive user verification events: {:?}", err);
+            tracing::error!(
+                "Failed to open channel to USB authenticator, cannot receive user verification events: {:?}",
+                err
+            );
         }
         Ok(mut channel) => {
             let signal_tx2 = signal_tx.clone().downgrade();
@@ -590,7 +592,10 @@ async fn handle_usb_updates(
                     .send(Ok(UsbUvMessage::NeedsUserVerification { attempts_left }))
                     .await
                 {
-                    tracing::error!("Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}",
+                        err
+                    );
                 }
             }
             UvUpdate::PinRequired(pin_update) => {
@@ -602,7 +607,10 @@ async fn handle_usb_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.send_pin(&pin) {
@@ -614,7 +622,10 @@ async fn handle_usb_updates(
             }
             UvUpdate::PresenceRequired => {
                 if let Err(err) = signal_tx.send(Ok(UsbUvMessage::NeedsUserPresence)).await {
-                    tracing::error!("Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
             }
             UvUpdate::PinNotSet(_) => {

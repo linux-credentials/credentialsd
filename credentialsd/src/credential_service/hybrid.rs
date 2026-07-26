@@ -101,7 +101,10 @@ impl HybridHandler for InternalHybridHandler {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!("Retrying credential creation operation because of CTAP error: {:?}", ctap_error);
+                                        tracing::debug!(
+                                            "Retrying credential creation operation because of CTAP error: {:?}",
+                                            ctap_error
+                                        );
                                         continue;
                                     } else {
                                         tracing::error!(
@@ -125,7 +128,10 @@ impl HybridHandler for InternalHybridHandler {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!("Retrying assertion operation because of CTAP error: {:?}", ctap_error);
+                                        tracing::debug!(
+                                            "Retrying assertion operation because of CTAP error: {:?}",
+                                            ctap_error
+                                        );
                                         continue;
                                     } else {
                                         tracing::error!(
@@ -277,8 +283,9 @@ async fn handle_hybrid_updates(
             },
         };
         if let Some(state) = new_state
-            && let Err(err) = state_sender.send(state.clone()).await {
-                error!({ ?err, ?state }, "Failed to send hybrid update");
-            }
+            && let Err(err) = state_sender.send(state.clone()).await
+        {
+            error!({ ?err, ?state }, "Failed to send hybrid update");
+        }
     }
 }

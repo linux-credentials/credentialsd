@@ -1,27 +1,26 @@
 use std::{collections::HashMap, fmt::Display, os::fd::AsRawFd, sync::Arc};
 
-use serde::{ser::SerializeTuple, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    interface,
+    Connection, DBusError, interface,
     message::Header,
     names::{BusName, UniqueName},
     zvariant::{DeserializeDict, Optional, Type, Value},
-    Connection, DBusError,
 };
 
 use credentialsd_common::model::WindowHandle;
 
 use crate::{
+    DBUS_SERVICE_NAME,
     gateway::{
         CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
         GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WebAuthnError,
     },
     webauthn::AppId,
-    DBUS_SERVICE_NAME,
 };
 
-use super::{check_origin_from_app, GatewayService, RequestContext};
+use super::{GatewayService, RequestContext, check_origin_from_app};
 
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 

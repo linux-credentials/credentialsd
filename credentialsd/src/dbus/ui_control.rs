@@ -3,29 +3,29 @@
 use std::{error::Error, future::Future, sync::Arc};
 
 use tokio::sync::{
-    mpsc::{self, Receiver},
     Mutex as AsyncMutex,
+    mpsc::{self, Receiver},
 };
 use tokio_stream::StreamExt;
 use zbus::{
+    Connection, MatchRule, MessageStream,
     fdo::{self, DBusProxy},
     names::OwnedUniqueName,
     proxy,
     zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
-    Connection, MatchRule, MessageStream,
 };
 
 use credentialsd_common::model::{
-    BackgroundEvent, ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
+    BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
+    BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
+    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
+    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
+    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
     NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
     NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
     NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PortalBackendOptions,
-    UserInteractedEvent, WindowHandle, BACKGROUND_EVENT_ERROR_AUTHENTICATOR,
-    BACKGROUND_EVENT_ERROR_CANCELLED, BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED,
-    BACKGROUND_EVENT_ERROR_INTERNAL, BACKGROUND_EVENT_ERROR_NO_CREDENTIALS,
-    BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED, BACKGROUND_EVENT_ERROR_PIN_NOT_SET,
-    BACKGROUND_EVENT_ERROR_TIMED_OUT,
+    UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.

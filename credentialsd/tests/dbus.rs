@@ -11,7 +11,7 @@ mod client {
     use crate::config::{INTERFACE, PATH, SERVICE_DIR, SERVICE_NAME};
     use gio::{TestDBus, TestDBusFlags};
     use serde::Serialize;
-    use zbus::{blocking::Connection, zvariant::DynamicType, Message};
+    use zbus::{Message, blocking::Connection, zvariant::DynamicType};
 
     pub(super) struct DbusClient {
         bus: TestDBus,
