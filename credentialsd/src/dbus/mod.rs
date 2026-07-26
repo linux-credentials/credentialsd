@@ -14,7 +14,7 @@ mod ui_control;
 
 pub use self::{
     flow_control::{
-        start_flow_control_service, CredentialRequestController, CredentialRequestControllerClient,
+        CredentialRequestController, CredentialRequestControllerClient, start_flow_control_service,
     },
     ui_control::UiControlServiceClient,
 };

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     credential_service::{
-        hybrid::InternalHybridHandler, usb::InProcessUsbHandler, CredentialService,
+        CredentialService, hybrid::InternalHybridHandler, usb::InProcessUsbHandler,
     },
     dbus::CredentialRequestControllerClient,
 };

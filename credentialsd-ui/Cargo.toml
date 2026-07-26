@@ -10,16 +10,17 @@ default = ["wayland"]
 wayland = ["gdk-wayland"]
 
 [dependencies]
-async-std = { version = "1.13.1", features = ["unstable"] }
 credentialsd-common = { path = "../credentialsd-common" }
+
 futures-lite.workspace = true
-gettext-rs = { version = "0.7", features = ["gettext-system"] }
-gtk = { version = "0.10.3", package = "gtk4", features = ["v4_14"] }
-gdk-wayland = { version = "0.10.3", package = "gdk4-wayland", optional = true }
-qrcode = "0.14.1"
 serde.workspace = true
 tracing.workspace = true
-tracing-subscriber = "0.3.19"
-zeroize = { version = "1.8.2" }
+tracing-subscriber.workspace = true
 zbus = { workspace = true, default-features = false, features = ["async-io"]}
-gio-unix = "0.22.6"
+
+async-std = { version = "=1.13.2", features = ["unstable"] }
+gettext-rs = { version = "=0.7.7", features = ["gettext-system"] }
+gio-unix = "=0.22.8"
+gtk = { version = "=0.11.4", package = "gtk4", features = ["v4_14"] }
+gdk-wayland = { version = "=0.11.4", package = "gdk4-wayland", optional = true }
+qrcode = "=0.14.1"

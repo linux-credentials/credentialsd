@@ -10,5 +10,6 @@ futures-lite.workspace = true
 libc.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
-zeroize = "1.9.0"
 zvariant.workspace = true
+
+zeroize = "=1.9.0"

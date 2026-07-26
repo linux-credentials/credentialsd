@@ -14,7 +14,7 @@ use libwebauthn::transport::cable::qr_code_device::{
     CableQrCodeDevice, CableTransports, QrCodeOperationHint,
 };
 use libwebauthn::transport::{Channel, ChannelSettings, Device};
-use libwebauthn::webauthn::{Error as WebAuthnError, WebAuthn};
+use libwebauthn::webauthn::{WebAuthn, error::WebAuthnError};
 
 use credentialsd_common::{
     memfd::write_secret,
@@ -101,7 +101,10 @@ impl HybridHandler for InternalHybridHandler {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!("Retrying credential creation operation because of CTAP error: {:?}", ctap_error);
+                                        tracing::debug!(
+                                            "Retrying credential creation operation because of CTAP error: {:?}",
+                                            ctap_error
+                                        );
                                         continue;
                                     } else {
                                         tracing::error!(
@@ -125,7 +128,10 @@ impl HybridHandler for InternalHybridHandler {
                                 Ok(response) => break Ok(response.into()),
                                 Err(WebAuthnError::Ctap(ctap_error)) => {
                                     if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!("Retrying assertion operation because of CTAP error: {:?}", ctap_error);
+                                        tracing::debug!(
+                                            "Retrying assertion operation because of CTAP error: {:?}",
+                                            ctap_error
+                                        );
                                         continue;
                                     } else {
                                         tracing::error!(
@@ -276,10 +282,10 @@ async fn handle_hybrid_updates(
                 }
             },
         };
-        if let Some(state) = new_state {
-            if let Err(err) = state_sender.send(state.clone()).await {
-                error!({ ?err, ?state }, "Failed to send hybrid update");
-            }
+        if let Some(state) = new_state
+            && let Err(err) = state_sender.send(state.clone()).await
+        {
+            error!({ ?err, ?state }, "Failed to send hybrid update");
         }
     }
 }

@@ -18,7 +18,7 @@ use credentialsd_common::{
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
-use tokio::sync::{mpsc::Sender, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, mpsc::Sender};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
@@ -30,7 +30,7 @@ use crate::{
     model::{CredentialRequest, CredentialResponse},
 };
 use crate::{
-    credential_service::{nfc::NfcState, DeviceStateUpdate, ManageDevice},
+    credential_service::{DeviceStateUpdate, ManageDevice, nfc::NfcState},
     model::ClientDetails,
 };
 use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
@@ -228,11 +228,10 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         }
     });
     tracing::debug!("Finished setting up request {request_id}");
-    let cred_response = request_rx
-        .await
-        .expect("Credential service not to drop request channel before responding.");
 
-    cred_response
+    request_rx
+        .await
+        .expect("Credential service not to drop request channel before responding.")
 }
 
 fn forward_background_event_stream(

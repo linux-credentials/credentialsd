@@ -14,8 +14,8 @@ use std::{
 use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
-    zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
     Connection,
+    zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
 };
 
 use crate::{
@@ -198,7 +198,9 @@ impl GatewayService {
                 Err(WebAuthnError::NotAllowedError)
             }
         } else {
-            tracing::error!("Request did not match any known credential types. Supported types: [`public_key`].");
+            tracing::error!(
+                "Request did not match any known credential types. Supported types: [`public_key`]."
+            );
             Err(WebAuthnError::TypeError)
         }
     }
@@ -486,7 +488,7 @@ impl Display for WebAuthnError {
 mod test {
     use crate::webauthn::{NavigationContext, Origin};
 
-    use super::{check_origin_from_privileged_client, WebAuthnError};
+    use super::{WebAuthnError, check_origin_from_privileged_client};
 
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();

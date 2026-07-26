@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use async_stream::stream;
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{self, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::Stream;
 use libwebauthn::{
+    UvUpdate,
     ops::webauthn::GetAssertionResponse,
     proto::CtapError,
-    transport::{nfc::device::NfcDevice, Channel, ChannelSettings, Device},
-    webauthn::{Error as WebAuthnError, WebAuthn},
-    UvUpdate,
+    transport::{Channel, ChannelSettings, Device, nfc::device::NfcDevice},
+    webauthn::{WebAuthn, error::WebAuthnError},
 };
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
@@ -209,7 +209,10 @@ async fn handle_events(
         .await
     {
         Err(err) => {
-            tracing::error!("Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}", err);
+            tracing::error!(
+                "Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}",
+                err
+            );
         }
         Ok(mut channel) => {
             let signal_tx2 = signal_tx.clone().downgrade();
@@ -478,7 +481,10 @@ async fn handle_nfc_updates(
                     .send(Ok(NfcUvMessage::NeedsUserVerification { attempts_left }))
                     .await
                 {
-                    tracing::error!("Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}",
+                        err
+                    );
                 }
             }
             UvUpdate::PinRequired(pin_update) => {
@@ -490,7 +496,10 @@ async fn handle_nfc_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.send_pin(&pin) {
@@ -501,7 +510,9 @@ async fn handle_nfc_updates(
                 }
             }
             UvUpdate::PresenceRequired => {
-                tracing::debug!("Authenticator requested user presence, but that makes no sense for NFC. Skipping");
+                tracing::debug!(
+                    "Authenticator requested user presence, but that makes no sense for NFC. Skipping"
+                );
             }
             UvUpdate::PinNotSet(_) => {
                 tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
