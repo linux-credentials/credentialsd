@@ -20,6 +20,7 @@ use zbus::{
 
 use crate::{
     dbus::CredentialRequestController,
+    gateway::dbus::ServiceInfo,
     model::{ClientDetails, CredentialRequest, CredentialResponse},
     webauthn::{AppId, NavigationContext, Origin},
 };
@@ -229,63 +230,59 @@ fn validate_request(context: &RequestContext) -> Result<NavigationContext, WebAu
     Ok(request_environment)
 }
 
-async fn should_trust_app_id(pid: u32) -> bool {
-    // Verify if we should trust the peer based on the file name. We verify that
-    // we're in the same mount namespace before using the exe path.
-
-    // TODO: If the portal is running in a separate mount namespace for security
-    // reasons, then this check will fail with a false negative.
-    // In the future, we should retrieve this information from another trusted
-    // source, e.g. check if the PID is in a cgroup managed by systemd and
-    // corresponds to the org.freedesktop.portal.Desktop D-Bus service unit.
-    let Ok(my_mnt_ns) = tokio::fs::read_link("/proc/self/ns/mnt").await else {
-        tracing::debug!("Could not read peer mount namespace");
-        return false;
-    };
-    let Ok(peer_mnt_ns) = tokio::fs::read_link(format!("/proc/{pid}/ns/mnt")).await else {
-        tracing::debug!("Could not determine our mount namespace");
-        return false;
-    };
-    tracing::debug!(
-        "mount namespace:\n  ours:   {:?}\n  theirs: {:?}",
-        my_mnt_ns,
-        peer_mnt_ns
-    );
-    if my_mnt_ns != peer_mnt_ns {
-        tracing::warn!("Peer mount namespace is not the same as ours, not trusting the request.");
-        return false;
+async fn should_trust_app_id(service_info: &ServiceInfo) -> bool {
+    // Verify if we should trust the peer if it's part of the xdg-desktop-portal.service systemd unit.
+    // Fallback to CREDS_TRUSTED_CALLERS when debug assertions are enabled, only if running inside the same mount namespace.
+    if service_info
+        .names
+        .iter()
+        .any(|n| n == "xdg-desktop-portal.service")
+    {
+        return true;
     }
+    let ServiceInfo {
+        executable, pid, ..
+    } = service_info;
+    cfg!(debug_assertions) && {
+        let Ok(my_mnt_ns) = tokio::fs::read_link("/proc/self/ns/mnt").await else {
+            tracing::debug!("Could not read peer mount namespace");
+            return false;
+        };
+        let Ok(peer_mnt_ns) = tokio::fs::read_link(format!("/proc/{pid}/ns/mnt")).await else {
+            tracing::debug!("Could not determine our mount namespace");
+            return false;
+        };
+        tracing::debug!(
+            "mount namespace:\n  ours:   {:?}\n  theirs: {:?}",
+            my_mnt_ns,
+            peer_mnt_ns
+        );
+        if my_mnt_ns != peer_mnt_ns {
+            tracing::warn!(
+                "Peer mount namespace is not the same as ours, not trusting the request."
+            );
+            return false;
+        }
 
-    let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{pid}/exe")).await else {
-        tracing::warn!("Cannot read executable name from procfs");
-        return false;
-    };
-
-    tracing::debug!(?exe_path, %pid, "Found executable path:");
-    let trusted_callers: Vec<PathBuf> = if cfg!(debug_assertions) {
         let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
-        trusted_callers_env
+        let trusted_callers: Vec<PathBuf> = trusted_callers_env
             .split(',')
             .filter_map(|path| Path::new(path).canonicalize().ok())
-            .collect()
-    } else {
-        vec![
-            PathBuf::from("/usr/lib/xdg-desktop-portal"),
-            PathBuf::from("/usr/libexec/xdg-desktop-portal"),
-            PathBuf::from("/usr/local/lib/xdg-desktop-portal"),
-            PathBuf::from("/usr/local/libexec/xdg-desktop-portal"),
-        ]
-    };
-    tracing::debug!(
-        ?trusted_callers,
-        ?exe_path,
-        "Testing whether request is from trusted caller"
-    );
-    if !trusted_callers.as_slice().contains(&exe_path) {
-        tracing::warn!(?exe_path, "Request received from untrusted caller");
-        false
-    } else {
-        true
+            .collect();
+        tracing::debug!(
+            ?trusted_callers,
+            ?executable,
+            "Testing whether request is from trusted caller"
+        );
+        if !trusted_callers
+            .as_slice()
+            .contains(&PathBuf::from(executable))
+        {
+            tracing::warn!(?executable, "Request received from untrusted caller");
+            false
+        } else {
+            true
+        }
     }
 }
 

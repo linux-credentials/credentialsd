@@ -13,6 +13,8 @@ serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 zbus = { workspace = true, default-features = false, features = ["tokio"] }
+zbus_systemd = { workspace = true, features = ["zbus-async-tokio", "systemd1"] }
+rustix = { workspace = true }
 
 async-stream = "=0.3.6"
 async-trait = "=0.1.91"
