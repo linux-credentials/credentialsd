@@ -15,7 +15,7 @@ use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     Connection,
-    zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
+    zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type, Value},
 };
 
 pub use dbus::Credentialsd;
@@ -369,7 +369,7 @@ pub struct GetCredentialResponse {
     public_key: Option<GetPublicKeyCredentialResponse>,
 }
 
-#[derive(SerializeDict, Type)]
+#[derive(SerializeDict, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct GetPublicKeyCredentialResponse {
     pub authentication_response_json: String,
@@ -416,7 +416,7 @@ pub struct CreatePublicKeyCredentialRequest {
     pub request_json: String,
 }
 
-#[derive(Clone, SerializeDict, Type)]
+#[derive(Clone, SerializeDict, Value, Type)]
 #[zvariant(signature = "dict")]
 pub struct CreatePublicKeyCredentialResponse {
     pub registration_response_json: String,

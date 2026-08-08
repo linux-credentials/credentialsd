@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use libwebauthn::ops::webauthn::MakeCredentialRequest;
+use libwebauthn::ops::webauthn::{GetAssertionRequest, MakeCredentialRequest};
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc::Sender, oneshot},
@@ -17,7 +17,7 @@ use zbus::{
     message::Header,
     names::{BusName, OwnedUniqueName, UniqueName},
     object_server::SignalEmitter,
-    zvariant::{DeserializeDict, Optional, OwnedFd, OwnedObjectPath, Type, Value},
+    zvariant::{DeserializeDict, Optional, OwnedFd, OwnedObjectPath, SerializeDict, Type, Value},
 };
 
 use credentialsd_common::model::{
@@ -38,13 +38,16 @@ use crate::{
     gateway::{
         CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
         GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WebAuthnError,
-        create_credential_response_try_from_ctap2,
+        create_credential_response_try_from_ctap2, get_credential_response_try_from_ctap2,
     },
     model::{CredentialRequest, CredentialResponse},
     webauthn::{AppId, NavigationContext, Origin},
 };
 
-use super::{GatewayService, RequestContext, check_origin_from_app};
+use super::{
+    CreatePublicKeyCredentialResponse, GatewayService, GetPublicKeyCredentialResponse,
+    RequestContext, check_origin_from_app,
+};
 
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
@@ -240,6 +243,15 @@ struct GetCredentialPortalOptions {
     /// If omitted, denotes a same-origin request.
     top_origin: Option<String>,
 
+    /// A string of JSON that corresponds to the WebAuthn
+    /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
+    /// type.
+    public_key: Option<String>,
+}
+
+#[derive(Debug, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+struct GetCredentialOptions {
     /// A string of JSON that corresponds to the WebAuthn
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
@@ -468,7 +480,7 @@ pub struct Credentialsd {
 
 #[interface(name = "xyz.iinuwa.credentialsd.Manager")]
 impl Credentialsd {
-    pub async fn create_public_key_credential(
+    async fn create_public_key_credential(
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
@@ -533,7 +545,102 @@ impl Credentialsd {
             .unwrap_or_default();
 
         let session = CredentialsdSession::new(
-            make_cred_request,
+            LibwebauthnCredentialRequest::Make(make_cred_request),
+            request_id,
+            sender,
+            self.svc.clone(),
+            cred_request.relying_party_id().to_string(),
+            initial_devices,
+            request_rx,
+        );
+
+        let session_path =
+            OwnedObjectPath::try_from(format!("/xyz/iinuwa/credentialsd/Session/{request_id}"))
+                .expect("valid object path");
+        if !object_server
+            .at(&session_path, session)
+            .await
+            .map_err(|err| {
+                tracing::error!(%session_path, %err, "Failed to create session for request");
+                CredentialsdError::Internal
+            })?
+        {
+            tracing::warn!("Generated session path already in use. Caller should try again.");
+            return Err(CredentialsdError::Busy(
+                "Could not create session. Please try again".to_string(),
+            ));
+        }
+        Ok(session_path)
+    }
+
+    async fn get_credential(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        origin: &str,
+        top_origin: Optional<&str>,
+        options: GetCredentialOptions,
+    ) -> Result<OwnedObjectPath, CredentialsdError> {
+        // TODO: verify that a trusted service is calling, e.g. xdg-desktop-portal via systemd.
+
+        let Some(sender) = header.sender().map(|s| OwnedUniqueName::from(s.to_owned())) else {
+            return Err(CredentialsdError::InvalidRequest(
+                "D-Bus message malformed".to_string(),
+            ));
+        };
+
+        let Some(request_json) = options.public_key else {
+            return Err(CredentialsdError::NoRequestParameters(
+                "Parameters for at least one credential must be given, none found".to_string(),
+            ));
+        };
+
+        let request = GetCredentialRequest {
+            public_key: Some(GetPublicKeyCredentialRequest { request_json }),
+        };
+
+        let origin = origin
+            .parse::<Origin>()
+            .map_err(|err| CredentialsdError::InvalidOrigin(err.to_string()))?;
+        let top_origin = top_origin
+            .map(|top| {
+                top.parse::<Origin>()
+                    .map_err(|err| CredentialsdError::InvalidOrigin(err.to_string()))
+            })
+            .transpose()?;
+        let context = match top_origin {
+            Some(top_origin) => NavigationContext::CrossOrigin((origin, top_origin)),
+            None => NavigationContext::SameOrigin(origin),
+        };
+        let get_cred_request = super::get_credential_request_try_into_ctap2(&request, &context)
+            .await
+            .map_err(|err| {
+                tracing::error!("Could not parse passkey assertion request. Rejecting request.");
+                CredentialsdError::InvalidRequest(format!(
+                    "Could not parse passkey assertion request: {err:#}"
+                ))
+            })?;
+
+        let cred_request =
+            CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
+
+        let (request_tx, request_rx) = oneshot::channel();
+        let request_id = self
+            .svc
+            .lock()
+            .await
+            .init_request(&cred_request, request_tx)
+            .await?;
+        let initial_devices = self
+            .svc
+            .lock()
+            .await
+            .get_available_public_key_devices()
+            .await
+            .unwrap_or_default();
+
+        let session = CredentialsdSession::new(
+            LibwebauthnCredentialRequest::Get(get_cred_request),
             request_id,
             sender,
             self.svc.clone(),
@@ -569,6 +676,7 @@ pub enum CredentialsdError {
     Busy(String),
     InvalidOrigin(String),
     InvalidRequest(String),
+    NoRequestParameters(String),
     UnsupportedRequest(String),
     /// Some unknown error with the authenticator occurred.
     AuthenticatorError,
@@ -599,8 +707,14 @@ impl From<ManageDeviceError> for CredentialsdError {
     }
 }
 
+#[derive(Clone)]
+enum LibwebauthnCredentialRequest {
+    Make(MakeCredentialRequest),
+    Get(GetAssertionRequest),
+}
+
 struct CredentialsdSession {
-    make_cred_request: MakeCredentialRequest,
+    cred_request: LibwebauthnCredentialRequest,
     request_id: RequestId,
     svc: Arc<AsyncMutex<dyn ManageDevice + Send + Sync + 'static>>,
     rp_id: String,
@@ -614,6 +728,32 @@ struct CredentialsdSession {
     set_pin_tx: Arc<Mutex<Option<Sender<String>>>>,
     cred_selector_tx: Arc<Mutex<Option<Sender<String>>>>,
     hybrid_invocation_data: Arc<Mutex<Option<OwnedFd>>>,
+}
+
+#[derive(Debug, Clone, SerializeDict, Type)]
+#[zvariant(signature = "dict")]
+struct PublicKeyCredentialResponse<'a> {
+    #[zvariant(rename = "type")]
+    r#type: String,
+    public_key: Value<'a>,
+}
+
+impl From<CreatePublicKeyCredentialResponse> for PublicKeyCredentialResponse<'_> {
+    fn from(value: CreatePublicKeyCredentialResponse) -> Self {
+        Self {
+            r#type: "public-key".to_string(),
+            public_key: Value::from(value),
+        }
+    }
+}
+
+impl From<GetPublicKeyCredentialResponse> for PublicKeyCredentialResponse<'_> {
+    fn from(value: GetPublicKeyCredentialResponse) -> Self {
+        Self {
+            r#type: "public-key".to_string(),
+            public_key: Value::from(value),
+        }
+    }
 }
 
 #[interface(name = "xyz.iinuwa.credentialsd.Session")]
@@ -649,7 +789,7 @@ impl CredentialsdSession {
             .set_destination(self.destination.clone().into());
 
         let request_id = self.request_id;
-        let request = self.make_cred_request.clone();
+        let request = self.cred_request.clone();
         let hybrid_invocation_data = self.hybrid_invocation_data.clone();
 
         let task = tokio::spawn(async move {
@@ -676,37 +816,37 @@ impl CredentialsdSession {
 
                         match msg {
                             Ok(response) => {
-                                if let CredentialResponse::CreatePublicKeyCredentialResponse(
-                                    cred_response,
-                                ) = response
-                                {
-                                    let public_key_response =
-                                    create_credential_response_try_from_ctap2(&cred_response, &request)
-                                        .map_err(|err| {
-                                            tracing::error!(%request_id,
-                                                "Failed to parse credential response from authenticator: {err}"
-                                            );
-                                            // Using NotAllowedError as a catch-all error.
-                                            CredentialsdError::Internal
-                                        }).unwrap();
-                                    tracing::debug!("Sending ceremony completed response");
-                                    if s.ceremony_completed(&public_key_response.into())
-                                        .await
-                                        .is_err()
-                                    {
-                                        tracing::error!(
-                                            request_id,
-                                            "Failed to send ceremony completed event to backend."
-                                        );
+                                let public_key_response = match response {
+                                    CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) => {
+                                        if let LibwebauthnCredentialRequest::Make(make_request) = request  {
+                                            create_credential_response_try_from_ctap2(&cred_response, &make_request).map(|c| c.into())
+                                        }
+                                        else {
+                                            Err("Expected get response, received make response".to_string())
+                                        }
                                     }
-                                } else {
-                                    // TODO: is response safe to log here?
-                                    // tracing::error!("Expected get public key credential response, received {response:?}");
+                                    CredentialResponse::GetPublicKeyCredentialResponse(cred_response) => {
+                                        if let LibwebauthnCredentialRequest::Get(get_request) = request  {
+                                            get_credential_response_try_from_ctap2(&cred_response, &get_request).map(|c| c.into())
+                                        }
+                                        else {
+                                            Err("Expected make response, received get response".to_string())
+                                        }
+                                    }
+                                }
+                                    .map_err(|err| {
+                                        tracing::error!(%request_id,
+                                            "Failed to parse credential response from authenticator: {err}"
+                                        );
+                                        // Using NotAllowedError as a catch-all error.
+                                        CredentialsdError::Internal
+                                    }).unwrap();
+                                tracing::debug!("Sending ceremony completed response");
+                                if s.ceremony_completed(&public_key_response).await.is_err() {
                                     tracing::error!(
-                                        "Did not receive expected get public key credential response."
+                                        request_id,
+                                        "Failed to send ceremony completed event to backend."
                                     );
-                                    // Using NotAllowedError as a catch-all error.
-                                    panic!("got wrong type of request");
                                 }
                             }
                             Err(err) => {
@@ -769,7 +909,7 @@ impl CredentialsdSession {
         Err(CredentialsdError::Internal)
     }
 
-    async fn select_credential(&self, credential_id: String) -> Result<(), CredentialsdError> {
+    async fn select_credential(&self, _credential_id: String) -> Result<(), CredentialsdError> {
         // TODO: bind to original caller of the session, e.g. self.destination
         tracing::error!("Not implemented");
         Err(CredentialsdError::Internal)
@@ -860,7 +1000,7 @@ impl CredentialsdSession {
     #[zbus(signal)]
     async fn ceremony_completed(
         emitter: &SignalEmitter<'_>,
-        response: &CreateCredentialResponse,
+        response: &PublicKeyCredentialResponse<'_>,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
@@ -869,7 +1009,7 @@ impl CredentialsdSession {
 
 impl CredentialsdSession {
     fn new(
-        make_cred_request: MakeCredentialRequest,
+        cred_request: LibwebauthnCredentialRequest,
         request_id: RequestId,
         destination: OwnedUniqueName,
         svc: Arc<AsyncMutex<dyn ManageDevice + Send + Sync + 'static>>,
@@ -879,7 +1019,7 @@ impl CredentialsdSession {
     ) -> Self {
         // TODO: watch for sender disconnected, sender cancelled, or if we disconnect from bus
         Self {
-            make_cred_request,
+            cred_request,
             request_id,
             svc,
             rp_id,
