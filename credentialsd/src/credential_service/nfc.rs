@@ -1,27 +1,28 @@
 use std::time::Duration;
 
 use async_stream::stream;
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{self, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::Stream;
 use libwebauthn::{
+    UvUpdate,
     ops::webauthn::GetAssertionResponse,
     pin::PinNotSetReason,
     proto::CtapError,
-    transport::{nfc::device::NfcDevice, Channel, Device},
-    webauthn::{Error as WebAuthnError, WebAuthn},
-    UvUpdate,
+    transport::{Channel, ChannelSettings, Device, nfc::device::NfcDevice},
+    webauthn::{WebAuthn, error::WebAuthnError},
 };
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, Error, PinNotSetError};
+use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
 use super::{AuthenticatorResponse, CredentialResponse};
 
 pub(crate) trait NfcHandler {
+    #[expect(unused)]
     fn start(
         &self,
         request: &CredentialRequest,
@@ -37,8 +38,11 @@ impl InProcessNfcHandler {
         prev_nfc_state: &NfcStateInternal,
     ) -> Result<NfcStateInternal, Error> {
         match libwebauthn::transport::nfc::get_nfc_device().await {
-            Ok(None) => Ok(NfcStateInternal::Waiting),
-            Ok(Some(hid_device)) => Ok(NfcStateInternal::Connected(hid_device)),
+            Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
+            Ok(None) => {
+                let state = NfcStateInternal::Waiting;
+                Ok(state)
+            }
             Err(err) => {
                 *failures += 1;
                 if *failures == 5 {
@@ -203,9 +207,17 @@ async fn handle_events(
     signal_tx: &Sender<Result<NfcUvMessage, Error>>,
 ) {
     let device_debug = device.to_string();
-    match device.channel().await {
+    match device
+        .channel(ChannelSettings {
+            persistent_token_store: Some(super::persistent_token_store()),
+        })
+        .await
+    {
         Err(err) => {
-            tracing::error!("Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}", err);
+            tracing::error!(
+                "Failed to open channel to NFC authenticator, cannot receive user verification events: {:?}",
+                err
+            );
         }
         Ok(mut channel) => {
             let signal_tx2 = signal_tx.clone().downgrade();
@@ -292,11 +304,13 @@ impl NfcHandler for InProcessNfcHandler {
 
 // this exists to prevent making NfcStateInternal type public to the whole crate.
 /// A message between NFC handler and credential service
+#[expect(unused)]
 pub struct NfcEvent {
     pub(super) state: NfcStateInternal,
 }
 
 /// Used to share internal state between handler and credential service
+#[expect(unused)]
 #[derive(Clone, Debug, Default)]
 pub(super) enum NfcStateInternal {
     /// Not polling for FIDO NFC device.
@@ -373,7 +387,7 @@ pub enum NfcState {
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
-    SelectCredential {
+    SelectingCredential {
         creds: Vec<Credential>,
         cred_tx: mpsc::Sender<String>,
     },
@@ -407,7 +421,7 @@ impl From<NfcStateInternal> for NfcState {
             NfcStateInternal::Completed(_) => NfcState::Completed,
             // NfcStateInternal::UserCancelled => NfcState:://UserCancelled,
             NfcStateInternal::SelectCredential { response, cred_tx } => {
-                NfcState::SelectCredential {
+                NfcState::SelectingCredential {
                     creds: response
                         .assertions
                         .iter()
@@ -443,43 +457,39 @@ impl From<NfcStateInternal> for NfcState {
     }
 }
 
-impl From<NfcState> for credentialsd_common::model::NfcState {
-    fn from(value: NfcState) -> Self {
-        Self::from(&value)
-    }
-}
-impl From<&NfcState> for credentialsd_common::model::NfcState {
+impl From<&NfcState> for BackgroundEvent {
     fn from(value: &NfcState) -> Self {
         match value {
-            NfcState::Idle => credentialsd_common::model::NfcState::Idle,
-            NfcState::Waiting => credentialsd_common::model::NfcState::Waiting,
-            NfcState::Connected => credentialsd_common::model::NfcState::Connected,
-            NfcState::NeedsPin { attempts_left, .. } => {
-                credentialsd_common::model::NfcState::NeedsPin {
-                    attempts_left: *attempts_left,
-                }
-            }
+            NfcState::Idle => BackgroundEvent::NfcIdle,
+            NfcState::Waiting => BackgroundEvent::NfcWaiting,
+            NfcState::Connected => BackgroundEvent::NfcConnected,
+            NfcState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
+                attempts_left: *attempts_left,
+            },
             NfcState::PinNotSet { reason, .. } => {
                 let error = match reason {
-                    PinNotSetReason::PinNotSet => None,
-                    PinNotSetReason::PinTooShort => Some(PinNotSetError::PinTooShort),
-                    PinNotSetReason::PinTooLong => Some(PinNotSetError::PinTooLong),
-                    PinNotSetReason::PinPolicyViolation => Some(PinNotSetError::PinPolicyViolation),
+                    PinNotSetReason::PinNotSet => PinNotSetError::PinNotSet,
+                    PinNotSetReason::PinTooShort => PinNotSetError::PinTooShort,
+                    PinNotSetReason::PinTooLong => PinNotSetError::PinTooLong,
+                    PinNotSetReason::PinPolicyViolation => PinNotSetError::PinPolicyViolation,
+                    PinNotSetReason::PinChangeRequired => PinNotSetError::PinChangeRequired,
                 };
-                credentialsd_common::model::NfcState::PinNotSet { error }
+                BackgroundEvent::PinNotSet { error }
             }
             NfcState::NeedsUserVerification { attempts_left } => {
-                credentialsd_common::model::NfcState::NeedsUserVerification {
+                BackgroundEvent::NeedsUserVerification {
                     attempts_left: *attempts_left,
                 }
             }
-            NfcState::SelectCredential { creds, .. } => {
-                credentialsd_common::model::NfcState::SelectingCredential {
-                    creds: creds.to_owned(),
-                }
-            }
-            NfcState::Completed => credentialsd_common::model::NfcState::Completed,
-            NfcState::Failed(err) => credentialsd_common::model::NfcState::Failed(err.to_owned()),
+            NfcState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
+                creds: creds.to_vec(),
+            },
+            NfcState::Completed => BackgroundEvent::CeremonyCompleted,
+            NfcState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
+            NfcState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }
@@ -499,7 +509,10 @@ async fn handle_nfc_updates(
                     .send(Ok(NfcUvMessage::NeedsUserVerification { attempts_left }))
                     .await
                 {
-                    tracing::error!("Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}",
+                        err
+                    );
                 }
             }
             UvUpdate::PinRequired(pin_update) => {
@@ -511,7 +524,10 @@ async fn handle_nfc_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.send_pin(&pin) {
@@ -530,7 +546,10 @@ async fn handle_nfc_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.set_pin(&pin) {
@@ -541,7 +560,9 @@ async fn handle_nfc_updates(
                 }
             }
             UvUpdate::PresenceRequired => {
-                tracing::debug!("Authenticator requested user presence, but that makes no sense for NFC. Skipping");
+                tracing::debug!(
+                    "Authenticator requested user presence, but that makes no sense for NFC. Skipping"
+                );
             }
         }
     }

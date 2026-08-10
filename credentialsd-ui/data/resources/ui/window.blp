@@ -1,0 +1,372 @@
+using Gtk 4.0;
+
+template $CredentialsUiWindow: ApplicationWindow {
+  [titlebar]
+  HeaderBar headerbar {}
+
+  Box {
+    orientation: vertical;
+    halign: center;
+    width-request: 600;
+    margin-start: 32;
+    margin-end: 32;
+    margin-bottom: 48;
+    spacing: 10;
+
+    Label {
+      label: bind template.view-model as <$CredentialManagerViewModel>.title;
+
+      styles [
+        "title-header",
+      ]
+    }
+
+    Box {
+      orientation: vertical;
+      margin-start: 100;
+      margin-end: 100;
+
+      Label {
+        label: bind template.view-model as <$CredentialManagerViewModel>.subtitle;
+        wrap: true;
+        use-markup: true;
+        width-request: 550;
+
+        styles [
+          "subtitle-header",
+        ]
+      }
+    }
+
+    Separator {}
+
+    Stack stack {
+      halign: center;
+
+      StackPage {
+        name: "start_page";
+        title: _("Choose device");
+
+        child: Box {
+          orientation: vertical;
+          margin-start: 8;
+
+          Box {
+            orientation: vertical;
+            halign: start;
+
+            styles [
+              "cred-source-header",
+            ]
+
+            Box {
+              Image {
+                icon-name: "camera-photo-symbolic";
+
+                accessibility {
+                  labelled-by: mobile_device_label;
+                }
+              }
+
+              Label mobile_device_label {
+                label: _("Use a mobile device");
+              }
+            }
+
+            Label {
+              margin-start: 0;
+              xalign: 0;
+              halign: start;
+              valign: start;
+              hexpand: true;
+              label: bind template.view-model as <$CredentialManagerViewModel>.scan_qr_prompt;
+              wrap: true;
+            }
+
+            Overlay {
+              halign: center;
+              valign: center;
+              hexpand: false;
+              width-request: 400;
+
+              Picture qr_code_pic {
+                height-request: 300;
+                vexpand: false;
+                halign: center;
+                valign: center;
+                content-fit: scale_down;
+                can-shrink: true;
+                visible: bind template.view-model as <$CredentialManagerViewModel>.qr_code_visible;
+
+                accessibility {
+                  label: "FIDO QR Code";
+                }
+
+                styles [
+                  "qr-code",
+                ]
+              }
+
+              [overlay]
+              Image {
+                pixel-size: 96;
+                halign: center;
+                valign: center;
+                // TODO: Figure out why this doesn't work as icon-name: 'passkey-logo';
+                resource: "/xyz/iinuwa/credentialsd/CredentialsUi/icons/scalable/emblems/passkey-logo.svg";
+
+                accessibility {
+                  label: "FIDO passkey logo";
+                }
+              }
+            }
+          }
+
+          Separator {}
+
+          Box {
+            orientation: vertical;
+            halign: start;
+
+            styles [
+              "cred-source-header",
+            ]
+
+            Box {
+              Image {
+                icon-name: "media-removable-symbolic";
+
+                accessibility {
+                  labelled-by: use_security_key_label;
+                }
+              }
+
+              Label use_security_key_label {
+                label: _("Use your security key");
+              }
+            }
+
+            Label {
+              halign: start;
+              valign: start;
+              xalign: 0;
+              label: bind template.view-model as <$CredentialManagerViewModel>.activate_usb_prompt;
+              wrap: true;
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "usb_or_nfc";
+        title: _("Connect a security key");
+
+        child: Box {
+          orientation: vertical;
+
+          Image {
+            icon-name: "media-removable-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              labelled-by: security_key_label;
+            }
+          }
+
+          Label security_key_label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
+          }
+
+          PasswordEntry usb_nfc_pin_entry {
+            activate => $handle_usb_nfc_pin_entered() swapped;
+            show => $handle_usb_nfc_pin_shown() swapped;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.usb_nfc_pin_entry_visible;
+            placeholder-text: _("Enter your device PIN");
+            can-focus: true;
+            max-width-chars: 63;
+          }
+        };
+      }
+
+      StackPage {
+        name: "hybrid_qr";
+        title: _("Scan the QR code to connect your device");
+
+        child: Box {
+          orientation: vertical;
+
+          Image {
+            icon-name: "phone-symbolic";
+            icon-size: large;
+            pixel-size: 120;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Mobile device icon";
+            }
+          }
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            wrap: true;
+            width-request: 300;
+
+            styles [
+              "instructions",
+            ]
+          }
+
+          Spinner {
+            height-request: 120;
+            margin-top: 16;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+            spinning: bind template.view-model as <$CredentialManagerViewModel>.qr_spinner_visible;
+          }
+        };
+      }
+
+      StackPage {
+        name: "choose_credential";
+        title: _("Choose credential");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: _("Choose credential");
+          }
+
+          ScrolledWindow {
+            vexpand: true;
+            max-content-height: 256;
+            child: bind template.view-model as <$CredentialManagerViewModel>.credentials;
+          }
+        };
+      }
+
+      StackPage {
+        name: "set_new_pin";
+        title: _("Set a PIN");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: _("Please choose a new PIN for your device.");
+            wrap: true;
+          }
+
+          PasswordEntry new_pin_primary_entry {
+            placeholder-text: _("New PIN");
+            changed => $handle_setting_pin_change() swapped;
+          }
+
+          PasswordEntry new_pin_confirm_entry {
+            placeholder-text: _("Confirm PIN");
+            changed => $handle_setting_pin_change() swapped;
+          }
+
+          Box {
+            halign: end;
+            spacing: 6;
+
+            Button new_pin_btn_close_window {
+              label: _("Close");
+              clicked => $handle_close_window() swapped;
+            }
+
+            Button new_pin_btn_continue {
+              label: _("Continue");
+              sensitive: bind template.view-model as <$CredentialManagerViewModel>.pin_fields_match;
+
+              styles [
+                "suggested-action"
+              ]
+
+              clicked => $handle_commit_new_pin() swapped;
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "completed";
+        title: _("Complete");
+
+        child: Box {
+          orientation: vertical;
+
+          Image {
+            icon-name: "face-smile-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              label: "Success icon";
+            }
+          }
+
+          Label {
+            label: _("Done!");
+
+            styles [
+              "instructions",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "failed";
+        title: _("Something went wrong.");
+
+        child: Box {
+          orientation: vertical;
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+          }
+
+          Box {
+            halign: end;
+            spacing: 6;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.start_setting_new_pin_visible;
+            Button failed_close_window {
+              label: _("Close");
+              clicked => $handle_close_window() swapped;
+            }
+            Button start_setting_new_pin {
+              label: _("Set PIN on device");
+              clicked => $handle_start_setting_new_pin() swapped;
+            }
+          }
+        };
+
+      }
+    }
+  }
+}

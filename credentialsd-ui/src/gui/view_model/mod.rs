@@ -1,32 +1,27 @@
 pub mod gtk;
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use async_std::prelude::*;
 use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
-use credentialsd_common::model::RequestingApplication;
-use credentialsd_common::server::ViewRequest;
+use credentialsd_common::memfd::read_secret;
+use credentialsd_common::model::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use credentialsd_common::{
-    client::FlowController,
-    model::{
-        BackgroundEvent, Credential, Device, Error, HybridState, NfcState, Operation, Transport,
-        UsbState, ViewUpdate,
-    },
-};
+use credentialsd_common::model::{Device, Operation, Transport};
+
+use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
+
+use super::ViewUpdate;
 
 #[derive(Debug)]
-pub(crate) struct ViewModel<F>
-where
-    F: FlowController + Send,
-{
-    flow_controller: Arc<AsyncMutex<F>>,
+pub(crate) struct ViewModel {
+    flow_controller: Arc<AsyncMutex<FlowControlClient>>,
     tx_update: Sender<ViewUpdate>,
     rx_event: Receiver<ViewEvent>,
     title: String,
@@ -41,16 +36,13 @@ where
     devices: Vec<Device>,
     selected_device: Option<Device>,
 
-    // providers: Vec<Provider>,
-    hybrid_qr_state: HybridState,
     hybrid_qr_code_data: Option<Vec<u8>>,
-    // hybrid_linked_state: HybridState,
 }
 
-impl<F: FlowController + Send> ViewModel<F> {
+impl ViewModel {
     pub(crate) fn new(
         request: ViewRequest,
-        flow_controller: Arc<AsyncMutex<F>>,
+        flow_controller: Arc<AsyncMutex<FlowControlClient>>,
         rx_event: Receiver<ViewEvent>,
         tx_update: Sender<ViewUpdate>,
     ) -> Self {
@@ -61,6 +53,7 @@ impl<F: FlowController + Send> ViewModel<F> {
         } = request.requesting_app;
 
         let app_name: Option<String> = app_name.into();
+        let devices = request.initial_devices;
         Self {
             flow_controller,
             rx_event,
@@ -72,20 +65,19 @@ impl<F: FlowController + Send> ViewModel<F> {
             app_pid: pid,
             title: String::default(),
             subtitle: String::default(),
-            devices: Vec::new(),
+            devices,
             selected_device: None,
-            hybrid_qr_state: HybridState::default(),
             hybrid_qr_code_data: None,
         }
     }
 
     async fn update_title(&mut self) {
         let mut title = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Create a passkey for %s1")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 gettext("Use a passkey for %s1")
             }
@@ -94,19 +86,19 @@ impl<F: FlowController + Send> ViewModel<F> {
         title = title.replace("%s1", &self.rp_id);
 
         let mut subtitle = match self.operation {
-            Operation::Create => {
+            Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application
-                // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
-                gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
+                // TRANSLATORS: %s3 is the app ID (think: org.mozilla.firefox) of the requesting application
+                gettext("<b>\"%s2\"</b> (process ID: %i1, app ID: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
             }
-            Operation::Get => {
+            Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
                 // TRANSLATORS: %i1 is the process ID of the requesting application
-                // TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
-                gettext("<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
+                // TRANSLATORS: %s3 is the app ID (think: org.mozilla.firefox) of the requesting application
+                gettext("<b>\"%s2\"</b> (process ID: %i1, app ID: %s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
             }
         }
         .to_string();
@@ -116,23 +108,25 @@ impl<F: FlowController + Send> ViewModel<F> {
         subtitle = subtitle.replace("%s3", &self.app_path_or_id);
         self.title = title;
         self.subtitle = subtitle;
+        let qr_prompt =
+            // TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+            gettext("Scan the QR code using the camera on the device that has the passkey for %s1")
+                .replace("%s1", &self.rp_id);
+        // TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+        let usb_prompt = gettext("Insert and activate your security key to use it for %s1")
+            .replace("%s1", &self.rp_id);
         self.tx_update
-            .send(ViewUpdate::SetTitle((
-                self.title.to_string(),
-                self.subtitle.to_string(),
-            )))
+            .send(ViewUpdate::SetTitle {
+                title: self.title.to_string(),
+                subtitle: self.subtitle.to_string(),
+                qr_prompt,
+                usb_prompt,
+            })
             .await
             .unwrap();
     }
 
-    async fn update_devices(&mut self) {
-        let devices = self
-            .flow_controller
-            .lock()
-            .await
-            .get_available_public_key_devices()
-            .await
-            .unwrap();
+    async fn update_devices(&mut self, devices: Vec<Device>) {
         self.devices = devices;
         self.tx_update
             .send(ViewUpdate::SetDevices(self.devices.to_owned()))
@@ -140,54 +134,9 @@ impl<F: FlowController + Send> ViewModel<F> {
             .unwrap();
     }
 
-    pub(crate) async fn select_device(&mut self, id: &str) {
-        let device = self.devices.iter().find(|d| d.id == id).unwrap();
-        tracing::debug!("Device selected: {:?}", device);
-
-        // Handle previous device
-        if let Some(prev_device) = self.selected_device.replace(device.clone()) {
-            if *device == prev_device {
-                return;
-            }
-            match prev_device.transport {
-                Transport::Usb => {
-                    todo!("Implement cancellation for USB");
-                }
-                Transport::HybridQr => {
-                    todo!("Implement cancellation for Hybrid QR");
-                }
-                Transport::Nfc => {
-                    todo!("Implement cancellation for NFC");
-                }
-                _ => {
-                    todo!();
-                }
-            };
-        }
-
-        // start discovery for newly selected device
-        match device.transport {
-            Transport::Usb => {
-                let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_usb_credential().await.unwrap();
-            }
-            Transport::Nfc => {
-                let mut cred_service = self.flow_controller.lock().await;
-                (*cred_service).get_nfc_credential().await.unwrap();
-            }
-            Transport::HybridQr => {
-                let mut cred_service = self.flow_controller.lock().await;
-                cred_service.get_hybrid_credential().await.unwrap();
-            }
-            _ => {
-                todo!()
-            }
-        }
-
-        self.tx_update
-            .send(ViewUpdate::WaitingForDevice(device.clone()))
-            .await
-            .unwrap();
+    pub(crate) async fn start_discovery(&self) {
+        let cred_service = self.flow_controller.lock().await;
+        (*cred_service).discover_authenticators().await.unwrap();
     }
 
     pub(crate) async fn start_event_loop(&mut self) {
@@ -198,14 +147,12 @@ impl<F: FlowController + Send> ViewModel<F> {
         };
         let mut all_events = view_events.merge(bg_events.map(Event::Background));
         while let Some(event) = all_events.next().await {
+            tracing::trace!("View event received: {event:?}");
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
-                    self.update_devices().await;
-                }
-                Event::View(ViewEvent::DeviceSelected(id)) => {
-                    self.select_device(&id).await;
-                    println!("Selected device {id}");
+                    self.update_devices(self.devices.clone()).await;
+                    self.start_discovery().await;
                 }
                 Event::View(ViewEvent::PinEntered(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
@@ -215,8 +162,19 @@ impl<F: FlowController + Send> ViewModel<F> {
                 }
                 Event::View(ViewEvent::SetNewDevicePin(pin)) => {
                     let mut cred_service = self.flow_controller.lock().await;
-                    if cred_service.set_device_pin(pin).await.is_err() {
-                        error!("Failed to send new pin to device");
+                    // To protect against writing too large of a message from bad user input,
+                    // this function checks for a max. length and may return the error itself,
+                    // without going through the device first
+                    match cred_service.set_device_pin(pin).await {
+                        Err(Some(error)) => {
+                            self.tx_update
+                                .send(ViewUpdate::PinNotSet { error })
+                                .await
+                                .unwrap();
+                        }
+                        Ok(_) | Err(None) => {
+                            error!("Failed to send new pin to device");
+                        }
                     }
                 }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
@@ -243,181 +201,161 @@ impl<F: FlowController + Send> ViewModel<F> {
                     }
                 }
                 Event::View(ViewEvent::UserCancelled) => {
+                    self.tx_update.send(ViewUpdate::Cancelled).await.unwrap();
                     break;
                 }
 
-                Event::Background(BackgroundEvent::UsbStateChanged(state)) => {
-                    match state {
-                        UsbState::Connected => {
-                            info!("Found USB device")
-                        }
-
-                        UsbState::NeedsPin { attempts_left } => {
-                            self.tx_update
-                                .send(ViewUpdate::UsbNeedsPin { attempts_left })
-                                .await
-                                .unwrap();
-                        }
-                        UsbState::PinNotSet { error } => {
-                            self.tx_update
-                                .send(ViewUpdate::UsbPinNotSet { error })
-                                .await
-                                .unwrap();
-                        }
-                        UsbState::NeedsUserVerification { attempts_left } => {
-                            self.tx_update
-                                .send(ViewUpdate::UsbNeedsUserVerification { attempts_left })
-                                .await
-                                .unwrap();
-                        }
-                        UsbState::NeedsUserPresence => {
-                            self.tx_update
-                                .send(ViewUpdate::UsbNeedsUserPresence)
-                                .await
-                                .unwrap();
-                        }
-                        UsbState::Completed => {
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
-                        }
-                        UsbState::SelectingDevice => {
-                            self.tx_update
-                                .send(ViewUpdate::SelectingDevice)
-                                .await
-                                .unwrap();
-                        }
-                        UsbState::Idle | UsbState::Waiting => {}
-                        UsbState::SelectingCredential { creds } => {
-                            self.tx_update
-                                .send(ViewUpdate::SetCredentials(creds))
-                                .await
-                                .unwrap();
-                        }
-                        // TODO: Provide more specific error messages using the wrapped Error.
-                        UsbState::Failed(err) => {
-                            let error_msg = match err {
-                                Error::NoCredentials => {
-                                    gettext("No matching credentials found on this authenticator.")
-                                }
-                                Error::PinAttemptsExhausted => gettext(
-                                    "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                                ),
-                                Error::AuthenticatorError | Error::Internal(_) => gettext(
-                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
-                                ),
-                                Error::CredentialExcluded => gettext(
-                                    "This credential is already registered on this authenticator.",
-                                ),
-                            };
-                            self.tx_update
-                                .send(ViewUpdate::Failed(error_msg))
-                                .await
-                                .unwrap()
-                        }
-                    }
+                Event::Background(BackgroundEvent::UsbConnected) => {
+                    info!("Found USB device");
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::Usb,
+                        }))
+                        .await
+                        .unwrap();
                 }
-                Event::Background(BackgroundEvent::NfcStateChanged(state)) => {
-                    match state {
-                        NfcState::Connected => {
-                            info!("Found NFC device")
-                        }
-
-                        NfcState::NeedsPin { attempts_left } => {
-                            self.tx_update
-                                .send(ViewUpdate::NfcNeedsPin { attempts_left })
-                                .await
-                                .unwrap();
-                        }
-                        NfcState::NeedsUserVerification { attempts_left } => {
-                            self.tx_update
-                                .send(ViewUpdate::NfcNeedsUserVerification { attempts_left })
-                                .await
-                                .unwrap();
-                        }
-                        NfcState::PinNotSet { error } => {
-                            self.tx_update
-                                .send(ViewUpdate::NfcPinNotSet { error })
-                                .await
-                                .unwrap();
-                        }
-                        NfcState::Completed => {
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
-                        }
-                        NfcState::Idle | NfcState::Waiting => {}
-                        NfcState::SelectingCredential { creds } => {
-                            self.tx_update
-                                .send(ViewUpdate::SetCredentials(creds))
-                                .await
-                                .unwrap();
-                        }
-                        // TODO: Provide more specific error messages using the wrapped Error.
-                        NfcState::Failed(err) => {
-                            let error_msg = match err {
-                                Error::NoCredentials => {
-                                    gettext("No matching credentials found on this authenticator.")
-                                }
-                                Error::PinAttemptsExhausted => gettext(
-                                    "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                                ),
-                                Error::AuthenticatorError | Error::Internal(_) => gettext(
-                                    "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
-                                ),
-                                Error::CredentialExcluded => gettext(
-                                    "This credential is already registered on this authenticator.",
-                                ),
-                            };
-                            self.tx_update
-                                .send(ViewUpdate::Failed(error_msg))
-                                .await
-                                .unwrap()
-                        }
-                    }
+                Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
+                    self.tx_update
+                        .send(ViewUpdate::NeedsPin { attempts_left })
+                        .await
+                        .unwrap();
                 }
-                Event::Background(BackgroundEvent::HybridQrStateChanged(state)) => {
-                    self.hybrid_qr_state = state.clone();
-                    tracing::debug!("Received HybridQrState::{:?}", &state);
-                    match state {
-                        HybridState::Idle => {
-                            self.hybrid_qr_code_data = None;
-                        }
-                        HybridState::Started(qr_code) => {
-                            self.hybrid_qr_code_data = Some(qr_code.clone().into_bytes());
-                            self.tx_update
-                                .send(ViewUpdate::HybridNeedsQrCode(qr_code))
-                                .await
-                                .unwrap();
-                        }
-                        HybridState::Connecting => {
-                            self.hybrid_qr_code_data = None;
-                            self.tx_update
-                                .send(ViewUpdate::HybridConnecting)
-                                .await
-                                .unwrap();
-                        }
-                        HybridState::Connected => {
-                            self.hybrid_qr_code_data = None;
-                            self.tx_update
-                                .send(ViewUpdate::HybridConnected)
-                                .await
-                                .unwrap();
-                        }
-                        HybridState::Completed => {
-                            self.hybrid_qr_code_data = None;
-                            self.tx_update.send(ViewUpdate::Completed).await.unwrap();
-                        }
-                        HybridState::UserCancelled => {
-                            self.hybrid_qr_code_data = None;
-                            break;
-                        }
-                        HybridState::Failed => {
-                            self.hybrid_qr_code_data = None;
-                            self.tx_update.send(ViewUpdate::Failed(gettext("Something went wrong. Try again later or use a different authenticator."))).await.unwrap();
-                        }
-                    };
-                } /*
-                  Event::Background(BackgroundEvent::RequestCancelled(request_id)) => {
-                      break;
-                  }
-                  */
+                Event::Background(BackgroundEvent::PinNotSet { error }) => {
+                    self.tx_update
+                        .send(ViewUpdate::PinNotSet { error })
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::NeedsUserVerification { attempts_left }) => {
+                    self.tx_update
+                        .send(ViewUpdate::NeedsUserVerification { attempts_left })
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::NeedsUserPresence) => {
+                    self.tx_update
+                        .send(ViewUpdate::NeedsUserPresence)
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::CeremonyCompleted) => {
+                    self.tx_update.send(ViewUpdate::Completed).await.unwrap();
+                }
+                Event::Background(BackgroundEvent::UsbSelectingDevice) => {
+                    self.tx_update
+                        .send(ViewUpdate::SelectingDevice)
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::UsbIdle)
+                | Event::Background(BackgroundEvent::UsbWaiting) => {}
+                Event::Background(BackgroundEvent::SelectingCredential { creds }) => {
+                    self.tx_update
+                        .send(ViewUpdate::SetCredentials(creds))
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::ErrorNoCredentials) => {
+                    let error_msg = gettext("No matching credentials found on this authenticator.");
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(BackgroundEvent::ErrorPinAttemptsExhausted) => {
+                    let error_msg = gettext(
+                        "No more PIN attempts allowed. Try removing your device and plugging it back in.",
+                    );
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(BackgroundEvent::ErrorPinNotSet) => {
+                    let error_msg = gettext(
+                        "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
+                    );
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(BackgroundEvent::ErrorTimedOut) => {
+                    let error_msg = gettext("The credential request timed out. Please try again.");
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(
+                    BackgroundEvent::ErrorAuthenticator | BackgroundEvent::ErrorInternal,
+                ) => {
+                    let error_msg = gettext(
+                        "Something went wrong while retrieving a credential. Please try again later or use a different authenticator.",
+                    );
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(BackgroundEvent::ErrorCredentialExcluded) => {
+                    let error_msg =
+                        gettext("This credential is already registered on this authenticator.");
+                    self.tx_update
+                        .send(ViewUpdate::Failed(error_msg))
+                        .await
+                        .unwrap()
+                }
+                Event::Background(BackgroundEvent::NfcConnected) => {
+                    info!("Found NFC device");
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::Nfc,
+                        }))
+                        .await
+                        .unwrap();
+                }
+
+                Event::Background(BackgroundEvent::NfcIdle | BackgroundEvent::NfcWaiting) => {}
+                Event::Background(BackgroundEvent::HybridIdle) => {
+                    self.hybrid_qr_code_data = None;
+                }
+                Event::Background(BackgroundEvent::HybridStarted(qr_code_fd)) => {
+                    let qr_code_bytes = read_secret(qr_code_fd.into()).unwrap();
+                    let qr_code = String::from_utf8(qr_code_bytes).unwrap();
+                    self.hybrid_qr_code_data = Some(qr_code.clone().into_bytes());
+                    self.tx_update
+                        .send(ViewUpdate::HybridNeedsQrCode(qr_code))
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::HybridConnecting) => {
+                    self.hybrid_qr_code_data = None;
+                    self.tx_update
+                        .send(ViewUpdate::WaitingForDevice(Device {
+                            id: "TODO: bogus".to_string(),
+                            transport: Transport::HybridQr,
+                        }))
+                        .await
+                        .unwrap();
+                    self.tx_update
+                        .send(ViewUpdate::HybridConnecting)
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::HybridConnected) => {
+                    self.hybrid_qr_code_data = None;
+                    self.tx_update
+                        .send(ViewUpdate::HybridConnected)
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::ErrorCancelled) => {
+                    self.hybrid_qr_code_data = None;
+                    break;
+                }
             };
         }
     }
@@ -426,13 +364,27 @@ impl<F: FlowController + Send> ViewModel<F> {
 #[derive(Serialize, Deserialize)]
 pub enum ViewEvent {
     Initiated,
-    DeviceSelected(String),
     CredentialSelected(String),
     PinEntered(String),
     SetNewDevicePin(String),
     UserCancelled,
 }
 
+impl Debug for ViewEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Initiated => write!(f, "Initiated"),
+            Self::CredentialSelected(arg0) => {
+                f.debug_tuple("CredentialSelected").field(arg0).finish()
+            }
+            Self::PinEntered(_) => f.debug_tuple("PinEntered").field(&"******").finish(),
+            Self::SetNewDevicePin(_) => f.debug_tuple("SetNewDevicePin").field(&"******").finish(),
+            Self::UserCancelled => write!(f, "UserCancelled"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),

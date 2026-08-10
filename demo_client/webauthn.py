@@ -1,3 +1,4 @@
+from typing_extensions import Union
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -140,7 +141,7 @@ def verify_create_response(response, create_request, expected_origin):
                     # strip first two header bytes for OCTET STRING of length 16
                     assert cert_aaguid_der[:2] == b"\x04\x10"
                     cert_aaguid = cert_aaguid_der[2:]
-                    assert auth_data.aaguid.tobytes() == cert_aaguid
+                    assert auth_data.aaguid == cert_aaguid
                 except x509.ExtensionNotFound:
                     # no FIDO OID found in cert.
                     pass
@@ -200,8 +201,10 @@ def verify_create_response(response, create_request, expected_origin):
             )
 
         # Extract the claimed rpIdHash from authenticatorData, and the claimed credentialId and credentialPublicKey from authenticatorData.attestedCredentialData.
-        expected_rp_id_hash, cred_pub_key
-        credential_id = auth_data.cred_id
+        if auth_data.cred_id is None:
+            raise Exception("No credential ID returned in attestation object.")
+        else:
+            credential_id = auth_data.cred_id
 
         # Convert the COSE_KEY formatted credentialPublicKey (see Section 7 of [RFC9052]) to Raw ANSI X9.62 public key format
         # (see ALG_KEY_ECC_X962_RAW in Section 3.6.2 Public Key Representation Formats of [FIDO-Registry]).
@@ -359,7 +362,7 @@ def verify_get_response(credential, options, expected_origin, cred_lookup_fn):
     # If C.crossOrigin is present and set to true, verify that the Relying Party
     # expects this credential to be used within an iframe that is not
     # same-origin with its ancestors.
-    if C.get("crossOrigin") == True:
+    if C.get("crossOrigin") is True:
         # TODO: pass cross-origin policy as parameter
         pass
 
@@ -545,7 +548,7 @@ def _cose_verify(cose_key: bytes, signature: bytes, data: bytes):
             crv = ec.SECP256R1()
             alg = ec.ECDSA(hashes.SHA256())
         else:
-            raise Exception(f"Unsupported COSE ECDSA curve specified: {crv}")
+            raise Exception(f"Unsupported COSE ECDSA curve specified: {cose_crv}")
 
         # WebAuthn uses uncompressed points only.
         pub_key_bytes = bytes(b"\x04" + x + y)
@@ -569,7 +572,27 @@ def _cose_verify(cose_key: bytes, signature: bytes, data: bytes):
         raise Exception(f"Unsupported COSE key algorithm specified: {cose_alg}")
 
 
-def _parse_authenticator_data(auth_data):
+@dataclass
+class AuthenticatorData:
+    rp_id_hash: bytes
+    flags: set
+    sign_count: int
+    aaguid: Optional[bytes]
+    cred_id: Optional[bytes]
+    pub_key_bytes: Optional[bytes]
+    extensions: Optional[dict]
+
+    def get_pub_key(self):
+        if self.pub_key_bytes:
+            return cbor.loads(self.pub_key_bytes)
+
+    def has_flag(self, flag):
+        return flag in self.flags
+
+
+def _parse_authenticator_data(
+    auth_data: Union[bytes | memoryview],
+) -> AuthenticatorData:
     client_rp_id_hash = auth_data[:32]
 
     # Verify that the User Present bit of the flags in authData is set.
@@ -605,29 +628,11 @@ def _parse_authenticator_data(auth_data):
     else:
         extensions = None
     return AuthenticatorData(
-        rp_id_hash=client_rp_id_hash,
+        rp_id_hash=bytes(client_rp_id_hash),
         flags=flags,
         sign_count=sign_count,
-        aaguid=aaguid,
-        cred_id=cred_id,
-        pub_key_bytes=cose_key_bytes,
+        aaguid=bytes(aaguid) if aaguid else None,
+        cred_id=bytes(cred_id) if cred_id else None,
+        pub_key_bytes=bytes(cose_key_bytes) if cose_key_bytes else None,
         extensions=extensions,
     )
-
-
-@dataclass
-class AuthenticatorData:
-    rp_id_hash: bytes
-    flags: set
-    sign_count: int
-    aaguid: Optional[bytes]
-    cred_id: Optional[bytes]
-    pub_key_bytes: Optional[bytes]
-    extensions: Optional[dict]
-
-    def get_pub_key(self):
-        if self.pub_key_bytes:
-            return cbor.loads(self.pub_key_bytes)
-
-    def has_flag(self, flag):
-        return flag in self.flags

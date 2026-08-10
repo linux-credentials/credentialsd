@@ -49,7 +49,11 @@ sequenceDiagram
 ### Breaking Changes
 
 - (UI Controller): Renamed `InitiateEventStream()` to `Subscribe()`
-- (UI Controller): Serialize enums (including BackgroundEvent, HybridState and UsbState) as (yv) structs instead for a{sv} dicts
+- (UI Controller): Serialize enums (including BackgroundEvent, HybridState and UsbState) as (uv) structs instead for a{sv} dicts
+- (Gateway): Flatten `request` parameters into options.
+- (Gateway): Make `origin` and `type` a required method parameter.
+- (Gateway): Flatten nested D-Bus struct with `request_json` on CreateCredential and GetCredential
+- (Gateway): Remove Client Capabilities method from Gateway API until further notice.
 
 ### Improvements
 
@@ -78,14 +82,12 @@ sequenceDiagram
 ## Enum values
 
 Generally, enums are serialized as a tag-value structure with a single-byte tag
-and a variant as the value (`(yv)`, in D-Bus terms). The documentation for each
+and a variant as the value (`(uv)`, in D-Bus terms). The documentation for each
 specific enum variant describes how to parse the values.
 
 A single null byte (`\0`) is sent for unused enum values.
 
 ## D-Bus/JSON serialization
-
-> TODO: rename fields to snake_case so that this note is true in all cases.
 
 This API is modelled after the [Credential Management API][credman-api]. The
 top-level fields corresponding to `navigator.credentials.create()` and `get()`
@@ -106,9 +108,12 @@ this API takes:
 
 ```
 [a{sv}] {
-    origin: Variant(""),
-    top_origin: Variant(""), // topOrigin is changed to top_origin
-    password: Variant(true),
+    IN origin s = "https://example.com",
+    IN type = "password",
+    options a{sv} = {
+        top_origin: Variant("https://example.com"), // topOrigin is changed to top_origin
+        password: Variant(true),
+    }
 }
 ```
 
@@ -123,8 +128,8 @@ So if a client passed this in JavaScript:
 
 ```javascript
 {
-  "origin": "example.com",
-  "topOrigin": "example.com",
+  "origin": "https://example.com",
+  "topOrigin": "https://example.com",
   "publicKey": {
     "challenge": new Uint8Array([97, 32, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
     "excludeCredentials": [
@@ -138,18 +143,21 @@ So if a client passed this in JavaScript:
 it would pass this request to this API:
 
 ```
-[a{sv}] {
-  origin: Variant(''),
-  top_origin: Variant(''),                      // top-level fields topOrigin and publicKey are
-  public_key: Variant([a{sv}] {                 // changed to snake_case
-    registration_request_json: [s] '{           // <- JSON-encoded string
-        "challenge": "YSBjaGFsbGVuZ2U",         // buffer is encoded as base64url without padding
-        "excludeCredentials": [                 // "excludeCredentials" is not changed to snake_case
-            {"type": "public-key", "alg": -7}   // "public-key" is not changed to snake_case
+CreateCredential(
+  // ...
+  IN origin s = "https://example.com",
+  IN type s = "publicKey",
+  IN options a{sv} {
+    top_origin: Variant("https://example.com"), // top-level fields topOrigin and publicKey are
+                                                // changed to snake_case, JSON-encoded string
+    public_key: [s] = "{                        // `public_key` is a JSON-encoded string, snake_case field name
+        \"challenge\": \"YSBjaGFsbGVuZ2U\",     // "challenge" buffer is encoded as base64url without padding
+        \"excludeCredentials\": [               // "excludeCredentials" is not changed to snake_case within the JSON
+        {\"type\": \"public-key\", \"alg\": -7} // "public-key" is not changed to snake_case within the JSON string
         ]
         // ...
-    }'
-  })
+    }"
+  }
 }
 ```
 
@@ -191,12 +199,14 @@ for what kind of credential the client would like to create.
 ```
 CreateCredentialRequest(
     IN parent_window s,
+    IN origin s,
+    IN type CredentialType,
     IN options a{sv} {
-        origin: string
-        is_same_origin: string
-        type: CredentialType
-        <extra_fields>
-    }
+        activation_token: s
+        top_origin: s
+        <type_specific_fields>
+    },
+    IN app_id s,
 )
 ```
 
@@ -212,15 +222,11 @@ CredentialType[s] [
 
 #### Request context
 
-> TODO: replace is_same_origin with topOrigin, required if origin is set.
-
-> TODO: Should we say that `origin` will be optional in the future?
-
 > TODO: Define methods for safe comparison of hosts Punycode origins.
 
-`origin` and `is_same_origin` define the request context. Both are required. A
-request is considered to be a cross-origin request if `is_same_origin` is
-`false`. For certain credentials, cross-origin requests are not allowed and
+`origin` and `options.top_origin` define the request context. `origin` is required. A
+request is considered to be a cross-origin request if `options.top_origin` is
+specified. For certain credentials, cross-origin requests are not allowed and
 will be denied.
 
 At this time, only [web origins][web-origins] with HTTPS schemes are permitted
@@ -233,27 +239,28 @@ suffix, as defined by the [Public Suffix List][PSL].
 [web-origins]: https://html.spec.whatwg.org/multipage/browsers.html#concept-origin-tuple
 [PSL]: https://github.com/publicsuffix/list
 
-#### Credential Types
+#### Credential Request Types
 
-> TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
+##### WebAuthn Credential Request
 
 Currently, there is only one supported type of `CreateCredentialRequest`,
 `CreatePublicKeyCredentialRequest`, identified by `type: "publicKey"` and
-corresponds to WebAuthn credentials:
-
-    CreatePublicKeyCredentialRequest[a{sv}] : CreateCredentialRequest {
-        origin: string
-        is_same_origin: string
-        type: "publicKey"
-        publicKey: CreatePublicKeyCredentialOptions[a{sv}] {
-            // WebAuthn credential attestation JSON
-            request_json: String
-        }
-    }
-
-`request_json` is a string of JSON that corresponds to the WebAuthn
+corresponds to WebAuthn credentials. It extends the `options` parameter
+with a field `public_key`, which is a string of JSON that corresponds to the
+WebAuthn
 [`PublicKeyCredentialCreationOptions`][def-pubkeycred-creation-options]
 type.
+
+    CreatePublicKeyCredentialRequest: CreateCredentialRequest (
+        IN parent_window s,
+        IN origin s,
+        IN type s = "publicKey",
+        options a{sv} {
+            <other optional fields>,
+            public_key: s  // WebAuthn credential attestation JSON
+        },
+        IN app_id s,
+    )
 
 ### Response
 
@@ -263,24 +270,26 @@ type.
 
 `CreateCredentialResponse` is a polymorphic type that depends on the type of
 the request sent. Its `type` field is a string specifies what kind of
-credential it is, and what `<extra_fields>` should be expected.
+credential it is, and what `<type_specific_fields>` should be expected.
 
 ```
 CreateCredentialResponse[a{sv}] {
     type: CredentialType
-    <extra_fields>
+    <type_specific_fields>
 }
 ```
 
 `CredentialType` is defined above.
+
+#### WebAuthn Credential Response
 
 As the only supported request is `CreatePublicKeyCredentialRequest`, the only
 type of response is `CreateCredentialResponse` is `CreatePublicKeyResponse`, also
 denoted by `type: "publicKey"`:
 
     CreatePublicKeyResponse {
-        type: "publicKey"
-        registration_response_json: String
+        type: s = "publicKey"
+        registration_response_json: s
     }
 
 `registration_response_json` is a JSON string that corresponds to the WebAuthn
@@ -308,12 +317,15 @@ credentials the client will accept.
 
 ```
 GetCredentialRequest (
-    IN parent_window s
+    IN parent_window s,
+    IN origin s,
     IN options a{sv} {
-        origin: string
-        is_same_origin: string
-        publicKey: GetPublicKeyCredentialOptions?
-    }
+        activation_token: s
+        top_origin: s
+        <type_specific_fields>
+        public_key: s
+    },
+    IN app_id s,
 )
 ```
 
@@ -326,29 +338,20 @@ request multiple different types of credentials at once, and it can expect the
 returned credential to be any one of those credential types. Because of that,
 there is no `type` field, and credential types are specified using the optional fields.
 
+
 #### Request Context
 
-The `GetCredential()` `origin` and `is_same_origin` have the same semantics and
+The `GetCredential()` `origin` and `options.top_origin` have the same semantics and
 restrictions as in `CreateCredential()` described above.
 
 When multiple credential types are specified, the request context applies to
 all credentials.
 
-#### Credential Types
+#### Credential Request Types
 
-> TODO: decide on case of strings (snake_case like D-Bus or camelCase like JS?)
+##### WebAuthn Credential Request
 
-Currently, there is only one supported type of credential, specified by the
-`publicKey` field, which corresponds to WebAuthn credentials and takes a
-`GetPublicKeyCredentialOptions`:
-
-```
-GetPublicKeyCredentialOptions[a{sv}] {
-    request_json: string
-}
-```
-
-`request_json` is a string of JSON that corresponds to the WebAuthn
+Currently, there is only one supported type of credential, a WebAuthn PublicKeyCredential. A WebAuthn credential can be requested using the `options.public_key` field, which is a string of JSON that corresponds to the WebAuthn
 [`PublicKeyCredentialRequestOptions`][def-pubkeycred-request-options].
 
 [def-pubkeycred-request-options]: https://www.w3.org/TR/webauthn-3/#dictdef-publickeycredentialrequestoptions
@@ -361,27 +364,27 @@ GetPublicKeyCredentialOptions[a{sv}] {
 
 `GetCredentialResponse` is a polymorphic type that depends on the type of the
 request sent. Its `type` field is a string specifies what kind of credential it
-is, and what `<extra_fields>` should be expected.
+is, and what `<type_specific_fields>` should be expected.
 
 ```
 GetCredentialResponse[a{sv}] {
     type: CredentialType
-    <extra_fields>
+    <type_specific_fields>
 }
 ```
 
 `CredentialType` is defined above.
 
-As the only supported request is `CreatePublicKeyCredentialRequest`, the only
-type of response is CreateCredentialResponse is CreatePublicKeyResponse, also
+
+#### WebAuthn Credential Response
+
+As the only supported request is `GetPublicKeyCredentialRequest`, the only
+type of response is `GetCredentialResponse` is `GetPublicKeyCredentialResponse`, also
 denoted by `type: "publicKey"`:
 
     GetPublicKeyCredentialRepsonse {
-        type: "publicKey"
-        publicKey: {
-            // WebAuthn credential assertion response JSON
-            authentication_response_json: string
-        }
+        type: s = "publicKey"
+        authentication_response_json: s // WebAuthn credential assertion response JSON
     }
 
 `authentication_response_json` is a JSON string that corresponds to the WebAuthn
@@ -398,31 +401,6 @@ denoted by `type: "publicKey"`:
 - `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
 - `TypeError`: An invalid request is made.
 - `NotAllowedError`: catch-all error.
-
-## `GetClientCapabilities() -> GetClientCapabilitiesResponse`
-
-Analogous to WebAuthn Level 3's [`getClientCapabilities()`][def-getClientCapabilities] method.
-
-### Response
-
-`GetClientCapabilitiesResponse` is a set of boolean flags indicating what features this client supports.
-
-    GetClientCapabilitiesResponse[a{sb}] {
-        conditional_create: bool,
-        conditional_get: bool,
-        hybrid_transport: bool,
-        passkey_platform_authenticator: bool,
-        user_verifying_platform_authenticator: bool,
-        related_origins: bool,
-        signal_all_accepted_credentials: bool,
-        signal_current_user_details: bool,
-        signal_unknown_credential: bool,
-    }
-
-See the WebAuthn spec for meanings of the [client capability keys][def-client-capabilitities].
-
-[def-client-capabilities]: https://www.w3.org/TR/webauthn-3/#enumdef-clientcapability
-[def-getClientCapabilities]: https://w3c.github.io/webauthn/#sctn-getClientCapabilities
 
 # Flow Control API
 
@@ -454,123 +432,89 @@ to the UI until it calls this method.
 Notification of authenticator state change.
 
 ```
-BackgroundEvent[(yv)] [
-    (0x01) UsbStateChanged: UsbState,
-    (0x02) HybridStateChanged: HybridState,
+BackgroundEvent[(uv)] [
+    /// Ceremony completed successfully
+    (0x01) CeremonyCompleted
+    /// Device needs the client PIN to be entered. The backend should collect the
+    /// PIN and send it back with `EnterClientPin` event of `UserInteracted` signal.
+    (0x10) NeedsPin: u
+    (0x11) NeedsUserVerification: u
+    (0x12) NeedsUserPresence
+    (0x13) SelectingCredential: aa{sv} u32 = 0x13;
+
+    (0x20) HybridIdle
+    (0x21) HybridStarted: s
+    (0x22) HybridConnecting
+    (0x23) HybridConnected
+
+    (0x30) NfcIdle
+    (0x31) NfcWaiting
+    (0x32) NfcConnected
+
+    (0x40) UsbIdle
+    (0x41) UsbWaiting
+    (0x42) UsbSelectingDevice: aa{sv}
+    (0x43) UsbConnected
+
+    (0x80000001) ErrorInternal
+    (0x80000002) ErrorTimedOut
+    (0x80000003) ErrorCancelled
+    (0x80000004) ErrorAuthenticator
+    (0x80000005) ErrorNoCredentials
+    (0x80000006) ErrorCredentialExcluded
+    (0x80000007) ErrorPinAttemptsExhausted
+    (0x80000008) ErrorPinNotSet
 ]
 ```
+### BackgroundEvent::CeremonyCompleted
 
-```
-UsbState[(yv)] {
-    (0x01) "IDLE",
-    (0x02) "WAITING" ,
-    (0x03) "SELECTING_DEVICE",
-    (0x04) "CONNECTED",
-    (0x05) "NEEDS_PIN",
-    (0x06) "NEEDS_USER_VERIFICATION",
-    (0x07) "NEEDS_USER_PRESENCE",
-    (0x08) "SELECT_CREDENTIAL",
-    (0x09) "COMPLETED",
-    (0x0a) "FAILED",
-]
-```
-
-#### UsbState::IDLE
-
-Not polling for FIDO USB device.
-
-`name`: "IDLE"`
+Authenticator has released the credential, and the ceremony is complete.
 
 `tag`: `0x01`
 
 `value`: No associated value.
 
-#### UsbState::WAITING
 
-Awaiting FIDO USB device to be plugged in.
+### BackgroundEvent::NeedsPin
 
-`name`: `"WAITING"`
-
-`tag`: `0x02`
-
-`value`: No associated value.
-
-#### UsbState::SELECTING_DEVICE
-
-Multiple USB devices have been detected and are blinking, prompt the user to
-tap one to select it.
-
-`name`: `"SELECTING_DEVICE"`
-
-`tag`: `0x02`
-
-`value`: No associated value.
-
-#### UsbState::CONNECTED
-
-USB device connected, prompt user to tap. The device may require additional
-user verification, but that might not be known until after the user taps the
-device.
-
-`name`: `"CONNECTED"`
-
-`tag`: `0x04`
-
-`value`: No associated value.
-
-#### UsbState::NEEDS_PIN
-
-> TODO: is attempts_left attempts to permanent lockout or until power cycle?
 > TODO: Implement cancellation of USB flow
 
 The device needs PIN user verification: prompt the user to enter the pin. Send
 the pin to the flow controller using the enter_client_pin() method.
 
-`name`: `"NEEDS_PIN"`
 
-`tag`: `0x05`
+`tag`: `0x10`
 
-`value`: `[i]`, a signed integer indicating the number of PIN attempts remaining
-before the device is locked out. If the value is less than 0, the number of attempts
+`value`: `[i]`, an integer indicating the number of PIN attempts remaining
+before the device is locked out. If the value is `0xffffffff`, the number of attempts
 left is unknown.
 
-#### UsbState::NEEDS_USER_VERIFICATION
-
-> TODO: is attempts_left attempts to permanent lockout or until power cycle?
+### BackgroundEvent::NeedsUserVerification
 
 The device needs on-device user verification (likely biometrics, or can be
 on-device PIN entry). Prompt the user to interact with the device.
 
-`name`: `"NEEDS_USER_VERIFICATION"`
+`tag`: `0x11`
 
-`tag`: `0x06`
+`value`: `[i]`, am integer indicating the number of user verification
+attempts remaining before the user verification is disabled. Once disabled, only the client PIN can be used as a user verification method. If the value is 0xffffffff, the number of attempts left is unknown.
 
-`value`: `[i]`, a signed integer indicating the number of user verification
-attempts remaining before the device is locked out. If the value is less than
-0, the number of attempts left is unknown.
-
-#### UsbState::NEEDS_USER_PRESENCE
+### BackgroundEvent::NeedsUserPresence
 
 The device needs evidence of user presence (e.g. touch) to release the credential.
 
-`name`: `"NEEDS_USER_PRESENCE"`
-
-`tag`: `0x07`
+`tag`: `0x12`
 
 `value`: No associated value.
 
-#### UsbState::SELECT_CREDENTIAL
-
-> TODO: Change tense of verb to match other states -> SELECTING_CREDENTIAL
+### BackgroundEvent::SelectingCredential
 
 > TODO: field names of Credential type are confusing: "name" is an ID, and
 > "username" is a name. We should flip them.
 
 Multiple credentials have been found and the user has to select which to use
 
-`name`: `"SELECT_CREDENTIAL"`
-
-`tag`: `0x08`
+`tag`: `0x13`
 
 `value`: `[aa{sv}]`: A list of `Credential` objects.
 
@@ -586,52 +530,149 @@ To prevent CTAP credential IDs leaking to the UI, servers SHOULD make `id` an
 opaque value known only to the implementation, for example, by hashing the
 actual CTAP credential ID before sending it to the UI.
 
-#### UsbState::COMPLETED
+### BackgroundEvent::HybridIdle
 
-User tapped USB tapped, flow controller has received credential.
+Default state, not listening for hybrid transport.
 
-`name`: `"COMPLETED"`
-
-`tag`: `0x09`
+`tag`: `0x20`
 
 `value`: No associated value.
 
-#### UsbState::FAILED
+### BackgroundEvent::HybridStarted,
 
-> TODO: determine how ServiceError is serialized, force to string?
+QR code flow is starting, awaiting QR code scan and BLE advert from phone.
 
-Interaction with the authenticator failed.
+`tag`: `0x21`
 
-`name`: `"FAILED"`
+`value`: `[s]`. String to be encoded as a QR code and displayed to the user to scan.
 
-`tag`: `0x0a`
+### BackgroundEvent::HybridConnecting,
 
-`value`: `ServiceError`
+BLE advertisement received, connecting to caBLE tunnel with shared secret.
 
-> TODO: Change serialization of ServiceError
+`tag`: `0x22`
 
-```
-ServiceError[?] [
-    AUTHENTICATOR_ERROR,
-    NO_CREDENTIALS,
-    PIN_ATTEMPTS_EXHAUSTED,
-    INTERNAL,
-]
-```
+`value`: No associated value
 
-#### ServiceError::AUTHENTICATOR_ERROR
+### BackgroundEvent::HybridConnected,
+
+Connected to device via caBLE tunnel, waiting for user to release the
+credential from their remote device.
+
+`tag`: `0x23`
+
+`value`: No associated value
+
+### BackgroundEvent::NfcIdle
+
+Not polling for FIDO NFC device.
+
+`tag`: `0x30`
+
+`value`: No associated value.
+
+### BackgroundEvent::NfcWaiting
+
+Awaiting FIDO NFC device to be detected.
+
+`tag`: `0x31`
+
+`value`: No associated value.
+
+### BackgroundEvent::NfcConnected
+
+NFC device connected, prompt user to tap. The device may require additional
+user verification, but that might not be known until after the user taps the
+device.
+
+`tag`: `0x32`
+
+`value`: No associated value.
+
+### BackgroundEvent::UsbIdle
+
+Not polling for FIDO USB device.
+
+`tag`: `0x41`
+
+`value`: No associated value.
+
+### BackgroundEvent::UsbWaiting
+
+Awaiting FIDO USB device to be plugged in.
+
+`tag`: `0x42`
+
+`value`: No associated value.
+
+### BackgroundEvent::UsbSelectingDevice
+
+Multiple USB devices have been detected and are blinking, prompt the user to
+tap one to select it.
+
+`tag`: `0x43`
+
+`value`: No associated value.
+
+### BackgroundEvent::UsbConnected
+
+USB device connected, prompt user to tap. The device may require additional
+user verification, but that might not be known until after the user taps the
+device.
+
+`tag`: `0x44`
+
+`value`: No associated value.
+
+### BackgroundEvent::ErrorInternal
+
+Something went wrong with the credential service itself, not the authenticator.
+
+`tag`: `0x80000001`
+
+`value`: No associated value.
+
+### BackgroundEvent::ErrorTimedOut
+
+Request timed out.
+
+`tag`: `0x80000002`
+
+`value`: No associated value.
+
+### BackgroundEvent::ErrorCancelled
+
+User cancelled the request
+
+`tag`: `0x80000003`
+
+`value`: No associated value.
+
+### BackgroundEvent::ErrorAuthenticator
 
 Some unknown error with the authenticator occurred.
 
-`type`: `"AUTHENTICATOR_ERR"`
+`tag`: `0x80000004`
 
-#### ServiceError::NO_CREDENTIALS
+`value`: No associated value.
+
+### BackgroundEvent::NoCredentials
 
 No matching credentials were found on the device.
 
-`type`: `"NO_CREDENTIALS"`
+`tag`: `0x80000005`
 
-#### ServiceError::PIN_ATTEMPTS_EXHAUSTED,
+`value`: No associated value.
+
+### BackgroundEvent::CredentialExcluded,
+
+A credential matching the credential request already exists on the authenticator.
+
+`tag`: `0x80000006`
+
+`value`: No associated value.
+
+### BackgroundEvent::PinAttemptsExhausted,
 
 Too many incorrect PIN attempts, and authenticator must be removed and
 reinserted to continue any more PIN attempts.
@@ -639,104 +680,7 @@ reinserted to continue any more PIN attempts.
 Note that this is different than exhausting the PIN count that fully
 locks out the device.
 
-`type`: `"PIN_ATTEMPTS_EXHAUSTED"`
-
-#### ServiceError::INTERNAL,
-
-Something went wrong with the credential service itself, not the authenticator.
-
-`type`: `"INTERNAL"`
-
-### HybridState
-
-> TODO: Failed has no reason
-
-```
-HybridState[(yv)] [
-    (0x01) "IDLE",
-    (0x02) "STARTED",
-    (0x03) "CONNECTING",
-    (0x04) "CONNECTED",
-    (0x05) "COMPLETED",
-    (0x06) "USER_CANCELLED",
-    (0x07) "FAILED",
-]
-```
-
-`HybridState` represents the state of hybrid authenticator flow.
-
-In D-Bus this is represented as a dictionary `[a{sv}]` with two keys `type`,
-which is a `HybridStateType`, and `value` whose value depends on
-`HybridStateType` and is described below.
-
-#### HybridState::Idle
-
-Default state, not listening for hybrid transport.
-
-`name`: `"IDLE"`
-
-`tag`: `0x04`
-
-`value`: No associated value.
-
-#### HybridState::Started,
-
-QR code flow is starting, awaiting QR code scan and BLE advert from phone.
-
-`name`: `"STARTED"`
-
-`tag`: `0x04`
-
-`value`: `[s]`. String to be encoded as a QR code and displayed to the user to scan.
-
-#### HybridState::Connecting,
-
-BLE advert received, connecting to caBLE tunnel with shared secret.
-
-`name`: `"CONNECTING"`
-
-`tag`: `0x03`
-
-`value`: No associated value
-
-#### HybridState::Connected,
-
-Connected to device via caBLE tunnel, waiting for user to release the
-credential from their remote device.
-
-`name`: `"CONNECTED"`
-
-`tag`: `0x04`
-
-`value`: No associated value
-
-#### HybridState::Completed,
-
-Credential received over tunnel.
-
-`name`: `"COMPLETED"`
-
-`tag`: `0x05`
-
-`value`: No associated value
-
-#### HybridState::UserCancelled,
-
-Authenticator operation was cancelled.
-
-`name`: `"USER_CANCELLED"`
-
-`tag`: `0x06`
-
-`value`: No associated value
-
-#### HybridState::Failed,
-
-Failed to receive a credential from the hybrid authenticator.
-
-`name`: `"FAILED"`
-
-`tag`: `0x07`
+`tag`: `0x80000007`
 
 `value`: No associated value.
 

@@ -28,11 +28,23 @@ meson.add_dist_script(
   meson.project_source_root(),
 )
 
+# Libs and executables
 subdir('credentialsd-common')
 subdir('credentialsd')
 subdir('credentialsd-ui')
+
+# Data files
+subdir('doc')
 subdir('dbus')
+subdir('portal')
 subdir('systemd')
 subdir('webext')
-subdir('doc')
+
 subdir('demo_client')
+
+# Don't run blueprint-compiler tests
+
+# add_test_setup('skip_subproject_tests',
+#   is_default: true,
+#   exclude_suites: ['blueprint-compiler']
+# )

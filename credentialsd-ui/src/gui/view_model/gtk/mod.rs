@@ -4,8 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::model::PinNotSetError;
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::{PinNotSetError, WindowHandle};
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
 use gtk::gdk::Texture;
@@ -40,6 +39,12 @@ mod imp {
 
         #[property(get, set)]
         pub subtitle: RefCell<String>,
+
+        #[property(get, set)]
+        pub scan_qr_prompt: RefCell<String>,
+
+        #[property(get, set)]
+        pub activate_usb_prompt: RefCell<String>,
 
         #[property(get, set)]
         pub devices: RefCell<gtk::ListBox>,
@@ -135,9 +140,16 @@ impl ViewModel {
                             view_model.set_start_setting_new_pin_visible(false);
                             view_model.set_failed(false);
                             match update {
-                                ViewUpdate::SetTitle((title, subtitle)) => {
+                                ViewUpdate::SetTitle {
+                                    title,
+                                    subtitle,
+                                    qr_prompt,
+                                    usb_prompt,
+                                } => {
                                     view_model.set_title(title);
                                     view_model.set_subtitle(subtitle);
+                                    view_model.set_scan_qr_prompt(qr_prompt);
+                                    view_model.set_activate_usb_prompt(usb_prompt);
                                 }
                                 ViewUpdate::SetDevices(devices) => {
                                     view_model.update_devices(&devices)
@@ -149,8 +161,7 @@ impl ViewModel {
                                 ViewUpdate::WaitingForDevice(device) => {
                                     view_model.waiting_for_device(&device)
                                 }
-                                ViewUpdate::UsbNeedsPin { attempts_left }
-                                | ViewUpdate::NfcNeedsPin { attempts_left } => {
+                                ViewUpdate::NeedsPin { attempts_left } => {
                                     let prompt = if let Some(left) = attempts_left {
                                         let localized = ngettext(
                                             "Enter your PIN. One attempt remaining.",
@@ -164,8 +175,7 @@ impl ViewModel {
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_nfc_pin_entry_visible(true);
                                 }
-                                ViewUpdate::UsbNeedsUserVerification { attempts_left }
-                                | ViewUpdate::NfcNeedsUserVerification { attempts_left } => {
+                                ViewUpdate::NeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(left) => {
                                             let localized = ngettext(
@@ -179,23 +189,25 @@ impl ViewModel {
                                     };
                                     view_model.set_prompt(prompt);
                                 }
-                                ViewUpdate::UsbNeedsUserPresence => {
+                                ViewUpdate::NeedsUserPresence => {
                                     view_model.set_prompt(gettext("Touch your device"));
                                 }
-                                ViewUpdate::UsbPinNotSet { error }
-                                | ViewUpdate::NfcPinNotSet { error } => {
+                                ViewUpdate::PinNotSet { error } => {
                                     view_model.set_failed(true);
                                     view_model.set_start_setting_new_pin_visible(true);
                                     let text = match error {
-                                        None => gettext(
+                                        PinNotSetError::PinNotSet => gettext(
                                             "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
                                         ),
-                                        Some(PinNotSetError::PinTooShort)
-                                        | Some(PinNotSetError::PinPolicyViolation) => gettext(
+                                        PinNotSetError::PinTooShort
+                                        | PinNotSetError::PinPolicyViolation => gettext(
                                             "The entered PIN violates the PIN-policy of this device (likely too short). Please try again.",
                                         ),
-                                        Some(PinNotSetError::PinTooLong) => gettext(
+                                        PinNotSetError::PinTooLong => gettext(
                                             "The entered PIN violates the PIN-policy of this device (PIN too long). Please try again.",
+                                        ),
+                                        PinNotSetError::PinChangeRequired => gettext(
+                                            "A PIN change is required by your device to continue.",
                                         ),
                                     };
                                     // These are already gettext messages
@@ -206,11 +218,14 @@ impl ViewModel {
                                     let texture = view_model.draw_qr_code(&qr_code);
                                     view_model.set_qr_code_paintable(&texture);
                                     view_model.set_qr_code_visible(true);
-                                    view_model.set_qr_spinner_visible(true);
                                 }
                                 ViewUpdate::HybridConnecting => {
                                     view_model.set_qr_code_visible(false);
-                                    _ = view_model.qr_code_paintable().take();
+                                    _ = view_model.qr_code_paintable();
+                                    view_model.waiting_for_device(&Device {
+                                        id: "x".to_string(),
+                                        transport: Transport::HybridQr,
+                                    });
                                     view_model.set_prompt(gettext(
                                         "Connecting to your device. Make sure both devices are near each other and have Bluetooth enabled.",
                                     ));
@@ -218,7 +233,7 @@ impl ViewModel {
                                 }
                                 ViewUpdate::HybridConnected => {
                                     view_model.set_qr_code_visible(false);
-                                    _ = view_model.qr_code_paintable().take();
+                                    _ = view_model.qr_code_paintable();
                                     view_model.set_prompt(gettext(
                                         "Device connected. Follow the instructions on your device",
                                     ));
@@ -250,52 +265,15 @@ impl ViewModel {
         ));
     }
 
-    fn update_devices(&self, devices: &[Device]) {
-        let vec: Vec<DeviceObject> = devices
-            .iter()
-            .map(|d| {
-                let device_object: DeviceObject = d.into();
-                device_object
-            })
-            .collect();
-        let model = gio::ListStore::new::<DeviceObject>();
-        model.extend_from_slice(&vec);
-        let tx = self.get_sender();
-        let device_list = gtk::ListBox::new();
-        device_list.bind_model(Some(&model), move |item| -> gtk::Widget {
-            let device = item.downcast_ref::<DeviceObject>().unwrap();
-            let transport: Transport = device.transport().try_into().unwrap();
-            let icon_name = match transport {
-                Transport::Ble => "bluetooth-symbolic",
-                Transport::Internal => "computer-symbolic",
-                Transport::HybridQr => "phone-symbolic",
-                Transport::HybridLinked => "phone-symbolic",
-                Transport::Nfc => "network-wireless-symbolic",
-                Transport::Usb => "media-removable-symbolic",
-                // Transport::PasskeyProvider => ("symbolic-link-symbolic", "ACME Password Manager"),
-                // _ => "question-symbolic",
-            };
-
-            let b = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .build();
-            let icon = gtk::Image::builder().icon_name(icon_name).build();
-            let label = gtk::Label::builder().label(device.name()).build();
-            b.append(&icon);
-            b.append(&label);
-
-            let button = gtk::Button::builder().name(device.id()).child(&b).build();
-            let tx = tx.clone();
-            button.connect_clicked(move |button| {
-                let id = button.widget_name().to_string();
-                let tx = tx.clone();
-                glib::spawn_future_local(async move {
-                    tx.send(ViewEvent::DeviceSelected(id)).await.unwrap();
-                });
-            });
-            button.into()
-        });
-        self.set_devices(device_list);
+    fn update_devices(&self, _devices: &[Device]) {
+        // TODO: This This is called when a new credential source is available to show it in the UI.
+        // At this time, the list is static, and the UI templates do not read this value.
+        // Eventually, the UI template will need to read the value, when
+        // pre-known credentials (like hybrid linked devices, or passkey
+        // autofill). However, I believe in the current paradigm, we will know all available
+        // credential sources at the beginning of the request, so we won't need
+        // to update these during the request. We may be able to reomve this method altogether.
+        // for now, we're ignoring this value.
     }
 
     fn update_credentials(&self, credentials: &[Credential]) {

@@ -14,13 +14,7 @@ mod ui_control;
 
 pub use self::{
     flow_control::{
-        start_flow_control_service, CredentialRequestController, CredentialRequestControllerClient,
+        CredentialRequestController, CredentialRequestControllerClient, start_flow_control_service,
     },
     ui_control::UiControlServiceClient,
 };
-
-#[cfg(test)]
-pub mod test {
-    pub use super::flow_control::test::DummyFlowServer;
-    pub use super::ui_control::test::DummyUiServer;
-}

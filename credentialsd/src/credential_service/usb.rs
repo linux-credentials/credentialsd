@@ -1,24 +1,26 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_stream::stream;
-use base64::{self, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{self, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::Stream;
 use libwebauthn::{
+    UvUpdate,
     ops::webauthn::GetAssertionResponse,
     pin::PinNotSetReason,
     proto::CtapError,
     transport::{
-        hid::{channel::HidChannelHandle, HidDevice},
-        Channel, Device,
+        Channel, ChannelSettings, Device,
+        hid::{HidDevice, channel::HidChannelHandle},
     },
-    webauthn::{Error as WebAuthnError, WebAuthn},
-    UvUpdate,
+    webauthn::{WebAuthn, error::WebAuthnError},
 };
-use tokio::sync::broadcast;
-use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
+use tokio::sync::{
+    Mutex as AsyncMutex, broadcast,
+    mpsc::{self, Receiver, Sender, WeakSender},
+};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{Credential, Error, PinNotSetError};
+use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -40,12 +42,11 @@ impl InProcessUsbHandler {
         prev_usb_state: &UsbStateInternal,
     ) -> Result<UsbStateInternal, Error> {
         match libwebauthn::transport::hid::list_devices().await {
-            Ok(mut hid_devices) => {
+            Ok(hid_devices) => {
                 if hid_devices.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                     let state = UsbStateInternal::Waiting;
                     Ok(state)
-                } else if hid_devices.len() == 1 {
-                    Ok(UsbStateInternal::Connected(hid_devices.swap_remove(0)))
                 } else {
                     Ok(UsbStateInternal::SelectingDevice(hid_devices))
                 }
@@ -70,7 +71,7 @@ impl InProcessUsbHandler {
     }
 
     async fn process_selecting_device(
-        hid_devices: Vec<HidDevice>,
+        hid_devices: &[HidDevice],
     ) -> Result<UsbStateInternal, Error> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
@@ -78,13 +79,14 @@ impl InProcessUsbHandler {
         let mut channel_map = HashMap::new();
         let (setup_tx, mut setup_rx) =
             tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(expected_answers);
-        for (idx, mut device) in hid_devices.into_iter().enumerate() {
+        for (idx, device) in hid_devices.iter().enumerate() {
             let stx = setup_tx.clone();
             let tx = blinking_tx.clone();
+            let mut device = device.clone();
             tokio::spawn(async move {
                 let dev = device.clone();
 
-                let res = match device.channel().await {
+                let res = match device.channel(ChannelSettings::default()).await {
                     Ok(ref mut channel) => {
                         let cancel_handle = channel.get_handle();
                         stx.send((idx, dev, cancel_handle)).await.unwrap();
@@ -132,7 +134,7 @@ impl InProcessUsbHandler {
                         tracing::info!("Cancelling device {device:?}.");
                         handle.cancel_ongoing_operation().await;
                     }
-                    state = UsbStateInternal::Connected(device);
+                    state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
                     break;
                 }
                 None => {
@@ -144,7 +146,7 @@ impl InProcessUsbHandler {
     }
 
     async fn process_select_credential(
-        response: GetAssertionResponse,
+        response: &GetAssertionResponse,
         cred_rx: &mut Receiver<String>,
     ) -> Result<UsbStateInternal, Error> {
         match cred_rx.recv().await {
@@ -249,20 +251,21 @@ impl InProcessUsbHandler {
         // act on current USB USB state, send state changes to the stream, and
         // loop until a credential or error is returned.
         loop {
-            tracing::debug!("current usb state: {:?}", state);
+            tracing::trace!("current usb state: {:?}", state);
             let prev_usb_state = state;
             let next_usb_state = match prev_usb_state {
                 UsbStateInternal::Idle | UsbStateInternal::Waiting => {
                     Self::process_idle_waiting(&mut failures, &prev_usb_state).await
                 }
-                UsbStateInternal::SelectingDevice(hid_devices) => {
-                    Self::process_selecting_device(hid_devices).await
+                UsbStateInternal::SelectingDevice(ref hid_devices) => {
+                    Self::process_selecting_device(hid_devices.as_slice()).await
                 }
-                UsbStateInternal::Connected(device) => {
+                UsbStateInternal::Connected(ref device) => {
+                    let device = std::sync::Arc::clone(device);
                     let signal_tx2 = signal_tx.clone();
                     let cred_request = cred_request.clone();
                     tokio::spawn(async move {
-                        handle_events(&cred_request, device, &signal_tx2).await;
+                        handle_events(&cred_request, device.clone(), &signal_tx2).await;
                     });
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
@@ -273,29 +276,56 @@ impl InProcessUsbHandler {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
                 UsbStateInternal::SelectCredential {
-                    response,
+                    ref response,
                     cred_tx: _,
                 } => Self::process_select_credential(response, &mut cred_rx).await,
                 UsbStateInternal::Completed(_) => break Ok(()),
                 UsbStateInternal::Failed(err) => break Err(err),
             };
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
-            tx.send(state.clone()).await.map_err(|_| {
-                Error::Internal("USB state channel receiver closed prematurely".to_string())
-            })?;
+            // Usually, comparing the Discrimimant is enough, but for PinNotSet, we have to check if the reason changed
+            // as this state can be repeated multiple times with different error reasons (PIN too short, PIN too long, etc.)
+            let state_changed = match (&state, &prev_usb_state) {
+                (
+                    UsbStateInternal::PinNotSet {
+                        reason: new_reason, ..
+                    },
+                    UsbStateInternal::PinNotSet {
+                        reason: old_reason, ..
+                    },
+                ) => new_reason != old_reason,
+                (new_state, old_state) => {
+                    std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
+                }
+            };
+            if state_changed {
+                tracing::debug!("USB current state: {state:?}");
+                tx.send(state.clone()).await.map_err(|_| {
+                    Error::Internal("USB state channel receiver closed prematurely".to_string())
+                })?;
+            }
         }
     }
 }
 
 async fn handle_events(
     cred_request: &CredentialRequest,
-    mut device: HidDevice,
+    device: Arc<AsyncMutex<HidDevice>>,
     signal_tx: &Sender<Result<UsbUvMessage, Error>>,
 ) {
+    let mut device = device.lock().await;
     let device_debug = device.to_string();
-    match device.channel().await {
+    let channel = device
+        .channel(ChannelSettings {
+            persistent_token_store: Some(super::persistent_token_store()),
+        })
+        .await;
+    match channel {
         Err(err) => {
-            tracing::error!("Failed to open channel to USB authenticator, cannot receive user verification events: {:?}", err);
+            tracing::error!(
+                "Failed to open channel to USB authenticator, cannot receive user verification events: {:?}",
+                err
+            );
         }
         Ok(mut channel) => {
             let signal_tx2 = signal_tx.clone().downgrade();
@@ -401,7 +431,7 @@ pub(super) enum UsbStateInternal {
     SelectingDevice(Vec<HidDevice>),
 
     /// USB device connected, prompt user to tap
-    Connected(HidDevice),
+    Connected(Arc<AsyncMutex<HidDevice>>),
 
     /// The device needs the PIN to be entered.
     NeedsPin {
@@ -551,45 +581,41 @@ impl From<UsbStateInternal> for UsbState {
     }
 }
 
-impl From<UsbState> for credentialsd_common::model::UsbState {
-    fn from(value: UsbState) -> Self {
-        Self::from(&value)
-    }
-}
-impl From<&UsbState> for credentialsd_common::model::UsbState {
+impl From<&UsbState> for BackgroundEvent {
     fn from(value: &UsbState) -> Self {
         match value {
-            UsbState::Idle => credentialsd_common::model::UsbState::Idle,
-            UsbState::Waiting => credentialsd_common::model::UsbState::Waiting,
-            UsbState::SelectingDevice => credentialsd_common::model::UsbState::SelectingDevice,
-            UsbState::Connected => credentialsd_common::model::UsbState::Connected,
-            UsbState::NeedsPin { attempts_left, .. } => {
-                credentialsd_common::model::UsbState::NeedsPin {
-                    attempts_left: *attempts_left,
-                }
-            }
+            UsbState::Idle => BackgroundEvent::UsbIdle,
+            UsbState::Waiting => BackgroundEvent::UsbWaiting,
+            UsbState::SelectingDevice => BackgroundEvent::UsbSelectingDevice,
+            UsbState::Connected => BackgroundEvent::UsbConnected,
+            UsbState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
+                attempts_left: *attempts_left,
+            },
             UsbState::PinNotSet { reason, .. } => {
                 let error = match reason {
-                    PinNotSetReason::PinNotSet => None,
-                    PinNotSetReason::PinTooShort => Some(PinNotSetError::PinTooShort),
-                    PinNotSetReason::PinTooLong => Some(PinNotSetError::PinTooLong),
-                    PinNotSetReason::PinPolicyViolation => Some(PinNotSetError::PinPolicyViolation),
+                    PinNotSetReason::PinNotSet => PinNotSetError::PinNotSet,
+                    PinNotSetReason::PinTooShort => PinNotSetError::PinTooShort,
+                    PinNotSetReason::PinTooLong => PinNotSetError::PinTooLong,
+                    PinNotSetReason::PinPolicyViolation => PinNotSetError::PinPolicyViolation,
+                    PinNotSetReason::PinChangeRequired => PinNotSetError::PinChangeRequired,
                 };
-                credentialsd_common::model::UsbState::PinNotSet { error }
+                BackgroundEvent::PinNotSet { error }
             }
             UsbState::NeedsUserVerification { attempts_left } => {
-                credentialsd_common::model::UsbState::NeedsUserVerification {
+                BackgroundEvent::NeedsUserVerification {
                     attempts_left: *attempts_left,
                 }
             }
-            UsbState::NeedsUserPresence => credentialsd_common::model::UsbState::NeedsUserPresence,
-            UsbState::SelectingCredential { creds, .. } => {
-                credentialsd_common::model::UsbState::SelectingCredential {
-                    creds: creds.to_owned(),
-                }
-            }
-            UsbState::Completed => credentialsd_common::model::UsbState::Completed,
-            UsbState::Failed(err) => credentialsd_common::model::UsbState::Failed(err.to_owned()),
+            UsbState::NeedsUserPresence => BackgroundEvent::NeedsUserPresence,
+            UsbState::SelectingCredential { creds, .. } => BackgroundEvent::SelectingCredential {
+                creds: creds.to_vec(),
+            },
+            UsbState::Completed => BackgroundEvent::CeremonyCompleted,
+            UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
+            UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }
@@ -609,7 +635,10 @@ async fn handle_usb_updates(
                     .send(Ok(UsbUvMessage::NeedsUserVerification { attempts_left }))
                     .await
                 {
-                    tracing::error!("Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user verficiation, but we cannot relay the message to credential service: {:?}",
+                        err
+                    );
                 }
             }
             UvUpdate::PinRequired(pin_update) => {
@@ -621,7 +650,10 @@ async fn handle_usb_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.send_pin(&pin) {
@@ -640,7 +672,10 @@ async fn handle_usb_updates(
                     }))
                     .await
                 {
-                    tracing::error!("Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
                 match pin_rx.recv().await {
                     Some(pin) => match pin_update.set_pin(&pin) {
@@ -652,7 +687,10 @@ async fn handle_usb_updates(
             }
             UvUpdate::PresenceRequired => {
                 if let Err(err) = signal_tx.send(Ok(UsbUvMessage::NeedsUserPresence)).await {
-                    tracing::error!("Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}", err);
+                    tracing::error!(
+                        "Authenticator requested user presence, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
                 }
             }
         }

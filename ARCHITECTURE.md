@@ -21,7 +21,7 @@ The **UI Controller** is used to launch a UI for the user to respond to
 authenticator requests for user interaction. The **Flow Controller** interacts
 with the OS and hardware, like detecting available transports and
 authenticators. It then relays the information needed for the UI to guide the
-user through the authentication flow, like prompts for a user to enter their PIN
+user through the authentication ceremony, like prompts for a user to enter their PIN
 or touch the device. The UI Controller takes user input and responds back to the
 Flow Controller.
 

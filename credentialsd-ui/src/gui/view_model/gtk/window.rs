@@ -98,6 +98,11 @@ mod imp {
                 }
             ));
         }
+
+        #[template_callback]
+        fn handle_usb_nfc_pin_shown(&self, entry: &gtk::PasswordEntry) {
+            entry.grab_focus();
+        }
     }
 
     impl Default for CredentialsUiWindow {
@@ -145,7 +150,7 @@ mod imp {
             }
 
             // Load latest window state
-            obj.load_window_size();
+            obj.set_window_size();
         }
     }
 
@@ -153,20 +158,16 @@ mod imp {
     impl WindowImpl for CredentialsUiWindow {
         // Save window state on delete event
         fn close_request(&self) -> glib::Propagation {
-            if let Some(vm) = self.view_model.borrow().as_ref() {
-                if vm
+            if let Some(vm) = self.view_model.borrow().as_ref()
+                && vm
                     .get_sender()
                     .send_blocking(ViewEvent::UserCancelled)
                     .is_err()
-                {
-                    tracing::warn!(
-                        "Failed to notify the backend service that the user cancelled the request."
-                    );
-                };
-            }
-            if let Err(err) = self.obj().save_window_size() {
-                tracing::warn!("Failed to save window state, {}", &err);
-            }
+            {
+                tracing::warn!(
+                    "Failed to notify the backend service that the user cancelled the request."
+                );
+            };
 
             // Pass close request on to the parent
             self.parent_close_request()
@@ -273,22 +274,9 @@ impl CredentialsUiWindow {
         ));
     }
 
-    fn save_window_size(&self) -> Result<(), glib::BoolError> {
-        let imp = self.imp();
-
-        let (width, height) = self.default_size();
-
-        imp.settings.set_int("window-width", width)?;
-        imp.settings.set_int("window-height", height)?;
-
-        Ok(())
-    }
-
-    fn load_window_size(&self) {
-        let imp = self.imp();
-
-        let width = imp.settings.int("window-width");
-        let height = imp.settings.int("window-height");
+    fn set_window_size(&self) {
+        let width = 200;
+        let height = 400;
 
         self.set_default_size(width, height);
     }

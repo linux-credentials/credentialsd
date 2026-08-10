@@ -5,27 +5,32 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
-use credentialsd_common::server::{ViewRequest, WindowHandle};
-use credentialsd_common::{client::FlowController, model::ViewUpdate};
+use credentialsd_common::model::Device;
+use credentialsd_common::model::{Credential, PinNotSetError, WindowHandle};
+
+use crate::{ViewRequest, client::FlowControlClient};
 
 use view_model::ViewEvent;
 
-pub(super) fn start_gui_thread<F: FlowController + Send + Sync + 'static>(
-    rx: Receiver<ViewRequest>,
-    flow_controller: F,
+pub(super) fn start_gui_thread(
+    rx: Receiver<(
+        ViewRequest,
+        Arc<AsyncMutex<FlowControlClient>>,
+        Receiver<()>,
+    )>,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new().name("gui".into()).spawn(move || {
-        let flow_controller = Arc::new(AsyncMutex::new(flow_controller));
         // D-Bus received a request and needs a window open
-        while let Ok(view_request) = rx.recv_blocking() {
-            run_gui(flow_controller.clone(), view_request);
+        while let Ok((view_request, flow_controller, cancel_rx)) = rx.recv_blocking() {
+            run_gui(flow_controller, view_request, cancel_rx);
         }
     })
 }
 
-fn run_gui<F: FlowController + Send + Sync + 'static>(
-    flow_controller: Arc<AsyncMutex<F>>,
+fn run_gui(
+    flow_controller: Arc<AsyncMutex<FlowControlClient>>,
     request: ViewRequest,
+    cancel_rx: Receiver<()>,
 ) {
     let parent_window: Option<WindowHandle> = request.window_handle.as_ref().and_then(|h| {
         h.to_string()
@@ -36,21 +41,61 @@ fn run_gui<F: FlowController + Send + Sync + 'static>(
 
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
+    let tx_event2 = tx_event.clone();
+    let cancel_task = async_std::task::spawn(async move {
+        if let Ok(_) = cancel_rx.recv().await
+            && tx_event2.send(ViewEvent::UserCancelled).await.is_err()
+        {
+            tracing::error!("Failed to send cancellation to view model");
+        }
+    });
     let event_loop = async_std::task::spawn(async move {
-        let request_id = request.id;
         let mut vm =
             view_model::ViewModel::new(request, flow_controller.clone(), rx_event, tx_update);
         vm.start_event_loop().await;
         tracing::debug!("Finishing user request.");
         // If cancellation fails, that's fine.
-        let _ = flow_controller
-            .lock()
-            .await
-            .cancel_request(request_id)
-            .await;
+        cancel_task.cancel().await;
+        let _ = flow_controller.lock().await.cancel_request().await;
+        // TODO: Clean up flow_object when request completes
     });
 
     view_model::gtk::start_gtk_app(parent_window, tx_event, rx_update);
 
     async_std::task::block_on(event_loop.cancel());
+}
+
+#[derive(Debug, Clone)]
+pub enum ViewUpdate {
+    SetTitle {
+        title: String,
+        subtitle: String,
+        qr_prompt: String,
+        usb_prompt: String,
+    },
+    SetDevices(Vec<Device>),
+    // TODO: Fix this
+    SetCredentials(Vec<Credential>),
+
+    WaitingForDevice(Device),
+    SelectingDevice,
+
+    NeedsPin {
+        attempts_left: Option<u32>,
+    },
+    PinNotSet {
+        error: PinNotSetError,
+    },
+    NeedsUserVerification {
+        attempts_left: Option<u32>,
+    },
+    NeedsUserPresence,
+
+    HybridNeedsQrCode(String),
+    HybridConnecting,
+    HybridConnected,
+
+    Completed,
+    Cancelled,
+    Failed(String),
 }

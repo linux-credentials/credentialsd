@@ -1,5 +1,5 @@
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::server::WindowHandle;
+use credentialsd_common::model::WindowHandle;
 use tracing::{debug, info};
 
 use gtk::prelude::*;
@@ -14,7 +14,7 @@ mod imp {
     use crate::gui::view_model::gtk::ModelState;
 
     use super::*;
-    use credentialsd_common::server::WindowHandle;
+    use credentialsd_common::model::WindowHandle;
     use glib::{WeakRef, clone};
     use std::{
         cell::{OnceCell, RefCell},
@@ -187,7 +187,7 @@ impl CredentialsUi {
 
     // Sets up keyboard shortcuts
     fn setup_accels(&self) {
-        self.set_accels_for_action("app.quit", &["<Control>q"]);
+        self.set_accels_for_action("app.quit", &["<Control>q", "Escape"]);
         self.set_accels_for_action("window.close", &["<Control>w"]);
     }
 
@@ -217,13 +217,7 @@ impl CredentialsUi {
         tx: Sender<ViewEvent>,
         rx: Receiver<ViewUpdate>,
     ) -> Self {
-        let app: Self = glib::Object::builder()
-            .property("application-id", APP_ID)
-            .property(
-                "resource-base-path",
-                "/xyz/iinuwa/credentialsd/CredentialUI/",
-            )
-            .build();
+        let app: Self = glib::Object::new();
         app.imp().parent_window.replace(parent_window);
         app.imp().tx.replace(Some(tx));
         app.imp().rx.replace(Some(rx));

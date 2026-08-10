@@ -1,22 +1,377 @@
 //! These methods are called by the flow controller to launch the trusted UI.
 
-use std::error::Error;
+use std::{error::Error, future::Future, sync::Arc};
 
-use zbus::{fdo, proxy, Connection};
+use tokio::sync::{
+    Mutex as AsyncMutex,
+    mpsc::{self, Receiver},
+};
+use tokio_stream::StreamExt;
+use zbus::{
+    Connection, MatchRule, MessageStream,
+    fdo::{self, DBusProxy},
+    names::OwnedUniqueName,
+    proxy,
+    zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
+};
 
-use credentialsd_common::server::{RequestId, ViewRequest};
+use credentialsd_common::model::{
+    BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
+    BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
+    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
+    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
+    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
+    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
+    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
+    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+};
 
-use crate::credential_service::UiController;
+/// Used by the credential service to control the UI.
+pub trait UiController {
+    // D-Bus has a lot of arguments
+    #[expect(clippy::too_many_arguments)]
+    fn create_session(
+        &self,
+        session_handle: OwnedObjectPath,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        devices: Vec<Device>,
+        app_id: String,
+        app_pid: u32,
+        options: PortalBackendOptions,
+    ) -> impl Future<Output = std::result::Result<Ceremony, Box<dyn Error>>> + Send;
+}
 
 #[proxy(
     gen_blocking = false,
-    interface = "xyz.iinuwa.credentialsd.UiControl1",
+    interface = "org.freedesktop.impl.portal.experimental.Credential",
     default_service = "xyz.iinuwa.credentialsd.UiControl",
-    default_path = "/xyz/iinuwa/credentialsd/UiControl"
+    default_path = "/org/freedesktop/portal/desktop"
 )]
 trait UiControlService {
-    fn launch_ui(&self, request: ViewRequest) -> fdo::Result<()>;
-    fn cancel_request(&self, request_id: RequestId) -> fdo::Result<()>;
+    // D-Bus has a lot of arguments
+    #[expect(clippy::too_many_arguments)]
+    fn create_session(
+        &self,
+        session_handle: ObjectPath<'_>,
+        parent_window: Optional<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        devices: Vec<Device>,
+        app_id: String,
+        app_pid: u32,
+        options: PortalBackendOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_needs_pin(
+        &self,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsPinOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_pin_not_set(
+        &self,
+        session_handle: ObjectPath<'_>,
+        error: PinNotSetError,
+        _options: NotifyPinNotSetOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator needs a user verification gesture.
+    #[zbus(no_reply)]
+    async fn notify_needs_user_verification(
+        &self,
+        session_handle: ObjectPath<'_>,
+        attempts_left: u32,
+        _options: NotifyNeedsUserVerificationOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator needs a user presence gesture.
+    #[zbus(no_reply)]
+    async fn notify_needs_user_presence(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNeedsUserPresenceOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the authenticator detects multiple credentials matching
+    /// credentials for a request.
+    #[zbus(no_reply)]
+    async fn notify_selecting_credential(
+        &self,
+        session_handle: ObjectPath<'_>,
+        credentials: Vec<Credential>,
+        _options: NotifySelectingCredentialOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the platform begins scanning for CTAP2 hybrid advertisements.
+    #[zbus(no_reply)]
+    async fn notify_hybrid_started(
+        &self,
+        session_handle: ObjectPath<'_>,
+        invocation_data: OwnedFd,
+        _options: NotifyHybridStartedOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the platform has received a CTAP2 hybrid advertisement and is
+    /// establishing a channel.
+    #[zbus(no_reply)]
+    async fn notify_hybrid_connecting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_hybrid_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_nfc_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNfcConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_usb_connected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_ceremony_completed(&self, session_handle: ObjectPath<'_>) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_error_occurred(
+        &self,
+        session_handle: ObjectPath<'_>,
+        error: u32,
+    ) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn discovery_requested(
+        &self,
+        session_handle: ObjectPath<'_>,
+        options: DiscoveryRequestedOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn client_pin_entered(
+        &self,
+        session_handle: ObjectPath<'_>,
+        pin_fd: OwnedFd,
+        options: ClientPinEnteredOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn set_device_pin(
+        &self,
+        session_handle: ObjectPath<'_>,
+        pin_fd: OwnedFd,
+        options: SetDevicePinOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn credential_selected(
+        &self,
+        session_handle: ObjectPath<'_>,
+        id: String,
+        options: CredentialSelectedOptions,
+    ) -> zbus::Result<()>;
+}
+
+#[derive(Clone, Debug)]
+pub struct Ceremony {
+    proxy: Arc<UiControlServiceProxy<'static>>,
+    ui_events_rx: Arc<AsyncMutex<Receiver<UserInteractedEvent>>>,
+    session_handle: OwnedObjectPath,
+}
+
+impl Ceremony {
+    pub async fn receive_ui_event(&self) -> Option<UserInteractedEvent> {
+        self.ui_events_rx.lock().await.recv().await
+    }
+
+    pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
+        let response = match event {
+            // TODO: Remove these events. They are no longer needed by backends, since the user
+            // needs to select a device anyway.
+            BackgroundEvent::NfcIdle
+            | BackgroundEvent::NfcWaiting
+            | BackgroundEvent::UsbIdle
+            | BackgroundEvent::UsbSelectingDevice
+            | BackgroundEvent::UsbWaiting => {
+                return Ok(());
+            }
+            BackgroundEvent::NeedsPin { attempts_left } => {
+                self.proxy
+                    .notify_needs_pin(
+                        self.session_handle.as_ref(),
+                        attempts_left.unwrap_or(u32::MAX),
+                        NotifyNeedsPinOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::PinNotSet { error } => {
+                self.proxy
+                    .notify_pin_not_set(
+                        self.session_handle.as_ref(),
+                        error,
+                        NotifyPinNotSetOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NeedsUserVerification { attempts_left } => {
+                self.proxy
+                    .notify_needs_user_verification(
+                        self.session_handle.as_ref(),
+                        attempts_left.unwrap_or(u32::MAX),
+                        NotifyNeedsUserVerificationOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NeedsUserPresence => {
+                self.proxy
+                    .notify_needs_user_presence(
+                        self.session_handle.as_ref(),
+                        NotifyNeedsUserPresenceOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::SelectingCredential { creds } => {
+                self.proxy
+                    .notify_selecting_credential(
+                        self.session_handle.as_ref(),
+                        creds,
+                        NotifySelectingCredentialOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridIdle => todo!(),
+            BackgroundEvent::HybridStarted(invocation_data_fd) => {
+                self.proxy
+                    .notify_hybrid_started(
+                        self.session_handle.as_ref(),
+                        invocation_data_fd,
+                        NotifyHybridStartedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridConnecting => {
+                self.proxy
+                    .notify_hybrid_connecting(
+                        self.session_handle.as_ref(),
+                        NotifyHybridConnectingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridConnected => {
+                self.proxy
+                    .notify_hybrid_connected(
+                        self.session_handle.as_ref(),
+                        NotifyHybridConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NfcConnected => {
+                self.proxy
+                    .notify_nfc_connected(
+                        self.session_handle.as_ref(),
+                        NotifyNfcConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::UsbConnected => {
+                self.proxy
+                    .notify_usb_connected(
+                        self.session_handle.as_ref(),
+                        NotifyUsbConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::ErrorInternal => {
+                let error = BACKGROUND_EVENT_ERROR_INTERNAL;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorTimedOut => {
+                let error = BACKGROUND_EVENT_ERROR_TIMED_OUT;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorCancelled => {
+                // TODO: Just call org.freedesktop.impl.portal.Session.Close()
+                let error = BACKGROUND_EVENT_ERROR_CANCELLED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorAuthenticator => {
+                let error = BACKGROUND_EVENT_ERROR_AUTHENTICATOR;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorNoCredentials => {
+                let error = BACKGROUND_EVENT_ERROR_NO_CREDENTIALS;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorCredentialExcluded => {
+                let error = BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorPinAttemptsExhausted => {
+                let error = BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::ErrorPinNotSet => {
+                let error = BACKGROUND_EVENT_ERROR_PIN_NOT_SET;
+                self.proxy
+                    .notify_error_occurred(self.session_handle.as_ref(), error)
+                    .await
+            }
+            BackgroundEvent::CeremonyCompleted => {
+                self.proxy
+                    .notify_ceremony_completed(self.session_handle.as_ref())
+                    .await
+            }
+        };
+
+        if let Err(err) = response {
+            tracing::error!(%err, "Failed to send update to backend");
+            return Err(());
+        }
+        Ok(())
+    }
+}
+
+#[proxy(
+    gen_blocking = false,
+    interface = "org.freedesktop.impl.portal.Session"
+)]
+trait CeremonySession {
+    async fn close(&self) -> fdo::Result<()>;
+
+    #[zbus(signal)]
+    async fn closed(&self) -> zbus::Result<()>;
 }
 
 #[derive(Debug)]
@@ -28,230 +383,150 @@ impl UiControlServiceClient {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
     }
-
-    async fn proxy(&self) -> Result<UiControlServiceProxy<'_>, zbus::Error> {
-        UiControlServiceProxy::new(&self.conn).await
-    }
 }
+
 impl UiController for UiControlServiceClient {
-    async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn Error>> {
-        self.proxy()
-            .await?
-            .launch_ui(request)
-            .await
-            .map_err(|err| err.into())
+    async fn create_session(
+        &self,
+        session_handle: OwnedObjectPath,
+        parent_window: Option<WindowHandle>,
+        origin: String,
+        r#type: Operation,
+        devices: Vec<Device>,
+        app_id: String,
+        app_pid: u32,
+        options: PortalBackendOptions,
+    ) -> Result<Ceremony, Box<dyn Error>> {
+        let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
+        let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
+        let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        let sender = dbus_proxy
+            .get_name_owner(backend_proxy.as_ref().destination().clone())
+            .await?;
+        subscribe_ui_events(
+            self.conn.clone(),
+            sender,
+            session_handle.clone(),
+            from_ui_tx,
+        )
+        .await?;
+
+        backend_proxy
+            .create_session(
+                session_handle.as_ref(),
+                parent_window.into(),
+                origin,
+                r#type,
+                devices,
+                app_id,
+                app_pid,
+                options,
+            )
+            .await?;
+        tracing::debug!(path = ?session_handle, "Session initialized");
+        Ok(Ceremony {
+            proxy: Arc::new(backend_proxy),
+            ui_events_rx: Arc::new(AsyncMutex::new(from_ui_rx)),
+            session_handle,
+        })
     }
 }
 
-#[cfg(test)]
-pub mod test {
-    use std::{
-        fmt::Debug,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-    };
+async fn subscribe_ui_events(
+    connection: Connection,
+    sender: OwnedUniqueName,
+    session_handle: OwnedObjectPath,
+    tx: mpsc::Sender<UserInteractedEvent>,
+) -> zbus::Result<()> {
+    let match_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.impl.portal.experimental.Credential")?
+        .destination(
+            connection
+                .unique_name()
+                .expect("unique name to be set for connection")
+                .clone(),
+        )?
+        .path("/org/freedesktop/portal/desktop")?
+        .sender(sender.clone())?
+        .arg_path(0, session_handle.clone())?
+        .build();
 
-    use credentialsd_common::{
-        client::FlowController, model::BackgroundEvent, server::ViewRequest,
-    };
-    use futures_lite::StreamExt;
-    use tokio::sync::{
-        mpsc::{self, Receiver, Sender},
-        Mutex as AsyncMutex, Notify,
-    };
+    let session_handle2 = session_handle.clone();
+    let ui_event_stream = MessageStream::for_match_rule(match_rule, &connection, Some(16)).await?
+        .filter_map(move |response| match response {
+            Ok(msg) => {
+                Some(msg)
+            },
+            Err(err) => {
+                tracing::error!(session_handle = %session_handle2, %err, "Error receiving a message from the UI event stream");
+                None
+            }
+        })
+        .filter_map(|msg| {
+            let signal_name = msg.header().member().map(|name| name.to_string())?;
 
-    use super::UiController;
+            match signal_name.as_str() {
+                stringify!(DiscoveryRequested) => {
+                    DiscoveryRequested::from_message(msg)?
+                        .args().ok()
+                        .map(|_| UserInteractedEvent::DiscoveryRequested)
+                }
+                stringify!(ClientPinEntered) => {
+                    ClientPinEntered::from_message(msg)?
+                        .args().ok()
+                        .map(|args| UserInteractedEvent::ClientPinEntered(args.pin_fd))
+                }
+                stringify!(SetDevicePin) => {
+                    SetDevicePin::from_message(msg)?
+                        .args().ok()
+                        .map(|args| UserInteractedEvent::SetDevicePin(args.pin_fd))
+                }
+                stringify!(CredentialSelected) => {
+                    CredentialSelected::from_message(msg)?
+                        .args().ok()
+                        .map(|args| UserInteractedEvent::CredentialSelected(args.id))
+                }
+                _ => None
+            }
+        });
 
-    #[derive(Debug)]
-    pub struct DummyUiClient {
-        tx: Sender<ViewRequest>,
-    }
+    let closed_match_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.impl.portal.Session")?
+        .member("Closed")?
+        .destination(
+            connection
+                .unique_name()
+                .expect("unique name to be set for connection")
+                .clone(),
+        )?
+        .path(session_handle.clone())?
+        .sender(sender.clone())?
+        .build();
 
-    impl UiController for DummyUiClient {
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
-            tracing::debug!(
-                target: "DummyUiClient",
-                "Sending launch_ui() request"
-            );
-            self.tx.send(request).await.unwrap();
-            tracing::debug!(
-                target: "DummyUiClient",
-                "Finish launch_ui() request"
-            );
-            Ok(())
-        }
-    }
+    let closed_event_stream =
+        MessageStream::for_match_rule(closed_match_rule, &connection, Some(1))
+            .await?
+            .filter_map(|s| s.ok())
+            .map(|_| UserInteractedEvent::RequestCancelled);
 
-    pub struct DummyUiServer<F>
-    where
-        F: FlowController + Debug,
-    {
-        rx: AsyncMutex<Receiver<ViewRequest>>,
-        svc: Arc<AsyncMutex<Option<F>>>,
-        events: Arc<AsyncMutex<Vec<BackgroundEvent>>>,
-        stream_initialized: AtomicBool,
-        stream_initialized_notifier: Notify,
-    }
-    impl<F: FlowController + Debug + Send + Sync + 'static> DummyUiServer<F> {
-        pub fn new(events: Vec<BackgroundEvent>) -> (Self, DummyUiClient) {
-            let (tx, rx) = mpsc::channel(32);
-            let server = Self {
-                rx: AsyncMutex::new(rx),
-                svc: Arc::new(AsyncMutex::new(None)),
-                events: Arc::new(AsyncMutex::new(events)),
-                stream_initialized: AtomicBool::new(false),
-                stream_initialized_notifier: Notify::new(),
-            };
-            let client = DummyUiClient { tx };
-            (server, client)
-        }
+    let mut ui_event_stream = ui_event_stream.merge(closed_event_stream);
 
-        pub async fn init(&self, flow_controller: F) {
-            _ = self.svc.lock().await.insert(flow_controller);
-        }
-
-        pub async fn run(&self) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Starting launch_ui() request listener"
-            );
-            let mut rx = self.rx.lock().await;
-            while let Some(request) = rx.recv().await {
-                self.launch_ui(request).await.unwrap();
+    // Forward the events to the receiver in the background.
+    tokio::task::spawn(async move {
+        tracing::debug!("Listening for events from UI");
+        while let Some(ui_event) = ui_event_stream.next().await {
+            tracing::trace!(?ui_event, "Received event from UI");
+            if tx.send(ui_event).await.is_err() {
+                tracing::trace!(
+                    "UI event listener stopped listening events. Ending event stream listener"
+                );
+                break;
             }
         }
-
-        pub async fn request_hybrid_credential(&self) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received request_hybrid_credential() request"
-            );
-            loop {
-                if !self.stream_initialized.load(Ordering::Relaxed) {
-                    self.stream_initialized_notifier.notified().await;
-                } else {
-                    break;
-                }
-            }
-            self.svc
-                .lock()
-                .await
-                .as_mut()
-                .unwrap()
-                .get_hybrid_credential()
-                .await
-                .unwrap()
-        }
-
-        pub async fn request_usb_credential(&self) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received request_usb_credential() request"
-            );
-            loop {
-                if !self.stream_initialized.load(Ordering::Relaxed) {
-                    self.stream_initialized_notifier.notified().await;
-                } else {
-                    break;
-                }
-            }
-            self.svc
-                .lock()
-                .await
-                .as_mut()
-                .unwrap()
-                .get_usb_credential()
-                .await
-                .unwrap()
-        }
-
-        pub async fn request_nfc_credential(&self) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received request_nfc_credential() request"
-            );
-            loop {
-                if !self.stream_initialized.load(Ordering::Relaxed) {
-                    self.stream_initialized_notifier.notified().await;
-                } else {
-                    break;
-                }
-            }
-            self.svc
-                .lock()
-                .await
-                .as_mut()
-                .unwrap()
-                .get_nfc_credential()
-                .await
-                .unwrap()
-        }
-
-        pub async fn enter_client_pin(&self, pin: String) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received enter_client_pin() request"
-            );
-            self.svc
-                .lock()
-                .await
-                .as_mut()
-                .unwrap()
-                .enter_client_pin(pin)
-                .await
-                .unwrap();
-        }
-
-        pub async fn select_credential(&self, _cred_id: String) {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received select_credential() request"
-            );
-        }
-
-        async fn launch_ui(&self, request: ViewRequest) -> Result<(), Box<dyn std::error::Error>> {
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Received launch_ui() request"
-            );
-            println!("Starting {:?} request UI", request.operation);
-            let events = self.events.clone();
-            let mut stream = self
-                .svc
-                .lock()
-                .await
-                .as_mut()
-                .unwrap()
-                .subscribe()
-                .await
-                .unwrap();
-            self.stream_initialized.store(true, Ordering::Release);
-            self.stream_initialized_notifier.notify_waiters();
-            tokio::spawn(async move {
-                tracing::debug!(target: "DummyUiServer", "Starting background event stream");
-                while let Some(event) = stream.next().await {
-                    tracing::debug!(
-                        target: "DummyUiServer",
-                        "Received background event: {event:?}"
-                    );
-                    events.lock().await.push(event);
-                }
-            });
-            self.svc
-                .lock()
-                .await
-                .as_ref()
-                .unwrap()
-                .get_available_public_key_devices()
-                .await
-                .unwrap();
-            tracing::debug!(
-                target: "DummyUiServer",
-                "Finished launch_ui() request"
-            );
-            Ok(())
-        }
-    }
+        tracing::trace!("Stopping UI event forwarder");
+        Ok::<_, zbus::Error>(())
+    });
+    Ok(())
 }

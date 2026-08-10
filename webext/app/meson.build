@@ -6,6 +6,7 @@ addon_app_config.set(
   datadir / 'credentialsd' / 'xyz.iinuwa.credentialsd.Credentials.xml',
 )
 
+addon_app_config.set('APP_ID', 'org.mozilla.firefox')
 native_messaging_manifest_dir = libdir / 'mozilla' / 'native-messaging-hosts'
 
 configure_file(

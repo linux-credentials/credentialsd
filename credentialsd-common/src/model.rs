@@ -1,34 +1,74 @@
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
-use zvariant::{Optional, SerializeDict, Type};
+use serde::{Deserialize, Serialize, de::Visitor};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+use zvariant::{self, DeserializeDict, NoneValue, Optional, OwnedFd, SerializeDict, Type, Value};
+
+pub const BACKGROUND_EVENT_ERROR_INTERNAL: u32 = 0x80000001;
+pub const BACKGROUND_EVENT_ERROR_TIMED_OUT: u32 = 0x80000002;
+pub const BACKGROUND_EVENT_ERROR_CANCELLED: u32 = 0x80000003;
+pub const BACKGROUND_EVENT_ERROR_AUTHENTICATOR: u32 = 0x80000004;
+pub const BACKGROUND_EVENT_ERROR_NO_CREDENTIALS: u32 = 0x80000005;
+pub const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
+pub const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
+pub const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
+
+/// Credential service events intended to inform the UI.
+#[derive(Debug, PartialEq)]
+pub enum BackgroundEvent {
+    CeremonyCompleted,
+    NeedsPin { attempts_left: Option<u32> },
+    PinNotSet { error: PinNotSetError },
+    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsUserPresence,
+    SelectingCredential { creds: Vec<Credential> },
+
+    HybridIdle,
+    HybridStarted(OwnedFd),
+    HybridConnecting,
+    HybridConnected,
+
+    NfcIdle,
+    NfcWaiting,
+    NfcConnected,
+
+    UsbIdle,
+    UsbWaiting,
+    UsbSelectingDevice,
+    UsbConnected,
+
+    ErrorInternal,
+    ErrorTimedOut,
+    ErrorCancelled,
+    ErrorAuthenticator,
+    ErrorNoCredentials,
+    ErrorCredentialExcluded,
+    ErrorPinAttemptsExhausted,
+    ErrorPinNotSet,
+}
+
+/// Emitted when a client enters a PIN for the selected authenticator.
+#[derive(Debug, SerializeDict, DeserializeDict, PartialEq, Type)]
+#[zvariant(signature = "dict")]
+pub struct ClientPinEnteredOptions {}
+
+/// Emitted when a client enters a new PIN for a device.
+#[derive(Debug, SerializeDict, DeserializeDict, PartialEq, Type)]
+#[zvariant(signature = "dict")]
+pub struct SetDevicePinOptions {}
+
+#[derive(Clone, Debug, Default, SerializeDict, DeserializeDict, PartialEq, Type, Value)]
+#[zvariant(signature = "dict")]
 pub struct Credential {
     pub id: String,
     pub name: String,
     pub username: Option<String>,
 }
 
-#[derive(SerializeDict, Type)]
-#[zvariant(signature = "dict", rename_all = "camelCase")]
-pub struct GetClientCapabilitiesResponse {
-    pub conditional_create: bool,
-    pub conditional_get: bool,
-    pub hybrid_transport: bool,
-    pub passkey_platform_authenticator: bool,
-    pub user_verifying_platform_authenticator: bool,
-    pub related_origins: bool,
-    pub signal_all_accepted_credentials: bool,
-    pub signal_current_user_details: bool,
-    pub signal_unknown_credential: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum CredentialType {
-    Passkey,
-    // Password,
-}
+/// Emitted when an an authenticator presents multiple matching credentials, and
+/// the user selects one of them.
+#[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+pub struct CredentialSelectedOptions {}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct Device {
@@ -36,118 +76,20 @@ pub struct Device {
     pub transport: Transport,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub enum Operation {
-    Create,
-    Get,
+/// Emitted when the backend is ready to start credential discovery.
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct DiscoveryRequestedOptions {}
+
+impl From<DiscoveryRequestedOptions> for UserInteractedEvent {
+    fn from(_: DiscoveryRequestedOptions) -> Self {
+        UserInteractedEvent::DiscoveryRequested
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[zvariant(signature = "s")]
-pub enum Transport {
-    #[serde(rename = "BLE")]
-    Ble,
-    HybridLinked,
-    HybridQr,
-    Internal,
-    #[serde(rename = "NFC")]
-    Nfc,
-    #[serde(rename = "USB")]
-    Usb,
-}
-
-impl TryInto<Transport> for String {
-    type Error = String;
-
-    fn try_into(self) -> Result<Transport, String> {
-        let value: &str = self.as_ref();
-        value.try_into()
-    }
-}
-
-impl TryInto<Transport> for &str {
-    type Error = String;
-
-    fn try_into(self) -> Result<Transport, String> {
-        match self {
-            "BLE" => Ok(Transport::Ble),
-            "HybridLinked" => Ok(Transport::HybridLinked),
-            "HybridQr" => Ok(Transport::HybridQr),
-            "Internal" => Ok(Transport::Internal),
-            "NFC" => Ok(Transport::Nfc),
-            "USB" => Ok(Transport::Usb),
-            _ => Err(format!("Unrecognized transport: {}", self.to_owned())),
-        }
-    }
-}
-
-impl From<Transport> for String {
-    fn from(val: Transport) -> Self {
-        val.as_str().to_string()
-    }
-}
-
-impl Transport {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Transport::Ble => "BLE",
-            Transport::HybridLinked => "HybridLinked",
-            Transport::HybridQr => "HybridQr",
-            Transport::Internal => "Internal",
-            Transport::Nfc => "NFC",
-            Transport::Usb => "USB",
-        }
-    }
-}
-
-/// Details about the calling application to be displayed in the UI.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
-pub struct RequestingApplication {
-    /// The App ID (if called on the portal interface) or path (if called on the
-    /// internal interface).
-    pub path_or_app_id: String,
-
-    /// The name of the application.
-    pub name: Optional<String>,
-
-    /// The PID of the applicatoin
-    pub pid: u32,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, Type)]
-pub struct RequestingParty {
-    pub rp_id: String,
-    pub origin: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ViewUpdate {
-    SetTitle((String, String)),
-    SetDevices(Vec<Device>),
-    SetCredentials(Vec<Credential>),
-
-    WaitingForDevice(Device),
-    SelectingDevice,
-
-    UsbNeedsPin { attempts_left: Option<u32> },
-    UsbNeedsUserVerification { attempts_left: Option<u32> },
-    UsbNeedsUserPresence,
-    UsbPinNotSet { error: Option<PinNotSetError> },
-
-    NfcNeedsPin { attempts_left: Option<u32> },
-    NfcNeedsUserVerification { attempts_left: Option<u32> },
-    NfcPinNotSet { error: Option<PinNotSetError> },
-
-    HybridNeedsQrCode(String),
-    HybridConnecting,
-    HybridConnected,
-
-    Completed,
-    Cancelled,
-    Failed(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum PinNotSetError {
     /// PIN too short
     PinTooShort,
@@ -155,145 +97,12 @@ pub enum PinNotSetError {
     PinTooLong,
     /// PIN violates PinPolicy
     PinPolicyViolation,
-}
-
-impl PinNotSetError {
-    pub fn to_string(&self) -> String {
-        match self {
-            PinNotSetError::PinTooShort => String::from("Pin too short"),
-            PinNotSetError::PinTooLong => String::from("Pin too long"),
-            PinNotSetError::PinPolicyViolation => String::from("Pin policy violation"),
-        }
-    }
-
-    pub fn from_string(error: &str) -> Option<PinNotSetError> {
-        match error {
-            "Pin too short" => Some(PinNotSetError::PinTooShort),
-            "Pin too long" => Some(PinNotSetError::PinTooLong),
-            "Pin policy violation" => Some(PinNotSetError::PinPolicyViolation),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub enum HybridState {
-    /// Default state, not listening for hybrid transport.
-    #[default]
-    Idle,
-
-    /// QR code flow is starting, awaiting QR code scan and BLE advert from phone.
-    Started(String),
-
-    /// BLE advert received, connecting to caBLE tunnel with shared secret.
-    Connecting,
-
-    /// Connected to device via caBLE tunnel.
-    Connected,
-
-    /// Credential received over tunnel.
-    Completed,
-
-    // This isn't actually sent from the server.
-    UserCancelled,
-
-    /// Failed to receive a credential
-    Failed,
-}
-
-/// Used to share public state between credential service and UI.
-#[derive(Clone, Debug, Default)]
-pub enum UsbState {
-    /// Not polling for FIDO USB device.
-    #[default]
-    Idle,
-
-    /// Awaiting FIDO USB device to be plugged in.
-    Waiting,
-
-    // When we encounter multiple devices, we let all of them blink and continue
-    // with the one that was tapped.
-    SelectingDevice,
-
-    /// USB device connected, prompt user to tap
-    Connected,
-
-    /// The device needs the PIN to be entered.
-    NeedsPin {
-        attempts_left: Option<u32>,
-    },
-
-    /// The device needs the PIN to be entered.
-    PinNotSet {
-        error: Option<PinNotSetError>,
-    },
-
-    /// The device needs on-device user verification.
-    NeedsUserVerification {
-        attempts_left: Option<u32>,
-    },
-
-    /// The device needs evidence of user presence (e.g. touch) to release the credential.
-    NeedsUserPresence,
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
-    /// Multiple credentials have been found and the user has to select which to use
-    SelectingCredential {
-        /// List of user-identities to decide which to use.
-        creds: Vec<Credential>,
-    },
-
-    /// USB tapped, received credential
-    Completed,
-
-    /// Interaction with the authenticator failed.
-    Failed(Error),
-}
-
-/// Used to share public state between credential service and UI.
-#[derive(Clone, Debug, Default)]
-pub enum NfcState {
-    /// Not polling for FIDO NFC device.
-    #[default]
-    Idle,
-
-    /// Awaiting FIDO NFC device to connect.
-    Waiting,
-
-    /// USB device connected, prompt user to tap
-    Connected,
-
-    /// The device needs the PIN to be entered.
-    NeedsPin { attempts_left: Option<u32> },
-
-    /// The device needs the PIN to be entered.
-    PinNotSet { error: Option<PinNotSetError> },
-
-    /// The device needs on-device user verification.
-    NeedsUserVerification { attempts_left: Option<u32> },
-
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
-    /// Multiple credentials have been found and the user has to select which to use
-    SelectingCredential {
-        /// List of user-identities to decide which to use.
-        creds: Vec<Credential>,
-    },
-
-    /// NFC tapped, received credential
-    Completed,
-
-    /// Interaction with the authenticator failed.
-    Failed(Error),
-}
-
-#[derive(Clone, Debug)]
-pub enum BackgroundEvent {
-    UsbStateChanged(UsbState),
-    HybridQrStateChanged(HybridState),
-    NfcStateChanged(NfcState),
+    /// PIN change is required by the device
+    PinChangeRequired,
+    /// When no specific error is given (happens either in the initial PinNotSet-iteration,
+    /// or if dbus receives an unknown string)
+    #[serde(other)]
+    PinNotSet,
 }
 
 #[derive(Debug, Clone)]
@@ -329,56 +138,255 @@ impl Display for Error {
     }
 }
 
-#[derive(Debug)]
-pub enum WebAuthnError {
-    /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
-    /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
-    /// Operations.
-    AbortError,
+impl TryFrom<&Value<'_>> for Error {
+    type Error = zvariant::Error;
 
-    /// Either `residentKey` was set to required and no available authenticator
-    /// supported resident keys, or `userVerification` was set to required and no
-    /// available authenticator could perform user verification.
-    ConstraintError,
-
-    /// The authenticator used in the ceremony recognized an entry in
-    /// `excludeCredentials` after the user consented to registering a credential.
-    InvalidStateError,
-
-    /// No entry in `pubKeyCredParams` had a type property of `public-key`, or the
-    /// authenticator did not support any of the signature algorithms specified
-    /// in `pubKeyCredParams`.
-    NotSupportedError,
-
-    /// The effective domain was not a valid domain, or `rp.id` was not equal to
-    /// or a registrable domain suffix of the effective domain. In the latter
-    /// case, the client does not support related origin requests or the related
-    /// origins validation procedure failed.
-    SecurityError,
-
-    /// A catch-all error covering a wide range of possible reasons, including
-    /// common ones like the user canceling out of the ceremony. Some of these
-    /// causes are documented throughout this spec, while others are
-    /// client-specific.
-    NotAllowedError,
-
-    /// The options argument was not a valid `CredentialCreationOptions` value, or
-    /// the value of `user.id` was empty or was longer than 64 bytes.
-    TypeError,
+    fn try_from(value: &Value<'_>) -> Result<Self, Self::Error> {
+        let err_code: &str = value.downcast_ref()?;
+        let err = match err_code {
+            "AuthenticatorError" => crate::model::Error::AuthenticatorError,
+            "NoCredentials" => crate::model::Error::NoCredentials,
+            "CredentialExcluded" => crate::model::Error::CredentialExcluded,
+            "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
+            s => crate::model::Error::Internal(String::from(s)),
+        };
+        Ok(err)
+    }
 }
 
-impl std::error::Error for WebAuthnError {}
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsPinOptions {}
 
-impl Display for WebAuthnError {
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyPinNotSetOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsUserVerificationOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNeedsUserPresenceOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifySelectingCredentialOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridStartedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridConnectingOptions {}
+
+/// Emitted
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNfcConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyUsbConnectedOptions {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub enum Operation {
+    PublicKeyCreate,
+    PublicKeyGet,
+}
+
+#[derive(Clone, Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct PortalBackendOptions {
+    /// A token that can be used to activate the UI window.
+    pub activation_token: Optional<String>,
+
+    /// Top-level origin of the request if different from the origin.
+    pub top_origin: Optional<String>,
+
+    /// RP ID of the request. Required for WebAuthn/PublicKey requests.
+    pub rp_id: Optional<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[zvariant(signature = "s")]
+pub enum Transport {
+    Ble,
+    HybridLinked,
+    HybridQr,
+    Internal,
+    Nfc,
+    Usb,
+}
+
+impl TryInto<Transport> for String {
+    type Error = String;
+
+    fn try_into(self) -> Result<Transport, String> {
+        let value: &str = self.as_ref();
+        value.try_into()
+    }
+}
+
+impl TryInto<Transport> for &str {
+    type Error = String;
+
+    fn try_into(self) -> Result<Transport, String> {
+        match self {
+            "Ble" => Ok(Transport::Ble),
+            "HybridLinked" => Ok(Transport::HybridLinked),
+            "HybridQr" => Ok(Transport::HybridQr),
+            "Internal" => Ok(Transport::Internal),
+            "Nfc" => Ok(Transport::Nfc),
+            "Usb" => Ok(Transport::Usb),
+            _ => Err(format!("Unrecognized transport: {}", self.to_owned())),
+        }
+    }
+}
+
+impl From<Transport> for String {
+    fn from(val: Transport) -> Self {
+        val.as_str().to_string()
+    }
+}
+
+impl Transport {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Transport::Ble => "Ble",
+            Transport::HybridLinked => "HybridLinked",
+            Transport::HybridQr => "HybridQr",
+            Transport::Internal => "Internal",
+            Transport::Nfc => "Nfc",
+            Transport::Usb => "Usb",
+        }
+    }
+}
+
+pub enum UserInteractedEvent {
+    /// Start discovery
+    DiscoveryRequested,
+
+    /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    ClientPinEntered(OwnedFd),
+
+    /// Set new client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    SetDevicePin(OwnedFd),
+
+    /// Select a credential by credential ID
+    CredentialSelected(String),
+
+    RequestCancelled,
+}
+
+impl std::fmt::Debug for UserInteractedEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            WebAuthnError::AbortError => "Operation was aborted by client.",
-            WebAuthnError::ConstraintError => "Resident key or user verification requirement was not able to be met.",
-            WebAuthnError::InvalidStateError => "A user consented to create a new credential after trying to use an authenticator with a previously registered credential.",
-            WebAuthnError::NotSupportedError => "Operation parameters are not supported.",
-            WebAuthnError::SecurityError => "Validation of the client context for given RP ID failed.",
-            WebAuthnError::NotAllowedError => "An unspecified error occurred, and the operation is not allowed to continue.",
-            WebAuthnError::TypeError => "Invalid parameters specified.",
-        })
+        match self {
+            Self::DiscoveryRequested => write!(f, stringify!(DiscoveryRequested)),
+            Self::ClientPinEntered(_) => f
+                .debug_tuple(stringify!(ClientPinEntered))
+                .field(&"******".to_string())
+                .finish(),
+            Self::SetDevicePin(_) => f
+                .debug_tuple(stringify!(SetDevicePin))
+                .field(&"******".to_string())
+                .finish(),
+            Self::CredentialSelected(arg0) => f
+                .debug_tuple(stringify!(CredentialSelected))
+                .field(arg0)
+                .finish(),
+            Self::RequestCancelled => write!(f, stringify!(RequestCancelled)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Type)]
+#[zvariant(signature = "s")]
+pub enum WindowHandle {
+    Wayland(String),
+    X11(String),
+}
+
+impl NoneValue for WindowHandle {
+    type NoneType = String;
+
+    fn null_value() -> Self::NoneType {
+        String::new()
+    }
+}
+
+impl Serialize for WindowHandle {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for WindowHandle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(WindowHandleVisitor {})
+    }
+}
+
+struct WindowHandleVisitor;
+
+impl<'de> Visitor<'de> for WindowHandleVisitor {
+    type Value = WindowHandle;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "a window handle formatted as `<window system>:<handle value>`"
+        )
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        v.try_into().map_err(E::custom)
+    }
+}
+
+impl TryFrom<String> for WindowHandle {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        WindowHandle::try_from(value.as_ref())
+    }
+}
+
+impl TryFrom<&str> for WindowHandle {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.split_once(':') {
+            Some(("x11", handle)) => Ok(Self::X11(handle.to_string())),
+            Some(("wayland", xid)) => Ok(Self::Wayland(xid.to_string())),
+            Some((window_system, _)) => Err(format!("Unknown windowing system: {window_system}")),
+            None => Err("Invalid window handle string format".to_string()),
+        }
+    }
+}
+
+impl Display for WindowHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Wayland(handle) => write!(f, "wayland:{handle}"),
+            Self::X11(xid) => write!(f, "x11:{xid}"),
+        }
     }
 }
