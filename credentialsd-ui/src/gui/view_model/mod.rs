@@ -166,13 +166,14 @@ impl ViewModel {
                     // this function checks for a max. length and may return the error itself,
                     // without going through the device first
                     match cred_service.set_device_pin(pin).await {
+                        Ok(_) => {}
                         Err(Some(error)) => {
                             self.tx_update
                                 .send(ViewUpdate::PinNotSet { error })
                                 .await
                                 .unwrap();
                         }
-                        Ok(_) | Err(None) => {
+                        Err(None) => {
                             error!("Failed to send new pin to device");
                         }
                     }

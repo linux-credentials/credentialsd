@@ -30,7 +30,7 @@ use credentialsd_common::model::{
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
     NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
     NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
     PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
 };
@@ -175,7 +175,7 @@ impl CredentialPortalBackend {
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
         error: PinNotSetError,
-        _options: NotifyNeedsPinOptions,
+        _options: NotifyPinNotSetOptions,
     ) -> fdo::Result<()> {
         self.notify_state_changed(
             object_server,

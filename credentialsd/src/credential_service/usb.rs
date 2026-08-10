@@ -284,16 +284,10 @@ impl InProcessUsbHandler {
             };
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
             // Usually, comparing the Discrimimant is enough, but for PinNotSet, we have to check if the reason changed
-            // as this state can be repeated multiple times with different error reasons (PIN too short, PIN too long, etc.)
+            // as this state can be repeated multiple times with different or the same error
+            // reasons (PIN too short, PIN too long, etc.)
             let state_changed = match (&state, &prev_usb_state) {
-                (
-                    UsbStateInternal::PinNotSet {
-                        reason: new_reason, ..
-                    },
-                    UsbStateInternal::PinNotSet {
-                        reason: old_reason, ..
-                    },
-                ) => new_reason != old_reason,
+                (UsbStateInternal::PinNotSet { .. }, UsbStateInternal::PinNotSet { .. }) => true,
                 (new_state, old_state) => {
                     std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
