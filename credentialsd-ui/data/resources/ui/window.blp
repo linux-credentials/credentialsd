@@ -50,10 +50,10 @@ template $CredentialsUiWindow: ApplicationWindow {
         child: Box {
           orientation: vertical;
           margin-start: 8;
-
           Box {
             orientation: vertical;
             halign: start;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.hybrid_transport_available;
 
             styles [
               "cred-source-header",
@@ -120,9 +120,9 @@ template $CredentialsUiWindow: ApplicationWindow {
                 }
               }
             }
-          }
 
-          Separator {}
+            Separator {}
+          }
 
           Box {
             orientation: vertical;

@@ -16,6 +16,10 @@ indent_size = 4
 indent_size = 2
 max_line_length = 80
 
+[*.{blp}]
+indent_size = 2
+max_line_length = 80
+
 [NEWS]
 indent_size = 2
 max_line_length = 72
