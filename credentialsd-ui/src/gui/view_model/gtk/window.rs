@@ -65,10 +65,10 @@ mod imp {
 
         #[template_callback]
         fn handle_start_setting_new_pin(&self) {
-            let view_model = &self.view_model.borrow();
-            let view_model = view_model.as_ref().unwrap();
-            // This triggers visibility of the new pin stackpage
-            view_model.set_pin_fields_match(false);
+            self.stack.set_visible_child_name("set_new_pin");
+            self.new_pin_primary_entry.set_text("");
+            self.new_pin_confirm_entry.set_text("");
+            self.new_pin_btn_continue.set_sensitive(false);
         }
 
         #[template_callback]

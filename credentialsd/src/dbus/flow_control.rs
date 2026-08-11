@@ -233,7 +233,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         Ok(pin) => pin,
                         // TODO: need to send an error to the UI, cancel the request and terminate the loop.
                         Err(err) => {
-                            tracing::error!(%err, "Failed to read client PIN. Stopping event loop. TODO: cancel the request");
+                            tracing::error!(%err, "Failed to read new device PIN. Stopping event loop. TODO: cancel the request");
                             break;
                         }
                     };
