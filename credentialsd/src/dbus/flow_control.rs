@@ -95,7 +95,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     activation_token: Option<String>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
-    let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
+    let (request_id, cancellation_token) = svc.lock().await.init_request(&msg, request_tx).await?;
     let operation = msg.operation();
     let rp_id = msg.relying_party_id().to_string();
 
@@ -146,7 +146,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let set_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let cred_selector_tx = Arc::new(Mutex::new(None));
-        while let Some(ui_request) = flow.receive_ui_event().await {
+        loop {
+            tokio::select! {
+                ui_request = flow.receive_ui_event() => {
+                    let Some(ui_request) = ui_request else {
+                        tracing::debug!("UI event stream closed");
+                        break;
+                    };
             match ui_request {
                 UserInteractedEvent::DiscoveryRequested => {
                     let client_pin_tx = client_pin_tx.clone();
@@ -260,9 +266,16 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         );
                     }
                 }
-                UserInteractedEvent::RequestCancelled => {
-                    tracing::debug!(%request_id, "Cancelling request");
-                    svc.lock().await.cancel_request(request_id).await;
+                    UserInteractedEvent::RequestCancelled => {
+                        tracing::debug!(%request_id, "Cancelling request");
+                        svc.lock().await.cancel_request(request_id).await;
+                        break;
+                    }
+                }
+                }
+                _ = cancellation_token.cancelled() => {
+                    tracing::debug!("Request cancelled, stopping UI event handler");
+                    break;
                 }
             }
         }
@@ -286,6 +299,7 @@ fn forward_background_event_stream(
                 break;
             }
         }
+        tracing::debug!("Background event stream ended");
     });
 }
 
