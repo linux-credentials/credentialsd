@@ -262,19 +262,19 @@ async fn should_trust_app_id(pid: u32) -> bool {
     };
 
     tracing::debug!(?exe_path, %pid, "Found executable path:");
-    let trusted_callers: Vec<PathBuf> = if cfg!(debug_assertions) {
+
+    let mut trusted_callers: Vec<PathBuf> = vec![
+        PathBuf::from("/usr/lib/xdg-desktop-portal"),
+        PathBuf::from("/usr/libexec/xdg-desktop-portal"),
+        PathBuf::from("/usr/local/lib/xdg-desktop-portal"),
+        PathBuf::from("/usr/local/libexec/xdg-desktop-portal"),
+    ];
+    if cfg!(debug_assertions) {
         let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
-        trusted_callers_env
+        let custom_paths = trusted_callers_env
             .split(',')
-            .filter_map(|path| Path::new(path).canonicalize().ok())
-            .collect()
-    } else {
-        vec![
-            PathBuf::from("/usr/lib/xdg-desktop-portal"),
-            PathBuf::from("/usr/libexec/xdg-desktop-portal"),
-            PathBuf::from("/usr/local/lib/xdg-desktop-portal"),
-            PathBuf::from("/usr/local/libexec/xdg-desktop-portal"),
-        ]
+            .filter_map(|path| Path::new(path).canonicalize().ok());
+        trusted_callers.extend(custom_paths);
     };
     tracing::debug!(
         ?trusted_callers,
