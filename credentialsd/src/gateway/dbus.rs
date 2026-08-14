@@ -12,6 +12,7 @@ use tokio::{
     sync::{Mutex as AsyncMutex, mpsc::Sender, oneshot},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use zbus::{
     Connection, DBusError, ObjectServer, interface,
     message::Header,
@@ -25,16 +26,17 @@ use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
     BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
     BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
-    Credential, Device, Error as ManageDeviceError, NotifyHybridConnectedOptions,
-    NotifyHybridConnectingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
-    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifyPinNotSetOptions, NotifySelectingCredentialOptions, NotifyUsbConnectedOptions,
-    PinNotSetError, WindowHandle,
+    Credential, Device, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
+    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, PinNotSetError, WindowHandle,
 };
 
 use crate::{
     DBUS_SERVICE_NAME,
-    credential_service::{DeviceStateUpdate, ManageDevice, RequestId, UsbState, nfc::NfcState},
+    credential_service::{
+        CredentialServiceError, DeviceStateUpdate, ManageDevice, RequestId, UsbState, nfc::NfcState,
+    },
     gateway::{
         CreateCredentialRequest, CreateCredentialResponse, CreatePublicKeyCredentialRequest,
         GetCredentialRequest, GetCredentialResponse, GetPublicKeyCredentialRequest, WebAuthnError,
@@ -530,7 +532,7 @@ impl Credentialsd {
         let cred_request =
             CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
         let (request_tx, request_rx) = oneshot::channel();
-        let request_id = self
+        let (request_id, cancellation_token) = self
             .svc
             .lock()
             .await
@@ -546,6 +548,7 @@ impl Credentialsd {
 
         let session = CredentialsdSession::new(
             LibwebauthnCredentialRequest::Make(make_cred_request),
+            cancellation_token,
             request_id,
             sender,
             self.svc.clone(),
@@ -625,7 +628,7 @@ impl Credentialsd {
             CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
 
         let (request_tx, request_rx) = oneshot::channel();
-        let request_id = self
+        let (request_id, cancellation_token) = self
             .svc
             .lock()
             .await
@@ -641,6 +644,7 @@ impl Credentialsd {
 
         let session = CredentialsdSession::new(
             LibwebauthnCredentialRequest::Get(get_cred_request),
+            cancellation_token,
             request_id,
             sender,
             self.svc.clone(),
@@ -693,16 +697,18 @@ pub enum CredentialsdError {
     Internal,
     /// Hybrid is not running, or invocation data was already transmitted.
     HybridSecretTaken,
+    RequestCancelled,
 }
 
-impl From<ManageDeviceError> for CredentialsdError {
-    fn from(value: ManageDeviceError) -> Self {
+impl From<CredentialServiceError> for CredentialsdError {
+    fn from(value: CredentialServiceError) -> Self {
         match value {
-            ManageDeviceError::AuthenticatorError => Self::AuthenticatorError,
-            ManageDeviceError::NoCredentials => Self::NoCredentials,
-            ManageDeviceError::CredentialExcluded => Self::CredentialExcluded,
-            ManageDeviceError::PinAttemptsExhausted => Self::PinAttemptsExhausted,
-            ManageDeviceError::Internal(_) => Self::Internal,
+            CredentialServiceError::AuthenticatorError => Self::AuthenticatorError,
+            CredentialServiceError::NoCredentials => Self::NoCredentials,
+            CredentialServiceError::CredentialExcluded => Self::CredentialExcluded,
+            CredentialServiceError::PinAttemptsExhausted => Self::PinAttemptsExhausted,
+            CredentialServiceError::Internal(_) => Self::Internal,
+            CredentialServiceError::RequestCancelled => Self::RequestCancelled,
         }
     }
 }
@@ -720,7 +726,7 @@ struct CredentialsdSession {
     rp_id: String,
     destination: OwnedUniqueName,
     response_channel:
-        Mutex<Option<oneshot::Receiver<Result<CredentialResponse, ManageDeviceError>>>>,
+        Mutex<Option<oneshot::Receiver<Result<CredentialResponse, CredentialServiceError>>>>,
     event_task: Mutex<Option<JoinHandle<()>>>,
 
     devices: RwLock<Vec<Device>>,
@@ -838,7 +844,6 @@ impl CredentialsdSession {
                                         tracing::error!(%request_id,
                                             "Failed to parse credential response from authenticator: {err}"
                                         );
-                                        // Using NotAllowedError as a catch-all error.
                                         CredentialsdError::Internal
                                     }).unwrap();
                                 tracing::debug!("Sending ceremony completed response");
@@ -1010,12 +1015,13 @@ impl CredentialsdSession {
 impl CredentialsdSession {
     fn new(
         cred_request: LibwebauthnCredentialRequest,
+        cancellation_token: CancellationToken,
         request_id: RequestId,
         destination: OwnedUniqueName,
         svc: Arc<AsyncMutex<dyn ManageDevice + Send + Sync + 'static>>,
         rp_id: String,
         devices: Vec<Device>,
-        response_channel: oneshot::Receiver<Result<CredentialResponse, ManageDeviceError>>,
+        response_channel: oneshot::Receiver<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Self {
         // TODO: watch for sender disconnected, sender cancelled, or if we disconnect from bus
         Self {

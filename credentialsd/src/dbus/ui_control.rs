@@ -180,6 +180,8 @@ trait UiControlService {
         error: u32,
     ) -> fdo::Result<()>;
 
+    async fn get_client_pin(&self, session_handle: ObjectPath<'_>) -> fdo::Result<OwnedFd>;
+
     #[zbus(signal)]
     async fn discovery_requested(
         &self,
@@ -212,6 +214,25 @@ trait UiControlService {
     ) -> zbus::Result<()>;
 }
 
+#[derive(Debug)]
+pub enum UserInteractedEventInternal {
+    /// Start discovery
+    DiscoveryRequested,
+
+    /// Set client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    SetDevicePin(std::os::fd::OwnedFd),
+
+    /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    ClientPinEntered(std::os::fd::OwnedFd),
+
+    /// Select a credential by credential ID
+    CredentialSelected(String),
+
+    RequestCancelled,
+}
+
 #[derive(Clone, Debug)]
 pub struct Ceremony {
     proxy: Arc<UiControlServiceProxy<'static>>,
@@ -220,8 +241,44 @@ pub struct Ceremony {
 }
 
 impl Ceremony {
-    pub async fn receive_ui_event(&self) -> Option<UserInteractedEvent> {
-        self.ui_events_rx.lock().await.recv().await
+    pub async fn receive_ui_event(&self) -> Option<UserInteractedEventInternal> {
+        let ui_event = self.ui_events_rx.lock().await.recv().await?;
+        let internal_event = match ui_event {
+            UserInteractedEvent::DiscoveryRequested => {
+                UserInteractedEventInternal::DiscoveryRequested
+            }
+            UserInteractedEvent::SetDevicePin => {
+                let pin_fd_result = self
+                    .proxy
+                    .get_client_pin(self.session_handle.as_ref())
+                    .await;
+                match pin_fd_result {
+                    Ok(pin_fd) => UserInteractedEventInternal::SetDevicePin(pin_fd.into()),
+                    Err(err) => {
+                        tracing::error!(%err, "Failed to retrieve client PIN from UI");
+                        return None;
+                    }
+                }
+            }
+            UserInteractedEvent::ClientPinEntered => {
+                let pin_fd_result = self
+                    .proxy
+                    .get_client_pin(self.session_handle.as_ref())
+                    .await;
+                match pin_fd_result {
+                    Ok(pin_fd) => UserInteractedEventInternal::ClientPinEntered(pin_fd.into()),
+                    Err(err) => {
+                        tracing::error!(%err, "Failed to retrieve client PIN from UI");
+                        return None;
+                    }
+                }
+            }
+            UserInteractedEvent::CredentialSelected(cred_id) => {
+                UserInteractedEventInternal::CredentialSelected(cred_id)
+            }
+            UserInteractedEvent::RequestCancelled => UserInteractedEventInternal::RequestCancelled,
+        };
+        Some(internal_event)
     }
 
     pub async fn send_state_update(&self, event: BackgroundEvent) -> Result<(), ()> {
@@ -537,12 +594,12 @@ async fn subscribe_ui_events(
                 stringify!(ClientPinEntered) => {
                     ClientPinEntered::from_message(msg)?
                         .args().ok()
-                        .map(|args| UserInteractedEvent::ClientPinEntered(args.pin_fd))
+                        .map(|_| UserInteractedEvent::ClientPinEntered)
                 }
                 stringify!(SetDevicePin) => {
                     SetDevicePin::from_message(msg)?
                         .args().ok()
-                        .map(|args| UserInteractedEvent::SetDevicePin(args.pin_fd))
+                        .map(|_| UserInteractedEvent::SetDevicePin)
                 }
                 stringify!(CredentialSelected) => {
                     CredentialSelected::from_message(msg)?

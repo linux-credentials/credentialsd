@@ -8,6 +8,7 @@ use std::error::Error;
 
 use credentialsd_common::model::WindowHandle;
 use credentialsd_common::model::{Device, Operation};
+use zbus::zvariant::OwnedFd;
 
 use crate::dbus::CredentialPortalBackend;
 
@@ -73,4 +74,23 @@ pub struct ViewRequest {
 
     /// Client window handle.
     pub window_handle: Option<WindowHandle>,
+}
+
+#[derive(Debug)]
+enum UserInteractedEventInternal {
+    /// Start discovery
+    DiscoveryRequested,
+
+    /// Set client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    SetDevicePin(OwnedFd),
+
+    /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    ClientPinEntered(OwnedFd),
+
+    /// Select a credential by credential ID
+    CredentialSelected(String),
+
+    RequestCancelled,
 }

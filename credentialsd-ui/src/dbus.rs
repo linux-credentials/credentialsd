@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -33,10 +33,12 @@ use credentialsd_common::model::{
     NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
     NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
     NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
-    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+    PortalBackendOptions, SetDevicePinOptions, WindowHandle,
 };
 
-use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
+use crate::{
+    RequestingApplication, UserInteractedEventInternal, ViewRequest, client::FlowControlClient,
+};
 
 pub struct CredentialPortalBackend {
     pub request_tx: Sender<(
@@ -121,6 +123,7 @@ impl CredentialPortalBackend {
             ui_events_forwarder_task: ui_events_forwarder_task.clone(),
             bg_events_tx: None,
             session_handle: session_handle.clone(),
+            client_pin_fd: Mutex::new(None),
         };
 
         let mut session = CeremonySession::new(
@@ -390,6 +393,22 @@ impl CredentialPortalBackend {
             .await
     }
 
+    async fn get_client_pin(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+    ) -> fdo::Result<OwnedFd> {
+        let session = Self::get_session(&object_server, session_handle).await?;
+        let ceremony = &session.get().await.ceremony;
+        let pin_fd = ceremony
+            .client_pin_fd
+            .lock()
+            .expect("not poisoned")
+            .take()
+            .ok_or_else(|| zbus::Error::Failure("Client PIN taken".to_string()))?;
+        Ok(pin_fd)
+    }
+
     #[zbus(signal)]
     async fn discovery_requested(
         emitter: SignalEmitter<'_>,
@@ -401,7 +420,6 @@ impl CredentialPortalBackend {
     async fn client_pin_entered(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        pin_fd: OwnedFd,
         options: ClientPinEnteredOptions,
     ) -> zbus::Result<()>;
 
@@ -409,7 +427,6 @@ impl CredentialPortalBackend {
     async fn set_device_pin(
         emitter: SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        pin_fd: OwnedFd,
         options: SetDevicePinOptions,
     ) -> zbus::Result<()>;
 
@@ -430,24 +447,31 @@ impl CredentialPortalBackend {
         event: BackgroundEvent,
     ) -> fdo::Result<()> {
         let span = tracing::info_span!("NotifyStateChanged", %session_handle);
+        let session_iface = Self::get_session(object_server, session_handle.as_ref())
+            .instrument(span)
+            .await?;
+        let session = session_iface.get_mut().await;
+        if let Err(err) = session.ceremony.on_state_changed(event).await {
+            tracing::debug!(
+                %err, "Error occurred while forwarding state update to ceremony session. Closing session."
+            );
+            CeremonySession::shutdown(object_server, session_handle).await?;
+            return Err(fdo::Error::Failed(
+                "Error sending state notification. Closing session.".to_string(),
+            ));
+        };
+        Ok(())
+    }
+
+    async fn get_session(
+        object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+    ) -> fdo::Result<InterfaceRef<CeremonySession>> {
         match object_server
             .interface::<_, CeremonySession>(&session_handle)
-            .instrument(span)
             .await
         {
-            Ok(session_iface) => {
-                let session = session_iface.get_mut().await;
-                if let Err(err) = session.ceremony.on_state_changed(event).await {
-                    tracing::debug!(
-                        %err, "Error occurred while forwarding state update to ceremony session. Closing session."
-                    );
-                    CeremonySession::shutdown(object_server, session_handle).await?;
-                    return Err(fdo::Error::Failed(
-                        "Error sending state notification. Closing session.".to_string(),
-                    ));
-                };
-                Ok(())
-            }
+            Ok(session_iface) => Ok(session_iface),
             Err(zbus::Error::InterfaceNotFound) => {
                 tracing::info!(%session_handle, "No session exists at the requested path");
                 Err(fdo::Error::Failed(format!(
@@ -563,6 +587,8 @@ pub struct CeremonyObject {
     ui_events_forwarder_task: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     bg_events_tx: Option<Sender<BackgroundEvent>>,
     session_handle: OwnedObjectPath,
+
+    client_pin_fd: Mutex<Option<OwnedFd>>,
 }
 
 impl CeremonyObject {
@@ -675,31 +701,53 @@ impl CeremonyObject {
         object_server: &ObjectServer,
         emitter: &SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        ui_event: UserInteractedEvent,
+        ui_event: UserInteractedEventInternal,
     ) -> zbus::Result<()> {
         tracing::trace!(?ui_event, "Sending UI event signal to portal");
         match ui_event {
-            UserInteractedEvent::DiscoveryRequested => {
+            UserInteractedEventInternal::DiscoveryRequested => {
                 emitter
                     .discovery_requested(session_handle, DiscoveryRequestedOptions {})
                     .await?;
             }
-            UserInteractedEvent::ClientPinEntered(pin_fd) => {
+            UserInteractedEventInternal::ClientPinEntered(pin_fd) => {
+                {
+                    let session = CredentialPortalBackend::get_session(
+                        object_server,
+                        session_handle.as_ref(),
+                    )
+                    .await?;
+                    let ceremony = &session.get().await.ceremony;
+                    let mut client_pin_fd = ceremony.client_pin_fd.lock().expect("not poisoned");
+                    *client_pin_fd = Some(pin_fd);
+                }
+
                 emitter
-                    .client_pin_entered(session_handle, pin_fd, ClientPinEnteredOptions {})
+                    .client_pin_entered(session_handle, ClientPinEnteredOptions {})
                     .await?;
             }
-            UserInteractedEvent::SetDevicePin(pin_fd) => {
+            UserInteractedEventInternal::SetDevicePin(pin_fd) => {
+                {
+                    let session = CredentialPortalBackend::get_session(
+                        object_server,
+                        session_handle.as_ref(),
+                    )
+                    .await?;
+                    let ceremony = &session.get().await.ceremony;
+                    let mut client_pin_fd = ceremony.client_pin_fd.lock().expect("not poisoned");
+                    *client_pin_fd = Some(pin_fd);
+                }
+
                 emitter
-                    .set_device_pin(session_handle, pin_fd, SetDevicePinOptions {})
+                    .set_device_pin(session_handle, SetDevicePinOptions {})
                     .await?;
             }
-            UserInteractedEvent::CredentialSelected(id) => {
+            UserInteractedEventInternal::CredentialSelected(id) => {
                 emitter
                     .credential_selected(session_handle, id, CredentialSelectedOptions {})
                     .await?;
             }
-            UserInteractedEvent::RequestCancelled => {
+            UserInteractedEventInternal::RequestCancelled => {
                 CeremonySession::shutdown(object_server, session_handle).await?;
             }
         }

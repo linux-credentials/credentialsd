@@ -3,14 +3,13 @@
 
 use std::{
     fmt::Debug,
-    os::fd::OwnedFd,
     sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
 use credentialsd_common::{
     memfd::read_secret,
-    model::{BackgroundEvent, PortalBackendOptions, UserInteractedEvent, WindowHandle},
+    model::{BackgroundEvent, PortalBackendOptions, WindowHandle},
 };
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
@@ -20,7 +19,7 @@ use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::dbus::UiControlServiceClient;
+use crate::dbus::{UiControlServiceClient, ui_control::UserInteractedEventInternal};
 use crate::{
     credential_service::UsbState,
     dbus::ui_control::UiController,
@@ -220,7 +219,7 @@ fn to_background_event_stream<D: Stream<Item = DeviceStateUpdate>>(
 
 async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
     svc: Arc<AsyncMutex<M>>,
-    ui_request: UserInteractedEvent,
+    ui_request: UserInteractedEventInternal,
     request_id: u32,
     flow: Ceremony,
     client_pin_tx: Arc<Mutex<Option<Sender<String>>>>,
@@ -228,7 +227,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
     cred_selector_tx: Arc<Mutex<Option<Sender<String>>>>,
 ) -> Result<(), ()> {
     match ui_request {
-        UserInteractedEvent::DiscoveryRequested => {
+        UserInteractedEventInternal::DiscoveryRequested => {
             let client_pin_tx = client_pin_tx.clone();
             let set_pin_tx = set_pin_tx.clone();
             let cred_selector_tx = cred_selector_tx.clone();
@@ -240,8 +239,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
             );
             forward_background_event_stream(flow, stream);
         }
-        UserInteractedEvent::ClientPinEntered(pin_fd) => {
-            let pin_fd = OwnedFd::from(pin_fd);
+        UserInteractedEventInternal::ClientPinEntered(pin_fd) => {
             let pin = match read_secret(pin_fd)
                 .map_err(|err| format!("Could not read from file descriptor: {err}"))
                 .and_then(|bytes| {
@@ -264,8 +262,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
                 tracing::error!("Invalid state: received a client PIN with no pending request.");
             }
         }
-        UserInteractedEvent::SetDevicePin(pin_fd) => {
-            let pin_fd = OwnedFd::from(pin_fd);
+        UserInteractedEventInternal::SetDevicePin(pin_fd) => {
             let pin = match read_secret(pin_fd)
                 .map_err(|err| format!("Could not read from file descriptor: {err}"))
                 .and_then(|bytes| {
@@ -288,7 +285,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
                 tracing::error!("Invalid state: received a client PIN with no pending request.");
             }
         }
-        UserInteractedEvent::CredentialSelected(id) => {
+        UserInteractedEventInternal::CredentialSelected(id) => {
             let tx = { cred_selector_tx.lock().unwrap().take() };
             if let Some(tx) = tx {
                 if tx.send(id).await.is_err() {
@@ -300,7 +297,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
                 );
             }
         }
-        UserInteractedEvent::RequestCancelled => {
+        UserInteractedEventInternal::RequestCancelled => {
             tracing::debug!(%request_id, "Cancelling request");
             svc.lock().await.cancel_request(request_id).await;
             return Err(());

@@ -5,20 +5,23 @@ use async_std::{
 
 use credentialsd_common::{
     memfd::write_secret,
-    model::{BackgroundEvent, PinNotSetError, UserInteractedEvent},
+    model::{BackgroundEvent, PinNotSetError},
 };
+
+use crate::UserInteractedEventInternal;
 
 const CTAP_CLIENT_SECRET_MAX_LEN: usize = 63;
 
 #[derive(Debug)]
 pub struct FlowControlClient {
-    pub tx: Sender<UserInteractedEvent>,
+    pub tx: Sender<UserInteractedEventInternal>,
     pub rx: AsyncMutex<Option<Receiver<BackgroundEvent>>>,
 }
 
 impl FlowControlClient {
     pub async fn discover_authenticators(&self) -> Result<(), ()> {
-        self.send(UserInteractedEvent::DiscoveryRequested).await
+        self.send(UserInteractedEventInternal::DiscoveryRequested)
+            .await
     }
 
     pub async fn enter_client_pin(&mut self, pin: String) -> Result<(), ()> {
@@ -35,7 +38,7 @@ impl FlowControlClient {
                 return Err(());
             }
         };
-        self.send(UserInteractedEvent::ClientPinEntered(fd.into()))
+        self.send(UserInteractedEventInternal::ClientPinEntered(fd.into()))
             .await
     }
 
@@ -53,18 +56,21 @@ impl FlowControlClient {
                 return Err(None);
             }
         };
-        self.send(UserInteractedEvent::SetDevicePin(fd.into()))
+        self.send(UserInteractedEventInternal::SetDevicePin(fd.into()))
             .await
             .map_err(|_| None)
     }
 
     pub async fn select_credential(&self, credential_id: String) -> Result<(), ()> {
-        self.send(UserInteractedEvent::CredentialSelected(credential_id))
-            .await
+        self.send(UserInteractedEventInternal::CredentialSelected(
+            credential_id,
+        ))
+        .await
     }
 
     pub async fn cancel_request(&self) -> Result<(), ()> {
-        self.send(UserInteractedEvent::RequestCancelled).await
+        self.send(UserInteractedEventInternal::RequestCancelled)
+            .await
     }
 
     /// Returns a channel for background events.
@@ -75,7 +81,7 @@ impl FlowControlClient {
         })
     }
 
-    async fn send(&self, request: UserInteractedEvent) -> Result<(), ()> {
+    async fn send(&self, request: UserInteractedEventInternal) -> Result<(), ()> {
         match self.tx.send(request).await {
             Ok(_) => Ok(()),
             Err(_) => Err(()),

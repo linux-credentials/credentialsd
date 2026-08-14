@@ -259,11 +259,11 @@ pub enum UserInteractedEvent {
 
     /// Send client PIN. Length of the PIN MUST not be greater than 63 bytes.
     /// File descriptor must be memory-mapped to be read.
-    ClientPinEntered(OwnedFd),
+    ClientPinEntered,
 
     /// Set new client PIN. Length of the PIN MUST not be greater than 63 bytes.
     /// File descriptor must be memory-mapped to be read.
-    SetDevicePin(OwnedFd),
+    SetDevicePin,
 
     /// Select a credential by credential ID
     CredentialSelected(String),
@@ -275,14 +275,8 @@ impl std::fmt::Debug for UserInteractedEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DiscoveryRequested => write!(f, stringify!(DiscoveryRequested)),
-            Self::ClientPinEntered(_) => f
-                .debug_tuple(stringify!(ClientPinEntered))
-                .field(&"******".to_string())
-                .finish(),
-            Self::SetDevicePin(_) => f
-                .debug_tuple(stringify!(SetDevicePin))
-                .field(&"******".to_string())
-                .finish(),
+            Self::SetDevicePin => write!(f, stringify!(SetDevicePin)),
+            Self::ClientPinEntered => write!(f, stringify!(ClientPinEntered)),
             Self::CredentialSelected(arg0) => f
                 .debug_tuple(stringify!(CredentialSelected))
                 .field(arg0)
