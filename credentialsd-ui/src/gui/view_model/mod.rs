@@ -160,6 +160,24 @@ impl ViewModel {
                         error!("Failed to send pin to device");
                     }
                 }
+                Event::View(ViewEvent::SetNewDevicePin(pin)) => {
+                    let mut cred_service = self.flow_controller.lock().await;
+                    // To protect against writing too large of a message from bad user input,
+                    // this function checks for a max. length and may return the error itself,
+                    // without going through the device first
+                    match cred_service.set_device_pin(pin).await {
+                        Ok(_) => {}
+                        Err(Some(error)) => {
+                            self.tx_update
+                                .send(ViewUpdate::PinNotSet { error })
+                                .await
+                                .unwrap();
+                        }
+                        Err(None) => {
+                            error!("Failed to send new pin to device");
+                        }
+                    }
+                }
                 Event::View(ViewEvent::CredentialSelected(cred_id)) => {
                     println!(
                         "Credential selected: {:?}. Current Device: {:?}",
@@ -201,6 +219,12 @@ impl ViewModel {
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
                     self.tx_update
                         .send(ViewUpdate::NeedsPin { attempts_left })
+                        .await
+                        .unwrap();
+                }
+                Event::Background(BackgroundEvent::PinNotSet { error }) => {
+                    self.tx_update
+                        .send(ViewUpdate::PinNotSet { error })
                         .await
                         .unwrap();
                 }
@@ -343,6 +367,7 @@ pub enum ViewEvent {
     Initiated,
     CredentialSelected(String),
     PinEntered(String),
+    SetNewDevicePin(String),
     UserCancelled,
 }
 
@@ -354,6 +379,7 @@ impl Debug for ViewEvent {
                 f.debug_tuple("CredentialSelected").field(arg0).finish()
             }
             Self::PinEntered(_) => f.debug_tuple("PinEntered").field(&"******").finish(),
+            Self::SetNewDevicePin(_) => f.debug_tuple("SetNewDevicePin").field(&"******").finish(),
             Self::UserCancelled => write!(f, "UserCancelled"),
         }
     }

@@ -6,6 +6,7 @@ use futures_lite::Stream;
 use libwebauthn::{
     UvUpdate,
     ops::webauthn::GetAssertionResponse,
+    pin::PinNotSetReason,
     proto::CtapError,
     transport::{Channel, ChannelSettings, Device, nfc::device::NfcDevice},
     webauthn::{WebAuthn, error::WebAuthnError},
@@ -14,7 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, Error};
+use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -118,6 +119,9 @@ impl InProcessNfcHandler {
                     attempts_left,
                     pin_tx,
                 }),
+                Ok(NfcUvMessage::PinNotSet { reason, pin_tx }) => {
+                    Ok(NfcStateInternal::PinNotSet { reason, pin_tx })
+                }
                 Ok(NfcUvMessage::NeedsUserVerification { attempts_left }) => {
                     Ok(NfcStateInternal::NeedsUserVerification { attempts_left })
                 }
@@ -178,6 +182,7 @@ impl InProcessNfcHandler {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
                 NfcStateInternal::NeedsPin { .. }
+                | NfcStateInternal::PinNotSet { .. }
                 | NfcStateInternal::NeedsUserVerification { .. } => {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
@@ -264,7 +269,6 @@ async fn handle_events(
             }
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                WebAuthnError::Ctap(CtapError::PINNotSet) => Error::PinNotSet,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,
@@ -325,6 +329,12 @@ pub(super) enum NfcStateInternal {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be set.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
 
@@ -363,6 +373,12 @@ pub enum NfcState {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be set.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
     // TODO: implement cancellation
@@ -396,6 +412,9 @@ impl From<NfcStateInternal> for NfcState {
                 attempts_left,
                 pin_tx,
             },
+            NfcStateInternal::PinNotSet { reason, pin_tx } => {
+                NfcState::PinNotSet { reason, pin_tx }
+            }
             NfcStateInternal::NeedsUserVerification { attempts_left } => {
                 NfcState::NeedsUserVerification { attempts_left }
             }
@@ -447,6 +466,16 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
                 attempts_left: *attempts_left,
             },
+            NfcState::PinNotSet { reason, .. } => {
+                let error = match reason {
+                    PinNotSetReason::PinNotSet => PinNotSetError::PinNotSet,
+                    PinNotSetReason::PinTooShort => PinNotSetError::PinTooShort,
+                    PinNotSetReason::PinTooLong => PinNotSetError::PinTooLong,
+                    PinNotSetReason::PinPolicyViolation => PinNotSetError::PinPolicyViolation,
+                    PinNotSetReason::PinChangeRequired => PinNotSetError::PinChangeRequired,
+                };
+                BackgroundEvent::PinNotSet { error }
+            }
             NfcState::NeedsUserVerification { attempts_left } => {
                 BackgroundEvent::NeedsUserVerification {
                     attempts_left: *attempts_left,
@@ -459,7 +488,6 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
             NfcState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
             NfcState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
-            NfcState::Failed(Error::PinNotSet) => BackgroundEvent::ErrorPinNotSet,
             NfcState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
             NfcState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
@@ -509,13 +537,32 @@ async fn handle_nfc_updates(
                     None => tracing::debug!("Pin channel closed before receiving pin from client."),
                 }
             }
+            UvUpdate::PinNotSet(pin_update) => {
+                let (pin_tx, mut pin_rx) = mpsc::channel(1);
+                if let Err(err) = signal_tx
+                    .send(Ok(NfcUvMessage::PinNotSet {
+                        pin_tx,
+                        reason: pin_update.reason,
+                    }))
+                    .await
+                {
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
+                }
+                match pin_rx.recv().await {
+                    Some(pin) => match pin_update.set_pin(&pin) {
+                        Ok(()) => {}
+                        Err(err) => tracing::error!("Error sending pin to device: {:?}", err),
+                    },
+                    None => tracing::debug!("Pin channel closed before receiving pin from client."),
+                }
+            }
             UvUpdate::PresenceRequired => {
                 tracing::debug!(
                     "Authenticator requested user presence, but that makes no sense for NFC. Skipping"
                 );
-            }
-            UvUpdate::PinNotSet(_) => {
-                tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
             }
         }
     }
@@ -526,6 +573,10 @@ async fn handle_nfc_updates(
 enum NfcUvMessage {
     NeedsPin {
         attempts_left: Option<u32>,
+        pin_tx: mpsc::Sender<String>,
+    },
+    PinNotSet {
+        reason: PinNotSetReason,
         pin_tx: mpsc::Sender<String>,
     },
     NeedsUserVerification {

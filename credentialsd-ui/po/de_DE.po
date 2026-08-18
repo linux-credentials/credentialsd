@@ -68,7 +68,6 @@ msgstr "Scannen Sie den QR-Code, um Ihr Gerät zu verbinden"
 #: credentialsd-ui/data/resources/ui/window.blp:253
 msgid "Choose credential"
 msgstr "Wählen Sie Zugangsdaten aus"
-
 #: credentialsd-ui/data/resources/ui/window.blp:266
 msgid "Complete"
 msgstr "Abgeschlossen"

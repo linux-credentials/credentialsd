@@ -4,7 +4,7 @@ pub mod device;
 mod window;
 
 use async_std::channel::{Receiver, Sender};
-use credentialsd_common::model::WindowHandle;
+use credentialsd_common::model::{PinNotSetError, WindowHandle};
 use gettextrs::{LocaleCategory, gettext, ngettext};
 use glib::clone;
 use gtk::gdk::Texture;
@@ -83,6 +83,12 @@ mod imp {
 
         #[property(get, set)]
         pub qr_spinner_visible: RefCell<bool>,
+
+        #[property(get, set)]
+        pub start_setting_new_pin_visible: RefCell<bool>,
+
+        #[property(get, set)]
+        pub pin_fields_match: RefCell<bool>,
     }
 
     // The central trait for subclassing a GObject
@@ -131,6 +137,8 @@ impl ViewModel {
                         Ok(update) => {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_nfc_pin_entry_visible(false);
+                            view_model.set_start_setting_new_pin_visible(false);
+                            view_model.set_failed(false);
                             match update {
                                 ViewUpdate::SetTitle {
                                     title,
@@ -184,6 +192,27 @@ impl ViewModel {
                                 ViewUpdate::NeedsUserPresence => {
                                     view_model.set_prompt(gettext("Touch your device"));
                                 }
+                                ViewUpdate::PinNotSet { error } => {
+                                    view_model.set_failed(true);
+                                    view_model.set_start_setting_new_pin_visible(true);
+                                    let text = match error {
+                                        PinNotSetError::PinNotSet => gettext(
+                                            "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
+                                        ),
+                                        PinNotSetError::PinTooShort
+                                        | PinNotSetError::PinPolicyViolation => gettext(
+                                            "The entered PIN violates the PIN-policy of this device (likely too short). Please try again.",
+                                        ),
+                                        PinNotSetError::PinTooLong => gettext(
+                                            "The entered PIN violates the PIN-policy of this device (PIN too long). Please try again.",
+                                        ),
+                                        PinNotSetError::PinChangeRequired => gettext(
+                                            "A PIN change is required by your device to continue.",
+                                        ),
+                                    };
+                                    // These are already gettext messages
+                                    view_model.set_prompt(text);
+                                }
                                 ViewUpdate::HybridNeedsQrCode(qr_code) => {
                                     view_model.set_prompt(gettext("Scan the QR code with your device to begin authentication."));
                                     let texture = view_model.draw_qr_code(&qr_code);
@@ -214,11 +243,11 @@ impl ViewModel {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_completed(true);
                                 }
-                                ViewUpdate::Failed(error_msg) => {
+                                ViewUpdate::Failed(error) => {
                                     view_model.set_qr_spinner_visible(false);
                                     view_model.set_failed(true);
                                     // These are already gettext messages
-                                    view_model.set_prompt(error_msg);
+                                    view_model.set_prompt(error);
                                 }
                                 ViewUpdate::Cancelled => {
                                     view_model.set_state(ModelState::Cancelled)
@@ -320,6 +349,10 @@ impl ViewModel {
 
     pub async fn send_usb_nfc_device_pin(&self, pin: String) {
         self.send_event(ViewEvent::PinEntered(pin)).await;
+    }
+
+    pub async fn send_set_new_device_pin(&self, pin: String) {
+        self.send_event(ViewEvent::SetNewDevicePin(pin)).await;
     }
 
     fn draw_qr_code(&self, qr_data: &str) -> Texture {

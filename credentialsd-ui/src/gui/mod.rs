@@ -6,7 +6,7 @@ use std::{sync::Arc, thread::JoinHandle};
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
 use credentialsd_common::model::Device;
-use credentialsd_common::model::{Credential, WindowHandle};
+use credentialsd_common::model::{Credential, PinNotSetError, WindowHandle};
 
 use crate::{ViewRequest, client::FlowControlClient};
 
@@ -82,6 +82,9 @@ pub enum ViewUpdate {
 
     NeedsPin {
         attempts_left: Option<u32>,
+    },
+    PinNotSet {
+        error: PinNotSetError,
     },
     NeedsUserVerification {
         attempts_left: Option<u32>,

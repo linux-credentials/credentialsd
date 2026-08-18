@@ -30,9 +30,9 @@ use credentialsd_common::model::{
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
     NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PortalBackendOptions,
-    UserInteractedEvent, WindowHandle,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
+    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -164,6 +164,23 @@ impl CredentialPortalBackend {
             object_server,
             session_handle,
             BackgroundEvent::NeedsPin { attempts_left },
+        )
+        .await
+    }
+
+    /// Called when the authenticator needs a client PIN, but the device
+    /// has no PIN set yet. This flow allows to set a new PIN on the fly.
+    async fn notify_pin_not_set(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        error: PinNotSetError,
+        _options: NotifyPinNotSetOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::PinNotSet { error },
         )
         .await
     }
@@ -343,6 +360,14 @@ impl CredentialPortalBackend {
         session_handle: ObjectPath<'_>,
         pin_fd: OwnedFd,
         options: ClientPinEnteredOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn set_device_pin(
+        emitter: SignalEmitter<'_>,
+        session_handle: ObjectPath<'_>,
+        pin_fd: OwnedFd,
+        options: SetDevicePinOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
@@ -619,6 +644,11 @@ impl CeremonyObject {
             UserInteractedEvent::ClientPinEntered(pin_fd) => {
                 emitter
                     .client_pin_entered(session_handle, pin_fd, ClientPinEnteredOptions {})
+                    .await?;
+            }
+            UserInteractedEvent::SetDevicePin(pin_fd) => {
+                emitter
+                    .set_device_pin(session_handle, pin_fd, SetDevicePinOptions {})
                     .await?;
             }
             UserInteractedEvent::CredentialSelected(id) => {

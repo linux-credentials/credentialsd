@@ -263,6 +263,81 @@ template $CredentialsUiWindow: ApplicationWindow {
       }
 
       StackPage {
+        name: "set_new_pin";
+        title: _("Set a PIN");
+
+        child: Box {
+          orientation: vertical;
+          margin-start: 16;
+
+          Image {
+            icon-name: "media-removable-symbolic";
+            pixel-size: 120;
+            icon-size: large;
+            height-request: 120;
+            width-request: 120;
+
+            styles [
+              "hero",
+            ]
+
+            accessibility {
+              labelled-by: set_pin_instructions_label;
+            }
+          }
+
+          Label set_pin_instructions_label {
+            label: _("Please choose a new PIN for your device.");
+            wrap: true;
+
+            styles [
+              "instructions",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            spacing: 8;
+
+            PasswordEntry new_pin_primary_entry {
+              placeholder-text: _("New PIN");
+              hexpand: false;
+              max-width-chars: 64;
+              changed => $handle_setting_pin_change() swapped;
+            }
+
+            PasswordEntry new_pin_confirm_entry {
+              placeholder-text: _("Confirm PIN");
+              hexpand: false;
+              max-width-chars: 64;
+              changed => $handle_setting_pin_change() swapped;
+            }
+          }
+
+          Box {
+            halign: end;
+            spacing: 6;
+
+            Button new_pin_btn_close_window {
+              label: _("Close");
+              clicked => $handle_close_window() swapped;
+            }
+
+            Button new_pin_btn_continue {
+              label: _("Continue");
+              sensitive: bind template.view-model as <$CredentialManagerViewModel>.pin_fields_match;
+
+              styles [
+                "suggested-action",
+              ]
+
+              clicked => $handle_commit_new_pin() swapped;
+            }
+          }
+        };
+      }
+
+      StackPage {
         name: "completed";
         title: _("Complete");
 
@@ -301,9 +376,28 @@ template $CredentialsUiWindow: ApplicationWindow {
 
         child: Box {
           orientation: vertical;
+          margin-start: 8;
 
           Label {
             label: bind template.view-model as <$CredentialManagerViewModel>.prompt;
+            margin-start: 24;
+            wrap: true;
+          }
+
+          Box {
+            halign: end;
+            spacing: 6;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.start_setting_new_pin_visible;
+
+            Button failed_close_window {
+              label: _("Close");
+              clicked => $handle_close_window() swapped;
+            }
+
+            Button start_setting_new_pin {
+              label: _("Set PIN on device");
+              clicked => $handle_start_setting_new_pin() swapped;
+            }
           }
         };
       }

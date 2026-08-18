@@ -23,9 +23,9 @@ use credentialsd_common::model::{
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
     NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PortalBackendOptions,
-    UserInteractedEvent, WindowHandle,
+    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
+    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -72,6 +72,14 @@ trait UiControlService {
         session_handle: ObjectPath<'_>,
         attempts_left: u32,
         _options: NotifyNeedsPinOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_pin_not_set(
+        &self,
+        session_handle: ObjectPath<'_>,
+        error: PinNotSetError,
+        _options: NotifyPinNotSetOptions,
     ) -> fdo::Result<()>;
 
     /// Emitted when the authenticator needs a user verification gesture.
@@ -166,6 +174,14 @@ trait UiControlService {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
+    async fn set_device_pin(
+        &self,
+        session_handle: ObjectPath<'_>,
+        pin_fd: OwnedFd,
+        options: SetDevicePinOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
     async fn credential_selected(
         &self,
         session_handle: ObjectPath<'_>,
@@ -203,6 +219,15 @@ impl Ceremony {
                         self.session_handle.as_ref(),
                         attempts_left.unwrap_or(u32::MAX),
                         NotifyNeedsPinOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::PinNotSet { error } => {
+                self.proxy
+                    .notify_pin_not_set(
+                        self.session_handle.as_ref(),
+                        error,
+                        NotifyPinNotSetOptions {},
                     )
                     .await
             }
@@ -451,6 +476,11 @@ async fn subscribe_ui_events(
                     ClientPinEntered::from_message(msg)?
                         .args().ok()
                         .map(|args| UserInteractedEvent::ClientPinEntered(args.pin_fd))
+                }
+                stringify!(SetDevicePin) => {
+                    SetDevicePin::from_message(msg)?
+                        .args().ok()
+                        .map(|args| UserInteractedEvent::SetDevicePin(args.pin_fd))
                 }
                 stringify!(CredentialSelected) => {
                     CredentialSelected::from_message(msg)?

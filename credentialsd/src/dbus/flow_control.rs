@@ -144,11 +144,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     };
     tokio::spawn(async move {
         let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
+        let set_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let cred_selector_tx = Arc::new(Mutex::new(None));
         while let Some(ui_request) = flow.receive_ui_event().await {
             match ui_request {
                 UserInteractedEvent::DiscoveryRequested => {
                     let client_pin_tx = client_pin_tx.clone();
+                    let set_pin_tx = set_pin_tx.clone();
                     let cred_selector_tx = cred_selector_tx.clone();
                     let stream =
                         svc.lock()
@@ -167,6 +169,17 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                                         pin_tx, ..
                                     }) => {
                                         *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                    }
+                                    DeviceStateUpdate::Nfc(NfcState::PinNotSet {
+                                        pin_tx, ..
+                                    }) => {
+                                        *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                    }
+
+                                    DeviceStateUpdate::Usb(UsbState::PinNotSet {
+                                        pin_tx, ..
+                                    }) => {
+                                        *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
                                     }
                                     DeviceStateUpdate::Usb(UsbState::SelectingCredential {
                                         cred_tx,
@@ -198,6 +211,33 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         }
                     };
                     let tx = { client_pin_tx.lock().unwrap().take() };
+                    if let Some(tx) = tx {
+                        if tx.send(pin).await.is_err() {
+                            tracing::error!("Failed to send client PIN to device");
+                        }
+                    } else {
+                        tracing::error!(
+                            "Invalid state: received a client PIN with no pending request."
+                        );
+                    }
+                }
+                UserInteractedEvent::SetDevicePin(pin_fd) => {
+                    let pin_fd = OwnedFd::from(pin_fd);
+                    let pin = match read_secret(pin_fd)
+                        .map_err(|err| format!("Could not read from file descriptor: {err}"))
+                        .and_then(|bytes| {
+                            String::from_utf8(bytes).map_err(|err| {
+                                format!("Invalid UTF-8 data retrieved from pin: {err}")
+                            })
+                        }) {
+                        Ok(pin) => pin,
+                        // TODO: need to send an error to the UI, cancel the request and terminate the loop.
+                        Err(err) => {
+                            tracing::error!(%err, "Failed to read new device PIN. Stopping event loop. TODO: cancel the request");
+                            break;
+                        }
+                    };
+                    let tx = { set_pin_tx.lock().unwrap().take() };
                     if let Some(tx) = tx {
                         if tx.send(pin).await.is_err() {
                             tracing::error!("Failed to send client PIN to device");

@@ -5,7 +5,7 @@ use async_std::{
 
 use credentialsd_common::{
     memfd::write_secret,
-    model::{BackgroundEvent, UserInteractedEvent},
+    model::{BackgroundEvent, PinNotSetError, UserInteractedEvent},
 };
 
 const CTAP_CLIENT_SECRET_MAX_LEN: usize = 63;
@@ -37,6 +37,25 @@ impl FlowControlClient {
         };
         self.send(UserInteractedEvent::ClientPinEntered(fd.into()))
             .await
+    }
+
+    pub async fn set_device_pin(&mut self, pin: String) -> Result<(), Option<PinNotSetError>> {
+        if pin.len() > CTAP_CLIENT_SECRET_MAX_LEN {
+            tracing::warn!("PIN is too long");
+            return Err(Some(PinNotSetError::PinTooLong));
+        }
+        let fd = match write_secret(pin.into_bytes()) {
+            Ok(fd) => fd,
+            Err(err) => {
+                tracing::error!(%err, "Failed to write secret to file descriptor");
+                // TODO: need to send a message back to GUI thread that there was an error.
+                _ = self.cancel_request().await;
+                return Err(None);
+            }
+        };
+        self.send(UserInteractedEvent::SetDevicePin(fd.into()))
+            .await
+            .map_err(|_| None)
     }
 
     pub async fn select_credential(&self, credential_id: String) -> Result<(), ()> {

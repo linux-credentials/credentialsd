@@ -6,6 +6,7 @@ use futures_lite::Stream;
 use libwebauthn::{
     UvUpdate,
     ops::webauthn::GetAssertionResponse,
+    pin::PinNotSetReason,
     proto::CtapError,
     transport::{
         Channel, ChannelSettings, Device,
@@ -19,7 +20,7 @@ use tokio::sync::{
 };
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, Error};
+use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -201,6 +202,9 @@ impl InProcessUsbHandler {
                     attempts_left,
                     pin_tx,
                 }),
+                Ok(UsbUvMessage::PinNotSet { reason, pin_tx }) => {
+                    Ok(UsbStateInternal::PinNotSet { reason, pin_tx })
+                }
                 Ok(UsbUvMessage::NeedsUserVerification { attempts_left }) => {
                     Ok(UsbStateInternal::NeedsUserVerification { attempts_left })
                 }
@@ -266,6 +270,7 @@ impl InProcessUsbHandler {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                 }
                 UsbStateInternal::NeedsPin { .. }
+                | UsbStateInternal::PinNotSet { .. }
                 | UsbStateInternal::NeedsUserVerification { .. }
                 | UsbStateInternal::NeedsUserPresence => {
                     Self::process_user_interaction(&mut signal_rx, &cred_tx).await
@@ -278,7 +283,16 @@ impl InProcessUsbHandler {
                 UsbStateInternal::Failed(err) => break Err(err),
             };
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
-            if std::mem::discriminant(&state) != std::mem::discriminant(&prev_usb_state) {
+            // Usually, comparing the Discrimimant is enough, but PinNotSet can be
+            // repeated multiple times with different or the same error reasons
+            // (PIN too short, PIN too long, etc.)
+            let state_changed = match (&state, &prev_usb_state) {
+                (UsbStateInternal::PinNotSet { .. }, UsbStateInternal::PinNotSet { .. }) => true,
+                (new_state, old_state) => {
+                    std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
+                }
+            };
+            if state_changed {
                 tracing::debug!("USB current state: {state:?}");
                 tx.send(state.clone()).await.map_err(|_| {
                     Error::Internal("USB state channel receiver closed prematurely".to_string())
@@ -357,7 +371,6 @@ async fn handle_events(
             }
             .map_err(|err| match err {
                 WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                WebAuthnError::Ctap(CtapError::PINNotSet) => Error::PinNotSet,
                 WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
                 WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
                 _ => Error::AuthenticatorError,
@@ -420,6 +433,12 @@ pub(super) enum UsbStateInternal {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be entered.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification { attempts_left: Option<u32> },
 
@@ -465,6 +484,12 @@ pub enum UsbState {
         pin_tx: mpsc::Sender<String>,
     },
 
+    /// The device needs the PIN to be set.
+    PinNotSet {
+        reason: PinNotSetReason,
+        pin_tx: mpsc::Sender<String>,
+    },
+
     /// The device needs on-device user verification.
     NeedsUserVerification {
         attempts_left: Option<u32>,
@@ -503,6 +528,9 @@ impl From<UsbStateInternal> for UsbState {
                 attempts_left,
                 pin_tx,
             },
+            UsbStateInternal::PinNotSet { reason, pin_tx } => {
+                UsbState::PinNotSet { reason, pin_tx }
+            }
             UsbStateInternal::NeedsUserVerification { attempts_left } => {
                 UsbState::NeedsUserVerification { attempts_left }
             }
@@ -557,6 +585,16 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::NeedsPin { attempts_left, .. } => BackgroundEvent::NeedsPin {
                 attempts_left: *attempts_left,
             },
+            UsbState::PinNotSet { reason, .. } => {
+                let error = match reason {
+                    PinNotSetReason::PinNotSet => PinNotSetError::PinNotSet,
+                    PinNotSetReason::PinTooShort => PinNotSetError::PinTooShort,
+                    PinNotSetReason::PinTooLong => PinNotSetError::PinTooLong,
+                    PinNotSetReason::PinPolicyViolation => PinNotSetError::PinPolicyViolation,
+                    PinNotSetReason::PinChangeRequired => PinNotSetError::PinChangeRequired,
+                };
+                BackgroundEvent::PinNotSet { error }
+            }
             UsbState::NeedsUserVerification { attempts_left } => {
                 BackgroundEvent::NeedsUserVerification {
                     attempts_left: *attempts_left,
@@ -570,7 +608,6 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
             UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
             UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
-            UsbState::Failed(Error::PinNotSet) => BackgroundEvent::ErrorPinNotSet,
             UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
             UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
@@ -620,6 +657,28 @@ async fn handle_usb_updates(
                     None => tracing::debug!("Pin channel closed before receiving pin from client."),
                 }
             }
+            UvUpdate::PinNotSet(pin_update) => {
+                let (pin_tx, mut pin_rx) = mpsc::channel(1);
+                if let Err(err) = signal_tx
+                    .send(Ok(UsbUvMessage::PinNotSet {
+                        reason: pin_update.reason,
+                        pin_tx,
+                    }))
+                    .await
+                {
+                    tracing::error!(
+                        "Authenticator requested a PIN from the user, but we cannot relay the message to the credential service: {:?}",
+                        err
+                    );
+                }
+                match pin_rx.recv().await {
+                    Some(pin) => match pin_update.set_pin(&pin) {
+                        Ok(()) => {}
+                        Err(err) => tracing::error!("Error sending pin to device: {:?}", err),
+                    },
+                    None => tracing::debug!("Pin channel closed before receiving pin from client."),
+                }
+            }
             UvUpdate::PresenceRequired => {
                 if let Err(err) = signal_tx.send(Ok(UsbUvMessage::NeedsUserPresence)).await {
                     tracing::error!(
@@ -627,9 +686,6 @@ async fn handle_usb_updates(
                         err
                     );
                 }
-            }
-            UvUpdate::PinNotSet(_) => {
-                tracing::error!("Authenticator requested PIN setup, which is not yet supported.");
             }
         }
     }
@@ -640,6 +696,10 @@ async fn handle_usb_updates(
 enum UsbUvMessage {
     NeedsPin {
         attempts_left: Option<u32>,
+        pin_tx: mpsc::Sender<String>,
+    },
+    PinNotSet {
+        reason: PinNotSetReason,
         pin_tx: mpsc::Sender<String>,
     },
     NeedsUserVerification {

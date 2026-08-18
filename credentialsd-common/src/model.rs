@@ -18,6 +18,7 @@ pub const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
 pub enum BackgroundEvent {
     CeremonyCompleted,
     NeedsPin { attempts_left: Option<u32> },
+    PinNotSet { error: PinNotSetError },
     NeedsUserVerification { attempts_left: Option<u32> },
     NeedsUserPresence,
     SelectingCredential { creds: Vec<Credential> },
@@ -51,6 +52,11 @@ pub enum BackgroundEvent {
 #[zvariant(signature = "dict")]
 pub struct ClientPinEnteredOptions {}
 
+/// Emitted when a client enters a new PIN for a device.
+#[derive(Debug, SerializeDict, DeserializeDict, PartialEq, Type)]
+#[zvariant(signature = "dict")]
+pub struct SetDevicePinOptions {}
+
 #[derive(Clone, Debug, Default, SerializeDict, DeserializeDict, PartialEq, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct Credential {
@@ -81,6 +87,24 @@ impl From<DiscoveryRequestedOptions> for UserInteractedEvent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[zvariant(signature = "s")]
+#[serde(rename_all = "PascalCase")]
+pub enum PinNotSetError {
+    /// PIN too short
+    PinTooShort,
+    /// PIN too long
+    PinTooLong,
+    /// PIN violates PinPolicy
+    PinPolicyViolation,
+    /// PIN change is required by the device
+    PinChangeRequired,
+    /// When no specific error is given (happens either in the initial PinNotSet-iteration,
+    /// or if dbus receives an unknown string)
+    #[serde(other)]
+    PinNotSet,
+}
+
 #[derive(Debug, Clone)]
 pub enum Error {
     /// Some unknown error with the authenticator occurred.
@@ -95,8 +119,6 @@ pub enum Error {
     /// Note that this is different than exhausting the PIN count that fully
     /// locks out the device.
     PinAttemptsExhausted,
-    /// The RP requires user verification, but the device has no PIN/Biometrics set.
-    PinNotSet,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -108,7 +130,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AuthenticatorError => f.write_str("AuthenticatorError"),
-            Self::PinNotSet => f.write_str("PinNotSet"),
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
@@ -124,7 +145,6 @@ impl TryFrom<&Value<'_>> for Error {
         let err_code: &str = value.downcast_ref()?;
         let err = match err_code {
             "AuthenticatorError" => crate::model::Error::AuthenticatorError,
-            "PinNotSet" => crate::model::Error::PinNotSet,
             "NoCredentials" => crate::model::Error::NoCredentials,
             "CredentialExcluded" => crate::model::Error::CredentialExcluded,
             "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
@@ -137,6 +157,10 @@ impl TryFrom<&Value<'_>> for Error {
 #[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct NotifyNeedsPinOptions {}
+
+#[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyPinNotSetOptions {}
 
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
@@ -253,6 +277,10 @@ pub enum UserInteractedEvent {
     /// File descriptor must be memory-mapped to be read.
     ClientPinEntered(OwnedFd),
 
+    /// Set new client PIN. Length of the PIN MUST not be greater than 63 bytes.
+    /// File descriptor must be memory-mapped to be read.
+    SetDevicePin(OwnedFd),
+
     /// Select a credential by credential ID
     CredentialSelected(String),
 
@@ -265,6 +293,10 @@ impl std::fmt::Debug for UserInteractedEvent {
             Self::DiscoveryRequested => write!(f, stringify!(DiscoveryRequested)),
             Self::ClientPinEntered(_) => f
                 .debug_tuple(stringify!(ClientPinEntered))
+                .field(&"******".to_string())
+                .finish(),
+            Self::SetDevicePin(_) => f
+                .debug_tuple(stringify!(SetDevicePin))
                 .field(&"******".to_string())
                 .finish(),
             Self::CredentialSelected(arg0) => f
