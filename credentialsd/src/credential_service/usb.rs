@@ -299,8 +299,9 @@ impl InProcessUsbHandler {
                             let device = std::sync::Arc::clone(device);
                             let signal_tx2 = signal_tx.clone();
                             let cred_request = cred_request.clone();
+                            let cancellation = cancellation.clone();
                             tokio::spawn(async move {
-                                handle_events(&cred_request, device.clone(), &signal_tx2).await;
+                                handle_events(&cred_request, device.clone(), &signal_tx2, cancellation).await;
                             });
                             Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                         }
@@ -358,6 +359,7 @@ async fn handle_events(
     cred_request: &CredentialRequest,
     device: Arc<AsyncMutex<HidDevice>>,
     signal_tx: &Sender<Result<UsbUvMessage, Error>>,
+    cancellation: CancellationToken,
 ) {
     let mut device = device.lock().await;
     let device_debug = device.to_string();
@@ -374,6 +376,7 @@ async fn handle_events(
             );
         }
         Ok(mut channel) => {
+            let cancel_handle = channel.get_handle();
             let signal_tx2 = signal_tx.clone().downgrade();
             let ux_updates_rx = channel.get_ux_update_receiver();
             tokio::spawn(async move {
@@ -384,49 +387,58 @@ async fn handle_events(
                 "Polling for credential from USB authenticator {}",
                 &device_debug
             );
-            let response: Result<UsbUvMessage, Error> = loop {
-                let response = match cred_request {
-                    CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
-                        channel
-                            .webauthn_make_credential(make_cred_request)
-                            .await
-                            .map(|response| {
-                                UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
-                            })
+            let response: Result<UsbUvMessage, Error> = tokio::select! {
+                res = async {
+                    loop {
+                        let response = match cred_request {
+                            CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
+                                channel
+                                    .webauthn_make_credential(make_cred_request)
+                                    .await
+                                    .map(|response| {
+                                        UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
+                                    })
+                            }
+                            CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
+                                .webauthn_get_assertion(get_cred_request)
+                                .await
+                                .map(|response| {
+                                    UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
+                                }),
+                        };
+                        match response {
+                            Ok(response) => {
+                                tracing::debug!("Received credential from USB authenticator");
+                                break Ok(response);
+                            }
+                            Err(WebAuthnError::Ctap(ctap_error))
+                                if ctap_error.is_retryable_user_error() =>
+                            {
+                                warn!("Retrying WebAuthn credential operation");
+                                continue;
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to make/get credential with USB authenticator: {:?}",
+                                    err
+                                );
+                                break Err(err);
+                            }
+                        }
                     }
-                    CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
-                        .webauthn_get_assertion(get_cred_request)
-                        .await
-                        .map(|response| {
-                            UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
-                        }),
-                };
-                match response {
-                    Ok(response) => {
-                        tracing::debug!("Received credential from USB authenticator");
-                        break Ok(response);
-                    }
-                    Err(WebAuthnError::Ctap(ctap_error))
-                        if ctap_error.is_retryable_user_error() =>
-                    {
-                        warn!("Retrying WebAuthn credential operation");
-                        continue;
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            "Failed to make/get credential with USB authenticator: {:?}",
-                            err
-                        );
-                        break Err(err);
-                    }
+                    .map_err(|err| match err {
+                        WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
+                        WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                        WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
+                        _ => Error::AuthenticatorError,
+                    })
+                } => res,
+                _ = cancellation.cancelled() => {
+                    tracing::debug!("USB ceremony cancelled, interrupting authenticator operation");
+                    cancel_handle.cancel_ongoing_operation().await;
+                    Err(Error::Internal("Request cancelled".to_string()))
                 }
-            }
-            .map_err(|err| match err {
-                WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
-                WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
-                _ => Error::AuthenticatorError,
-            });
+            };
             if let Err(err) = signal_tx.send(response).await {
                 tracing::error!("Failed to notify that ceremony completed: {:?}", err);
             }
