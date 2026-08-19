@@ -82,6 +82,7 @@ impl InProcessUsbHandler {
 
     async fn process_selecting_device(
         hid_devices: &[HidDevice],
+        cancellation: &CancellationToken,
     ) -> Result<UsbStateInternal, Error> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
@@ -135,20 +136,40 @@ impl InProcessUsbHandler {
         tracing::info!("Waiting for user interaction");
         drop(blinking_tx);
         let mut state = UsbStateInternal::Idle;
-        while let Some(msg) = blinking_rx.recv().await {
-            match msg {
-                Some(idx) => {
-                    let (device, _handle) = channel_map.remove(&idx).unwrap();
-                    tracing::info!("User selected device {device:?}.");
+        loop {
+            tokio::select! {
+                maybe_msg = blinking_rx.recv() => {
+                    let Some(msg) = maybe_msg else {
+                        // All blink tasks finished without a selection.
+                        break;
+                    };
+                    match msg {
+                        Some(idx) => {
+                            let (device, _handle) = channel_map.remove(&idx).unwrap();
+                            tracing::info!("User selected device {device:?}.");
+                            for (_key, (device, handle)) in channel_map.into_iter() {
+                                tracing::info!("Cancelling device {device:?}.");
+                                handle.cancel_ongoing_operation().await;
+                            }
+                            state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
+                            break;
+                        }
+                        None => {
+                            continue;
+                        }
+                    }
+                }
+                _ = cancellation.cancelled() => {
+                    // The request was cancelled (e.g. another transport completed, or
+                    // the user cancelled). Stop all blinking devices. This interrupts
+                    // the blocking HID read within the transport (≤100ms) and sends a
+                    // CTAP CANCEL frame to each device.
+                    tracing::debug!("USB device selection cancelled");
                     for (_key, (device, handle)) in channel_map.into_iter() {
-                        tracing::info!("Cancelling device {device:?}.");
+                        tracing::info!("Cancelling blinking device {device:?}.");
                         handle.cancel_ongoing_operation().await;
                     }
-                    state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
-                    break;
-                }
-                None => {
-                    continue;
+                    return Err(Error::Internal("Request cancelled".to_string()));
                 }
             }
         }
@@ -272,7 +293,7 @@ impl InProcessUsbHandler {
                             Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation).await
                         }
                         UsbStateInternal::SelectingDevice(ref hid_devices) => {
-                            Self::process_selecting_device(hid_devices.as_slice()).await
+                            Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await
                         }
                         UsbStateInternal::Connected(ref device) => {
                             let device = std::sync::Arc::clone(device);
