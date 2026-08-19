@@ -11,10 +11,13 @@ use std::{
 
 use async_trait::async_trait;
 use futures_lite::{FutureExt, Stream, StreamExt};
-use libwebauthn::pin::persistent_token::{MemoryPersistentTokenStore, PersistentTokenStore};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
+};
+use libwebauthn::{
+    available_transports,
+    pin::persistent_token::{MemoryPersistentTokenStore, PersistentTokenStore},
 };
 use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
@@ -199,16 +202,16 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         // We create the list new for each call, in case someone plugs in
         // an NFC-reader in the middle of an auth-flow
-        let mut devices = vec![
-            Device {
-                id: String::from("0"),
-                transport: Transport::Usb,
-            },
-            Device {
+        let mut devices = vec![Device {
+            id: String::from("0"),
+            transport: Transport::Usb,
+        }];
+        if libwebauthn::transport::cable::is_available().await {
+            devices.push(Device {
                 id: String::from("1"),
                 transport: Transport::HybridQr,
-            },
-        ];
+            });
+        }
         if libwebauthn::transport::nfc::is_nfc_available() {
             devices.push(Device {
                 id: String::from("2"),
@@ -221,11 +224,16 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
     async fn start_discovery(
         &self,
     ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
-        let usb = self
-            .get_usb_credential()
-            .await
-            .map(DeviceStateUpdate::from)
-            .boxed();
+        let available_transports = available_transports().await;
+        let mut selected_transports = Vec::new();
+        if available_transports.contains(&libwebauthn::Transport::Usb) {
+            let usb = self
+                .get_usb_credential()
+                .await
+                .map(DeviceStateUpdate::from)
+                .boxed();
+            selected_transports.push(usb);
+        }
         /*
         TODO: Some cards that support NFC but not CCID (SoloKey Solo 2 NFC)
         cause a framing error immediately after establishing a libwebauthn
@@ -234,18 +242,24 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         security keys, while at the same time supporting actual NFC cards and CCID.
         Maybe we can defer sending "Connected" to the UI until a user presence
         or verification message is sent.
-        let nfc = self
-            .get_nfc_credential()
-            .await
-            .map(DeviceStateUpdate::from)
-            .boxed();
+        if available_transports.contains(&libwebauthn::Transport::Nfc) {
+            let nfc = self
+                .get_nfc_credential()
+                .await
+                .map(DeviceStateUpdate::from)
+                .boxed();
+            selected_transports.push(nfc);
+        }
         */
-        let hybrid = self
-            .get_hybrid_credential()
-            .await
-            .map(DeviceStateUpdate::from)
-            .boxed();
-        futures::stream::select_all([usb, /* nfc, */ hybrid]).boxed()
+        if available_transports.contains(&libwebauthn::Transport::Hybrid) {
+            let hybrid = self
+                .get_hybrid_credential()
+                .await
+                .map(DeviceStateUpdate::from)
+                .boxed();
+            selected_transports.push(hybrid);
+        }
+        futures::stream::select_all(selected_transports).boxed()
     }
 }
 

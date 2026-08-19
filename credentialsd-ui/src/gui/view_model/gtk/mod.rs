@@ -47,7 +47,7 @@ mod imp {
         pub activate_usb_prompt: RefCell<String>,
 
         #[property(get, set)]
-        pub devices: RefCell<gtk::ListBox>,
+        pub hybrid_transport_available: RefCell<bool>,
 
         #[property(get, set)]
         pub credentials: RefCell<gtk::ListBox>,
@@ -265,15 +265,15 @@ impl ViewModel {
         ));
     }
 
-    fn update_devices(&self, _devices: &[Device]) {
-        // TODO: This This is called when a new credential source is available to show it in the UI.
-        // At this time, the list is static, and the UI templates do not read this value.
-        // Eventually, the UI template will need to read the value, when
-        // pre-known credentials (like hybrid linked devices, or passkey
-        // autofill). However, I believe in the current paradigm, we will know all available
+    fn update_devices(&self, devices: &[Device]) {
+        let hybrid_available = devices.iter().any(|dev| {
+            dev.transport == Transport::HybridLinked || dev.transport == Transport::HybridQr
+        });
+        self.set_hybrid_transport_available(hybrid_available);
+        // TODO: This is called when a new credential source is available to show it in the UI.
+        // However, I believe in the current paradigm, we will know all available
         // credential sources at the beginning of the request, so we won't need
         // to update these during the request. We may be able to reomve this method altogether.
-        // for now, we're ignoring this value.
     }
 
     fn update_credentials(&self, credentials: &[Credential]) {
