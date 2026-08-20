@@ -6,6 +6,14 @@
 
 - Reordered parameters in RequestingApplication, and made app name optional.
 
+### Flow Controller API
+
+- Removed FlowControl service.
+
+## Improvements
+
+- Added a handler service to handle Credential portal requests on behalf of xdg-desktop-portal.
+
 # [0.2.0] - 2025-02-18
 
 ## Breaking Changes
