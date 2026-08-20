@@ -12,12 +12,6 @@ configure_file(
   configuration: dbus_config,
 )
 configure_file(
-  input: 'xyz.iinuwa.credentialsd.FlowControl.service.in',
-  install_dir: dbus_service_dir,
-  output: 'xyz.iinuwa.credentialsd.FlowControl.service',
-  configuration: dbus_config,
-)
-configure_file(
   input: 'xyz.iinuwa.credentialsd.UiControl.service.in',
   install_dir: dbus_service_dir,
   output: 'xyz.iinuwa.credentialsd.UiControl.service',

@@ -14,12 +14,6 @@ configure_file(
   configuration: systemd_config,
 )
 configure_file(
-  input: 'xyz.iinuwa.credentialsd.FlowControl.service.in',
-  install_dir: systemd_user_service_dir,
-  output: 'xyz.iinuwa.credentialsd.FlowControl.service',
-  configuration: systemd_config,
-)
-configure_file(
   input: 'xyz.iinuwa.credentialsd.UiControl.service.in',
   install_dir: systemd_user_service_dir,
   output: 'xyz.iinuwa.credentialsd.UiControl.service',
