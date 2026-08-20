@@ -1,18 +1,43 @@
 # [unreleased]
 
+This release is a big milestone toward our goal of providing a Credential
+portal. To that end, we have changed the structure of credentialsd to fit the
+patterns from credentialsd portal. We also now have a dependency on
+xdg-desktop-portal to use credentialsd.
+[linux-credentials/xdg-desktop-portal][xdp-fork] contains the patches needed to
+run xdg-desktop-portal while we work on upstreaming the changes.
+
+[xdp-fork]: https://github.com/linux-credentials/xdg-desktop-portal
+
 ## Breaking Changes
 
-### UI Controller API
-
-- Reordered parameters in RequestingApplication, and made app name optional.
-
-### Flow Controller API
-
-- Removed FlowControl service.
+- daemon: Removed FlowControl service in favor of portal handler.
+- daemon: Added a dependency on a patched xdg-desktop-portal to run credentialsd.
+- daemon: Send CTAP2 hybrid QR code data to UI over a file descriptor.
+- daemon: Require `origin` parameter to be set on `CreateCredential` and `GetCredential`.
+- daemon: Flatten request inputs to remove `request_json` field, making construction more straightforward.
+- ui: Reordered parameters in `RequestingApplication`, and made app name optional.
+- ui: Send client PIN to daemon over a file descriptor.
+- ui: Move discovery from UI service to daemon.
+- ui: Lookup app display name from UI instead of daemon.
 
 ## Improvements
 
-- Added a handler service to handle Credential portal requests on behalf of xdg-desktop-portal.
+- ci: Move build directory to take better advantage of caching. (Thank you, @norepro!)
+- daemon: Added a handler service to handle Credential portal requests on behalf of xdg-desktop-portal.
+- daemon: Accept top_origin as an optional parameter to CreateCredential and GetCredential.
+- daemon: Expand list of trusted callers to paths where distros commonly place xdg-desktop-portal.
+- daemon: Remove busy loop on USB polling taking up a bunch of CPU.
+- daemon: Validate related origins requests.
+- daemon: Add support for CTAP2 hybrid over BLE behind a feature flag.
+- daemon: Deduplicate USB state events emitted over D-Bus.
+- daemon: Don't use hybrid when not available
+- ui: Add Georgian translations. (Thank you, @EkaterinePopova!)
+- ui: Send initial list of devices on UI initialization.
+- ui: Add a portal backend API to credentialsd-ui.
+- ui: Convert UI templates to Blueprint.
+- ui: Reorganize credential selection screen to promote hybrid QR code.
+- webext: Ignore conditional mediation requests.
 
 # [0.2.0] - 2025-02-18
 
