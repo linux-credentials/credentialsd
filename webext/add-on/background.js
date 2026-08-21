@@ -9,53 +9,27 @@
 
 const browserAPI = globalThis.browser || globalThis.chrome;
 
-let contentPort;
-let nativePort;
-
 function connected(port) {
-  console.log('[credentialsd] received connection from content script');
-  contentPort = port;
-
-  // Connect to native messaging host
-  nativePort = browserAPI.runtime.connectNative('xyz.iinuwa.credentialsd_helper');
-
-  // Check for connection errors (browser-specific patterns)
-  const connectError = nativePort.error || browserAPI.runtime.lastError;
-  if (connectError) {
-    console.error('[credentialsd] native connect error:', connectError.message || connectError);
-    return;
-  }
-
-  console.log('[credentialsd] connected to native app');
-
-  contentPort.onMessage.addListener(rcvFromContent);
-  nativePort.onMessage.addListener(rcvFromNative);
-
-  nativePort.onDisconnect.addListener(() => {
-    const error = browserAPI.runtime.lastError;
-    if (error) {
-      console.error('[credentialsd] native port disconnected:', error.message);
-    }
-  });
+  const portId = port.sender.tab.id;
+  console.log('[credentialsd] received connection from content script', portId);
+  port.onMessage.addListener((msg) => rcvFromContent(msg, port));
 }
 
-function rcvFromContent(msg) {
-  const { requestId, cmd, options } = msg;
-  const origin = contentPort.sender.origin;
-  const topOrigin = new URL(contentPort.sender.tab.url).origin;
+async function rcvFromContent(msg, port) {
+  const { requestId, cmd, options = null } = msg;
+  console.debug('[credentialsd] forwarding', cmd, 'to native app');
 
-  if (options) {
-    console.debug('[credentialsd] forwarding', cmd, 'to native app');
-    nativePort.postMessage({ requestId, cmd, options, origin, topOrigin });
-  } else {
-    console.debug('[credentialsd] forwarding', cmd, '(no options) to native app');
-    nativePort.postMessage({ requestId, cmd, origin, topOrigin });
+  const origin = port.sender.origin;
+  const topOrigin = new URL(port.sender.tab.url).origin;
+  const request = { requestId, cmd, options, origin, topOrigin };
+
+  try {
+    const response = await browserAPI.runtime.sendNativeMessage('xyz.iinuwa.credentialsd_helper', request);
+    console.log('[credentialsd] received from native, forwarding to content');
+    port.postMessage(response);
+  } catch (error) {
+    console.error('[credentialsd] Error sending message to native app', error.message);
   }
-}
-
-function rcvFromNative(msg) {
-  console.log('[credentialsd] received from native, forwarding to content');
-  contentPort.postMessage(msg);
 }
 
 // Listen for connections from content script

@@ -39,6 +39,8 @@ run xdg-desktop-portal while we work on upstreaming the changes.
 - ui: Reorganize credential selection screen to promote hybrid QR code.
 - ui: Convert UI templates to Blueprint.
 - webext: Ignore conditional mediation requests.
+- webext: Fix request routing issues when multiple tabs are active.
+- webext: Only start extension during WebAuthn calls for performance.
 
 # [0.2.0] - 2025-02-18
 

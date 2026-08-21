@@ -459,9 +459,8 @@ async def get_interface():
     return INTERFACE
 
 
-async def run(cmd, options, origin, top_origin):
+async def run(interface, cmd, options, origin, top_origin):
     logging.debug("Executing command")
-    interface = await get_interface()
 
     if cmd == "create":
         if "publicKey" in options:
@@ -519,22 +518,41 @@ quit = asyncio.Event()
 
 async def main():
     logging.info("starting credential_manager_shim")
+    cancel_task = asyncio.create_task(quit.wait())
 
-    while not quit.is_set():
-        logging.debug("starting event loop message")
-        receivedMessage = getMessage()
-        request_id = receivedMessage["requestId"]
-        try:
-            cmd = receivedMessage["cmd"]
-            options = receivedMessage.get("options", None)
-            origin = receivedMessage["origin"]
-            top_origin = receivedMessage["topOrigin"]
-            auth_data = await run(cmd, options, origin, top_origin)
+    receivedMessage = getMessage()
+    request_id = receivedMessage["requestId"]
+    try:
+        interface = await get_interface()
+        cmd = receivedMessage["cmd"]
+        options = receivedMessage.get("options", None)
+        origin = receivedMessage["origin"]
+        top_origin = receivedMessage["topOrigin"]
+        credentialsd_task = asyncio.create_task(
+            run(interface, cmd, options, origin, top_origin)
+        )
+        timeout = options.get("timeout", 5 * 60 * 1000) // 1000
+        done, pending = await asyncio.wait(
+            {credentialsd_task, cancel_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if credentialsd_task in done:
+            logging.info("got a response from credentialsd")
+            auth_data = credentialsd_task.result()
             sendMessage(encodeMessage({"requestId": request_id, "data": auth_data}))
-        except Exception as e:
-            logging.error("Failed to send message", exc_info=e)
-            sendMessage(encodeMessage({"requestId": request_id, "error": str(e)}))
-            logging.debug("Sent error message")
+        elif cancel_task in done:
+            logging.info("cancelled")
+            raise asyncio.CancelledError()
+        else:
+            logging.info("timed out")
+            raise TimeoutError()
+        interface.bus.disconnect()
+
+    except Exception as e:
+        logging.error("Failed to send message", exc_info=e)
+        sendMessage(encodeMessage({"requestId": request_id, "error": str(e)}))
+        logging.debug("Sent error message")
     logging.info("quitting credential_manager_shim")
 
 
