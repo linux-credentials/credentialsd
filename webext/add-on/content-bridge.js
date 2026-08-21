@@ -13,7 +13,7 @@ function connectToBackground() {
     mainPort = browserAPI.runtime.connect({ name: 'credentialsd-helper' });
     // Forward responses from background back to page context
     mainPort.onMessage.addListener((msg) => {
-      const { requestId, data, error } = msg;
+      const { requestId, data = undefined, error = undefined } = msg;
       window.postMessage({
         type: 'credentialsd-response',
         requestId,

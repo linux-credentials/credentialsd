@@ -17,7 +17,7 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== 'credentialsd-response') return;
 
-  const { requestId, data, error } = event.data;
+  const { requestId, data = undefined, error = undefined } = event.data;
   const request = pendingRequests[requestId];
   if (!request) return;
   delete pendingRequests[requestId];
