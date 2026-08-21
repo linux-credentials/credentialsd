@@ -2,7 +2,7 @@
     "description": "Helper to integrate credentialsd with the browser",
     "manifest_version": 3,
     "name": "credentialsd-helper",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "icons": {
         "48": "icons/logo.svg"
     },
