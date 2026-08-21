@@ -33,10 +33,11 @@ run xdg-desktop-portal while we work on upstreaming the changes.
 - daemon: Deduplicate USB state events emitted over D-Bus.
 - daemon: Don't use hybrid when not available
 - ui: Add Georgian translations. (Thank you, @EkaterinePopova!)
-- ui: Send initial list of devices on UI initialization.
 - ui: Add a portal backend API to credentialsd-ui.
-- ui: Convert UI templates to Blueprint.
+- ui: Allow setting client PIN during the flow when required.
+- ui: Send initial list of devices on UI initialization.
 - ui: Reorganize credential selection screen to promote hybrid QR code.
+- ui: Convert UI templates to Blueprint.
 - webext: Ignore conditional mediation requests.
 
 # [0.2.0] - 2025-02-18
