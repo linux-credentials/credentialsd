@@ -21,8 +21,7 @@
     "content_scripts": [
         {
             "matches": [
-                "https://webauthn.io/*",
-                "https://demo.yubico.com/*"
+                "<all_urls>"
             ],
             "js": [
                 "content-bridge.js"
@@ -32,8 +31,7 @@
         },
         {
             "matches": [
-                "https://webauthn.io/*",
-                "https://demo.yubico.com/*"
+                "<all_urls>"
             ],
             "js": [
                 "content-main.js"
