@@ -350,8 +350,8 @@ where
                         };
                         complete_request(ctx, Ok(response.clone()));
                     }
-                    HybridStateInternal::Failed => {
-                        complete_request(ctx, Err(CredentialServiceError::AuthenticatorError));
+                    HybridStateInternal::Failed(err) => {
+                        complete_request(ctx, Err(err.clone()));
                     }
                     _ => {}
                 }

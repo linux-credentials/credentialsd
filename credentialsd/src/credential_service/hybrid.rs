@@ -160,7 +160,7 @@ impl HybridHandler for InternalHybridHandler {
 
                 let terminal_state = match response {
                     Ok(auth_response) => HybridStateInternal::Completed(Box::new(auth_response)),
-                    Err(_) => HybridStateInternal::Failed,
+                    Err(err) => HybridStateInternal::Failed(err),
                 };
                 if let Err(err) = tx.send(terminal_state).await {
                     tracing::error!("Failed to send caBLE update: {:?}", err)
@@ -191,7 +191,7 @@ pub(super) enum HybridStateInternal {
     /// Authenticator data
     Completed(Box<AuthenticatorResponse>),
 
-    Failed,
+    Failed(Error),
     // TODO(cancellation)
     // This isn't actually sent from the server.
     #[allow(dead_code)]
@@ -221,7 +221,7 @@ pub enum HybridState {
     Completed,
 
     /// Hybrid operation failed.
-    Failed,
+    Failed(Error),
 
     // This isn't actually sent from the server.
     UserCancelled,
@@ -235,7 +235,7 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::UserCancelled => HybridState::UserCancelled,
-            HybridStateInternal::Failed => HybridState::Failed,
+            HybridStateInternal::Failed(err) => HybridState::Failed(err),
         }
     }
 }
@@ -258,7 +258,13 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
             HybridState::UserCancelled => BackgroundEvent::ErrorCancelled,
-            HybridState::Failed => BackgroundEvent::ErrorAuthenticator,
+            HybridState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
+            HybridState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
+            HybridState::Failed(Error::CredentialExcluded) => {
+                BackgroundEvent::ErrorCredentialExcluded
+            }
+            HybridState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            HybridState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }
@@ -284,7 +290,7 @@ async fn handle_hybrid_updates(
                 CableUpdate::Connected => Some(HybridStateInternal::Connected),
                 CableUpdate::Error(transport_error) => {
                     error!(?transport_error, "Hybrid transport error");
-                    Some(HybridStateInternal::Failed)
+                    Some(HybridStateInternal::Failed(Error::AuthenticatorError))
                 }
             },
         };
