@@ -33,6 +33,7 @@ run xdg-desktop-portal while we work on upstreaming the changes.
 - daemon: Deduplicate USB state events emitted over D-Bus.
 - daemon: Don't use hybrid when not available
 - daemon: Cancel other transports, if one succeeded/failed
+- daemon: Return InvalidStateError to caller when credential is excluded.
 - ui: Add Georgian translations. (Thank you, @EkaterinePopova!)
 - ui: Add a portal backend API to credentialsd-ui.
 - ui: Allow setting client PIN during the flow when required.
