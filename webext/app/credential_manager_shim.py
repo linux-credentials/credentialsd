@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
+import re
 import secrets
 import signal
 import struct
@@ -50,6 +51,58 @@ def getMessage():
     except Exception as e:
         logging.error("Failed to read message")
         raise e
+
+
+class PortalError(Exception):
+    def from_string(s: str):
+        m = re.match(r"xyz.iinuwa.credentialsd.(\w+): (?:no description|(.*))", s)
+        if m:
+            (name, message) = m.groups()
+            match name:
+                case "AbortError":
+                    return AbortError
+                case "ConstraintError":
+                    return ConstraintError
+                case "InvalidStateError":
+                    return InvalidStateError
+                case "NotSupportedError":
+                    return NotSupportedError
+                case "SecurityError":
+                    return SecurityError
+                case "NotAllowedError":
+                    return NotAllowedError
+                case "TypeError":
+                    return TypeError
+                case _:
+                    return PortalError()
+
+
+class AbortError(PortalError):
+    pass
+
+
+class ConstraintError(PortalError):
+    pass
+
+
+class InvalidStateError(PortalError):
+    pass
+
+
+class NotSupportedError(PortalError):
+    pass
+
+
+class SecurityError(PortalError):
+    pass
+
+
+class NotAllowedError(PortalError):
+    pass
+
+
+class TypeError(PortalError):
+    pass
 
 
 # Encode a message for transmission,
@@ -113,14 +166,15 @@ def create_portal_request_message_handler(bus: MessageBus) -> PortalRequest:
         if code == 0:
             future.set_result(value)
         elif code == 1:
-            future.set_exception(Exception("Portal request cancelled"))
+            logging.error("Request cancelled")
+            future.set_exception(AbortError())
             raise
         elif code == 2 and "error" in value:
-            future.set_exception(
-                Exception(f"Portal returned an error: {value['error'].value}")
-            )
+            logging.error(value["error"].value)
+            future.set_exception(PortalError.from_string(value["error"].value))
         else:
-            future.set_exception(Exception("Portal returned an unknown error"))
+            logging.error("Portal returned an unknown error")
+            future.set_exception(PortalError())
         return True
 
     def when_done(_fut):
@@ -459,9 +513,8 @@ async def get_interface():
     return INTERFACE
 
 
-async def run(cmd, options, origin, top_origin):
+async def run(interface, cmd, options, origin, top_origin):
     logging.debug("Executing command")
-    interface = await get_interface()
 
     if cmd == "create":
         if "publicKey" in options:
@@ -519,22 +572,48 @@ quit = asyncio.Event()
 
 async def main():
     logging.info("starting credential_manager_shim")
+    cancel_task = asyncio.create_task(quit.wait())
 
-    while not quit.is_set():
-        logging.debug("starting event loop message")
-        receivedMessage = getMessage()
-        request_id = receivedMessage["requestId"]
-        try:
-            cmd = receivedMessage["cmd"]
-            options = receivedMessage.get("options", None)
-            origin = receivedMessage["origin"]
-            top_origin = receivedMessage["topOrigin"]
-            auth_data = await run(cmd, options, origin, top_origin)
+    receivedMessage = getMessage()
+    request_id = receivedMessage["requestId"]
+    try:
+        interface = await get_interface()
+        cmd = receivedMessage["cmd"]
+        options = receivedMessage.get("options", None)
+        origin = receivedMessage["origin"]
+        top_origin = receivedMessage["topOrigin"]
+        credentialsd_task = asyncio.create_task(
+            run(interface, cmd, options, origin, top_origin)
+        )
+        timeout = options.get("timeout", 5 * 60 * 1000) // 1000
+        done, pending = await asyncio.wait(
+            {credentialsd_task, cancel_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if credentialsd_task in done:
+            logging.info("got a response from credentialsd")
+            auth_data = credentialsd_task.result()
             sendMessage(encodeMessage({"requestId": request_id, "data": auth_data}))
-        except Exception as e:
-            logging.error("Failed to send message", exc_info=e)
-            sendMessage(encodeMessage({"requestId": request_id, "error": str(e)}))
-            logging.debug("Sent error message")
+        elif cancel_task in done:
+            logging.info("cancelled")
+            raise asyncio.CancelledError("Cancelled")
+        else:
+            logging.info("timed out")
+            raise TimeoutError("Timed out")
+        interface.bus.disconnect()
+
+    except Exception as e:
+        logging.error("Failed to send message", exc_info=e)
+        sendMessage(
+            encodeMessage(
+                {
+                    "requestId": request_id,
+                    "error": {"name": type(e).__name__, "message": str(e)},
+                }
+            )
+        )
+        logging.debug("Sent error message")
     logging.info("quitting credential_manager_shim")
 
 
