@@ -3,6 +3,17 @@ use std::fmt::Debug;
 
 use async_stream::stream;
 use futures_lite::Stream;
+use libwebauthn::{
+    proto::CtapError,
+    transport::{
+        Channel, ChannelSettings, Device,
+        cable::{
+            channel::{CableUpdate, CableUxUpdate},
+            qr_code_device::{CableQrCodeDevice, CableTransports, QrCodeOperationHint},
+        },
+    },
+    webauthn::{WebAuthn, error::WebAuthnError},
+};
 use tokio::sync::{
     broadcast,
     mpsc::{self, Sender},
@@ -10,24 +21,12 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use libwebauthn::transport::cable::qr_code_device::{
-    CableQrCodeDevice, CableTransports, QrCodeOperationHint,
-};
-use libwebauthn::transport::{Channel, ChannelSettings, Device};
-use libwebauthn::webauthn::{WebAuthn, error::WebAuthnError};
-use libwebauthn::{
-    proto::CtapError,
-    transport::cable::channel::{CableUpdate, CableUxUpdate},
-};
-
 use credentialsd_common::{
     memfd::write_secret,
     model::{BackgroundEvent, Error},
 };
 
-use crate::model::CredentialRequest;
-
-use super::AuthenticatorResponse;
+use crate::model::{CredentialRequest, CredentialResponse};
 
 pub(crate) trait HybridHandler {
     fn start(
@@ -101,18 +100,31 @@ impl HybridHandler for InternalHybridHandler {
 
                 let wait_for_response_fut = async {
                     loop {
-                        let response: Result<AuthenticatorResponse, _> = match &request {
+                        let response: Result<CredentialResponse, _> = match &request {
                             CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
-                                channel
-                                    .webauthn_make_credential(make_request)
-                                    .await
-                                    .map(|response| response.into())
+                                channel.webauthn_make_credential(make_request).await.map(
+                                    |make_credential_response| {
+                                        CredentialResponse::from_make_credential(
+                                            &make_credential_response,
+                                            &["hybrid"],
+                                            "cross-platform",
+                                        )
+                                    },
+                                )
                             }
                             CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
-                                channel
-                                    .webauthn_get_assertion(get_request)
-                                    .await
-                                    .map(|response| response.into())
+                                channel.webauthn_get_assertion(get_request).await.map(
+                                    |get_assertion_response| {
+                                        CredentialResponse::from_get_assertion(
+                                            // When doing hybrid, the authenticator is capable of displaying it's own UI.
+                                            // So we assume here, it only ever returns one assertion.
+                                            // In case this doesn't hold true, we have to implement credential selection here,
+                                            // like USB, for example.
+                                            &get_assertion_response.assertions[0],
+                                            "cross-platform",
+                                        )
+                                    },
+                                )
                             }
                         };
                         match response {
@@ -159,7 +171,7 @@ impl HybridHandler for InternalHybridHandler {
                 };
 
                 let terminal_state = match response {
-                    Ok(auth_response) => HybridStateInternal::Completed(Box::new(auth_response)),
+                    Ok(auth_response) => HybridStateInternal::Completed(auth_response),
                     Err(err) => HybridStateInternal::Failed(err),
                 };
                 if let Err(err) = tx.send(terminal_state).await {
@@ -189,7 +201,7 @@ pub(super) enum HybridStateInternal {
     Connected,
 
     /// Authenticator data
-    Completed(Box<AuthenticatorResponse>),
+    Completed(CredentialResponse),
 
     Failed(Error),
     // TODO(cancellation)

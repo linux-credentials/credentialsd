@@ -328,26 +328,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
                 match &state {
-                    HybridStateInternal::Completed(hybrid_response) => {
-                        let response = match &**hybrid_response {
-                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
-                                CredentialResponse::from_make_credential(
-                                    make_credential_response,
-                                    &["hybrid"],
-                                    "cross-platform",
-                                )
-                            }
-                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
-                                CredentialResponse::from_get_assertion(
-                                    // When doing hybrid, the authenticator is capable of displaying it's own UI.
-                                    // So we assume here, it only ever returns one assertion.
-                                    // In case this doesn't hold true, we have to implement credential selection here,
-                                    // as is done for USB.
-                                    &get_assertion_response.assertions[0],
-                                    "cross-platform",
-                                )
-                            }
-                        };
+                    HybridStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
                     HybridStateInternal::Failed(err) => {
