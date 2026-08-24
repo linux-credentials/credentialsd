@@ -690,23 +690,27 @@ mod tests {
         );
     }
 
-    // Mock handlers that track cancellation and emit configurable states
+    // Generic push-based handler that tracks cancellation.
+    // Before moving a handler into the service, call `get_handler_ref()` to obtain
+    // a `HandlerRef<T>` — a handle that exposes `shift_state()` and `was_cancelled()`
+    // for use in the test body.
     use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-    #[derive(Debug, Clone)]
-    struct CancellationTrackingUsbHandler {
+    /// Clone-able test handle for a `CancellationTrackingHandler<T>`.
+    /// Obtained via `handler.get_handler_ref()` before the handler is moved into the
+    /// service.
+    #[derive(Clone)]
+    struct HandlerRef<T> {
+        tx: UnboundedSender<T>,
         cancelled: Arc<AtomicBool>,
-        emit_states: Arc<Vec<UsbStateInternal>>,
-        delay_ms: u64,
     }
 
-    impl CancellationTrackingUsbHandler {
-        fn new(emit_states: Vec<UsbStateInternal>, delay_ms: u64) -> Self {
-            Self {
-                cancelled: Arc::new(AtomicBool::new(false)),
-                emit_states: Arc::new(emit_states),
-                delay_ms,
-            }
+    impl<T> HandlerRef<T> {
+        /// Push the next state to be emitted by the handler's stream.
+        /// Panics if the stream receiver has been dropped.
+        fn shift_state(&self, state: T) {
+            self.tx.send(state).unwrap();
         }
 
         fn was_cancelled(&self) -> bool {
@@ -714,73 +718,109 @@ mod tests {
         }
     }
 
-    impl UsbHandler for CancellationTrackingUsbHandler {
+    struct CancellationTrackingHandler<T> {
+        tx: UnboundedSender<T>,
+        rx: std::sync::Mutex<Option<UnboundedReceiver<T>>>,
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl<T> std::fmt::Debug for CancellationTrackingHandler<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("CancellationTrackingHandler")
+                .field("cancelled", &self.cancelled.load(Ordering::SeqCst))
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl<T> CancellationTrackingHandler<T> {
+        fn new() -> Self {
+            let (tx, rx) = unbounded_channel();
+            Self {
+                tx,
+                rx: std::sync::Mutex::new(Some(rx)),
+                cancelled: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        /// Return a `HandlerRef` that can be kept by the test after this handler is
+        /// moved into the service.
+        fn get_handler_ref(&self) -> HandlerRef<T> {
+            HandlerRef {
+                tx: self.tx.clone(),
+                cancelled: self.cancelled.clone(),
+            }
+        }
+    }
+
+    /// Shared stream body for all three transport trait impls.
+    ///
+    /// Uses a `biased` `select!` with the cancellation branch first so that
+    /// cancellation always wins over a simultaneously-ready channel item. This
+    /// guarantees that no queued state is emitted once the token is cancelled,
+    /// making the "no emission after cancel" assertions in tests deterministic.
+    fn run_tracking_stream<T, E>(
+        rx: Option<UnboundedReceiver<T>>,
+        cancellation: CancellationToken,
+        cancelled: Arc<AtomicBool>,
+        wrap: impl Fn(T) -> E + Send + 'static,
+    ) -> impl Stream<Item = E> + Send + Unpin + 'static
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+    {
+        Box::pin(async_stream::stream! {
+            let Some(mut rx) = rx else { return; };
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    maybe = rx.recv() => match maybe {
+                        Some(state) => yield wrap(state),
+                        None => break, // all senders dropped
+                    }
+                }
+            }
+        })
+    }
+
+    impl UsbHandler for CancellationTrackingHandler<UsbStateInternal> {
         fn start(
             &self,
             _request: &CredentialRequest,
             cancellation: CancellationToken,
         ) -> impl Stream<Item = UsbEvent> + Send + Sized + Unpin + 'static {
-            let cancelled = self.cancelled.clone();
-            let states = self.emit_states.clone();
-            let delay_ms = self.delay_ms;
-            Box::pin(async_stream::stream! {
-                for state in states.iter() {
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => {
-                            yield UsbEvent { state: state.clone() };
-                        }
-                        _ = cancellation.cancelled() => {
-                            cancelled.store(true, Ordering::SeqCst);
-                            break;
-                        }
-                    }
-                }
+            let rx = self.rx.lock().unwrap().take();
+            run_tracking_stream(rx, cancellation, self.cancelled.clone(), |state| UsbEvent {
+                state,
             })
         }
     }
 
-    #[derive(Debug, Clone)]
-    struct CancellationTrackingHybridHandler {
-        cancelled: Arc<AtomicBool>,
-        emit_states: Arc<Vec<HybridStateInternal>>,
-        delay_ms: u64,
-    }
-
-    impl CancellationTrackingHybridHandler {
-        fn new(emit_states: Vec<HybridStateInternal>, delay_ms: u64) -> Self {
-            Self {
-                cancelled: Arc::new(AtomicBool::new(false)),
-                emit_states: Arc::new(emit_states),
-                delay_ms,
-            }
-        }
-
-        fn was_cancelled(&self) -> bool {
-            self.cancelled.load(Ordering::SeqCst)
-        }
-    }
-
-    impl HybridHandler for CancellationTrackingHybridHandler {
+    impl HybridHandler for CancellationTrackingHandler<HybridStateInternal> {
         fn start(
             &self,
             _request: &CredentialRequest,
             cancellation: CancellationToken,
         ) -> impl Stream<Item = HybridEvent> + Unpin + Send + Sized + 'static {
-            let cancelled = self.cancelled.clone();
-            let states = self.emit_states.clone();
-            let delay_ms = self.delay_ms;
-            Box::pin(async_stream::stream! {
-                for state in states.iter() {
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => {
-                            yield HybridEvent { state: state.clone() };
-                        }
-                        _ = cancellation.cancelled() => {
-                            cancelled.store(true, Ordering::SeqCst);
-                            break;
-                        }
-                    }
-                }
+            let rx = self.rx.lock().unwrap().take();
+            run_tracking_stream(rx, cancellation, self.cancelled.clone(), |state| {
+                HybridEvent { state }
+            })
+        }
+    }
+
+    impl NfcHandler for CancellationTrackingHandler<NfcStateInternal> {
+        fn start(
+            &self,
+            _request: &CredentialRequest,
+            cancellation: CancellationToken,
+        ) -> impl Stream<Item = NfcEvent> + Send + Sized + Unpin + 'static {
+            let rx = self.rx.lock().unwrap().take();
+            run_tracking_stream(rx, cancellation, self.cancelled.clone(), |state| NfcEvent {
+                state,
             })
         }
     }
@@ -805,43 +845,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_handlers_all_cancelled() {
-        // All three handlers emit states slowly
-        let usb_handler =
-            CancellationTrackingUsbHandler::new(vec![UsbStateInternal::Waiting; 5], 100);
-        let hybrid_handler = CancellationTrackingHybridHandler::new(
-            vec![
-                HybridStateInternal::Init("qr".to_string()),
-                HybridStateInternal::Connecting,
-                HybridStateInternal::Connected,
-            ],
-            100,
-        );
-        let nfc_handler = MockNfcHandler;
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
 
-        let service = CredentialService::new(hybrid_handler, nfc_handler, usb_handler);
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
         let (tx, _rx) = oneshot::channel();
 
         let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start all handlers
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        // Let them emit a couple states
-        let _ = usb_stream.next().await;
-        let _ = hybrid_stream.next().await;
+        // Push and consume one state from each to confirm streams are live
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
 
-        // Cancel the request
+        // Queue additional states that should never be emitted after cancellation.
+        // These sit in the channel when cancel_request() fires.
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        hybrid_ref.shift_state(HybridStateInternal::Connecting);
+
+        // Cancel the request — token is now cancelled synchronously
         service.cancel_request(request_id).await;
-
-        // Small delay for propagation
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Token should be cancelled
         assert!(cancellation_token.is_cancelled());
 
-        // Streams should stop immediately - no more states should be emitted
+        // biased select! polls cancellation first each iteration, discarding
+        // the queued states before they can be emitted.
         let usb_remaining: Vec<_> = usb_stream.collect().await;
         let hybrid_remaining: Vec<_> = hybrid_stream.collect().await;
 
@@ -942,37 +980,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_explicit_cancel_stops_all_transports() {
-        // USB would keep polling
-        let usb_handler = CancellationTrackingUsbHandler::new(
-            vec![
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Waiting,
-            ],
-            100,
-        );
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
 
-        // Hybrid would keep connecting
-        let hybrid_handler = CancellationTrackingHybridHandler::new(
-            vec![
-                HybridStateInternal::Init("qr".to_string()),
-                HybridStateInternal::Connecting,
-                HybridStateInternal::Connected,
-            ],
-            100,
-        );
-
-        // Clone handlers to verify cancellation later
-        let usb_handler_ref = usb_handler.clone();
-        let hybrid_handler_ref = hybrid_handler.clone();
-        assert!(
-            !usb_handler_ref.was_cancelled(),
-            "USB handler should not have detected cancellation"
-        );
-        assert!(
-            !hybrid_handler_ref.was_cancelled(),
-            "Hybrid handler should not have detected cancellation"
-        );
+        assert!(!usb_ref.was_cancelled());
+        assert!(!hybrid_ref.was_cancelled());
 
         let service = CredentialService::new(hybrid_handler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
@@ -980,24 +994,32 @@ mod tests {
 
         let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start both streams
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        // Let them emit a state each
-        let _ = usb_stream.next().await;
-        let _ = hybrid_stream.next().await;
+        // Push and consume one state each to confirm streams are live
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
 
-        // Explicitly cancel the request
+        // Queue additional states that should never be emitted after cancellation.
+        // These sit in the channel when cancel_request() fires.
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        hybrid_ref.shift_state(HybridStateInternal::Connecting);
+
+        // Explicitly cancel — token becomes cancelled synchronously
         service.cancel_request(request_id).await;
-
-        // Cancellation token should be triggered
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered after cancel_request"
         );
 
-        // Both streams should stop emitting states
+        // biased select! polls cancellation first, discarding the queued states
         let usb_remaining: Vec<_> = usb_stream.collect().await;
         let hybrid_remaining: Vec<_> = hybrid_stream.collect().await;
 
@@ -1010,13 +1032,13 @@ mod tests {
             "Hybrid should not emit any more states after cancellation"
         );
 
-        // Verify both handlers detected cancellation
+        // Flags are set by run_tracking_stream when it observes the cancelled token
         assert!(
-            usb_handler_ref.was_cancelled(),
+            usb_ref.was_cancelled(),
             "USB handler should have detected cancellation"
         );
         assert!(
-            hybrid_handler_ref.was_cancelled(),
+            hybrid_ref.was_cancelled(),
             "Hybrid handler should have detected cancellation"
         );
     }
@@ -1025,14 +1047,8 @@ mod tests {
     async fn test_failed_request_triggers_cancellation() {
         use credentialsd_common::model::Error;
 
-        // Handler that emits a Failed state
-        let usb_handler = CancellationTrackingUsbHandler::new(
-            vec![
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Failed(Error::Internal("test failure".to_string())),
-            ],
-            10,
-        );
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
 
         let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
@@ -1040,20 +1056,18 @@ mod tests {
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start the USB stream
         let mut usb_stream = service.get_usb_credential().await;
-
-        // Token should not be cancelled initially
         assert!(!cancellation_token.is_cancelled());
 
-        // Consume states until we hit the Failed state
-        while let Some(state) = usb_stream.next().await {
-            if matches!(state, UsbState::Failed(_)) {
-                break;
-            }
-        }
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
 
-        // The Failed state should have triggered cancellation
+        usb_ref.shift_state(UsbStateInternal::Failed(Error::Internal(
+            "test failure".to_string(),
+        )));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Failed(_))));
+
+        // UsbStateStream calls complete_request on Failed, which cancels the token
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request fails"
@@ -1064,27 +1078,10 @@ mod tests {
     async fn test_failed_request_cancels_other_transports() {
         use credentialsd_common::model::Error;
 
-        // USB will fail quickly
-        let usb_handler = CancellationTrackingUsbHandler::new(
-            vec![
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Failed(Error::Internal("test".to_string())),
-            ],
-            10,
-        );
-
-        // Hybrid would keep going if not cancelled
-        let hybrid_handler = CancellationTrackingHybridHandler::new(
-            vec![
-                HybridStateInternal::Init("qr".to_string()),
-                HybridStateInternal::Connecting,
-                HybridStateInternal::Connected,
-            ],
-            100,
-        );
-
-        // Clone handler to verify cancellation later
-        let hybrid_handler_ref = hybrid_handler.clone();
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
 
         let service = CredentialService::new(hybrid_handler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
@@ -1092,36 +1089,41 @@ mod tests {
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start both streams
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        // Collect one state from hybrid
-        let _ = hybrid_stream.next().await;
+        // Confirm hybrid stream is live
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
 
-        // Consume USB until it fails
-        while let Some(state) = usb_stream.next().await {
-            if matches!(state, UsbState::Failed(_)) {
-                break;
-            }
-        }
+        // Queue an extra hybrid state that should be discarded once USB fails.
+        // It sits in the channel when complete_request() cancels the token.
+        hybrid_ref.shift_state(HybridStateInternal::Connecting);
 
-        // Cancellation token should be triggered by USB failure
+        // USB fails — UsbStateStream calls complete_request → token cancelled
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        usb_ref.shift_state(UsbStateInternal::Failed(Error::Internal(
+            "test".to_string(),
+        )));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Failed(_))));
+
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when USB fails"
         );
 
-        // Hybrid should stop emitting states (cancelled by USB failure)
+        // biased select! polls cancellation first, discarding the queued Connecting state
         let hybrid_remaining: Vec<_> = hybrid_stream.collect().await;
         assert!(
             hybrid_remaining.is_empty(),
             "Hybrid should not emit any more states after USB fails"
         );
-
-        // Verify the handler actually detected cancellation
         assert!(
-            hybrid_handler_ref.was_cancelled(),
+            hybrid_ref.was_cancelled(),
             "Hybrid handler should have detected cancellation when USB failed"
         );
     }
@@ -1130,14 +1132,8 @@ mod tests {
     async fn test_completed_request_triggers_cancellation() {
         let credential_response = create_test_credential_response();
 
-        // Handler that emits a Completed state
-        let usb_handler = CancellationTrackingUsbHandler::new(
-            vec![
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Completed(credential_response),
-            ],
-            10,
-        );
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
 
         let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
@@ -1145,20 +1141,15 @@ mod tests {
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start the USB stream
         let mut usb_stream = service.get_usb_credential().await;
-
-        // Token should not be cancelled initially
         assert!(!cancellation_token.is_cancelled());
 
-        // Consume states until we hit the Completed state
-        while let Some(state) = usb_stream.next().await {
-            if matches!(state, UsbState::Completed) {
-                break;
-            }
-        }
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        usb_ref.shift_state(UsbStateInternal::Completed(credential_response));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Completed)));
 
-        // The Completed state should have triggered cancellation
+        // UsbStateStream calls complete_request on Completed, which cancels the token
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request completes successfully"
@@ -1169,27 +1160,10 @@ mod tests {
     async fn test_completed_request_cancels_other_transports() {
         let credential_response = create_test_credential_response();
 
-        // USB will complete quickly
-        let usb_handler = CancellationTrackingUsbHandler::new(
-            vec![
-                UsbStateInternal::Waiting,
-                UsbStateInternal::Completed(credential_response),
-            ],
-            10,
-        );
-
-        // Hybrid would keep going if not cancelled
-        let hybrid_handler = CancellationTrackingHybridHandler::new(
-            vec![
-                HybridStateInternal::Init("qr".to_string()),
-                HybridStateInternal::Connecting,
-                HybridStateInternal::Connected,
-            ],
-            100,
-        );
-
-        // Clone handler to verify cancellation later
-        let hybrid_handler_ref = hybrid_handler.clone();
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
 
         let service = CredentialService::new(hybrid_handler, MockNfcHandler, usb_handler);
         let request = create_test_request().await;
@@ -1197,36 +1171,39 @@ mod tests {
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
-        // Start both streams
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        // Collect one state from hybrid
-        let _ = hybrid_stream.next().await;
+        // Confirm hybrid stream is live
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
 
-        // Consume USB until it completes
-        while let Some(state) = usb_stream.next().await {
-            if matches!(state, UsbState::Completed) {
-                break;
-            }
-        }
+        // Queue an extra hybrid state that should be discarded once USB completes.
+        // It sits in the channel when complete_request() cancels the token.
+        hybrid_ref.shift_state(HybridStateInternal::Connecting);
 
-        // Cancellation token should be triggered by USB completion
+        // USB completes — UsbStateStream calls complete_request → token cancelled
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        usb_ref.shift_state(UsbStateInternal::Completed(credential_response));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Completed)));
+
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when USB completes"
         );
 
-        // Hybrid should stop emitting states (cancelled by USB completion)
+        // biased select! polls cancellation first, discarding the queued Connecting state
         let hybrid_remaining: Vec<_> = hybrid_stream.collect().await;
         assert!(
             hybrid_remaining.is_empty(),
             "Hybrid should not emit any more states after USB completes"
         );
-
-        // Verify the handler actually detected cancellation
         assert!(
-            hybrid_handler_ref.was_cancelled(),
+            hybrid_ref.was_cancelled(),
             "Hybrid handler should have detected cancellation when USB completed"
         );
     }
