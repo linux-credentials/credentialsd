@@ -40,35 +40,35 @@ impl InProcessNfcHandler {
         prev_nfc_state: &NfcStateInternal,
         cancellation: &CancellationToken,
     ) -> Result<NfcStateInternal, Error> {
-        tokio::select! {
-            result = libwebauthn::transport::nfc::get_nfc_device() => {
-                match result {
-                    Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
-                    Ok(None) => {
-                        let state = NfcStateInternal::Waiting;
-                        Ok(state)
-                    }
-                    Err(err) => {
-                        *failures += 1;
-                        if *failures == 5 {
-                            Err(Error::Internal(format!(
-                                "Failed to list NFC authenticators: {:?}. Cancelling NFC state updates.",
-                                err
-                            )))
-                        } else {
-                            tracing::warn!(
-                                "Failed to list NFC authenticators: {:?}. Throttling NFC state updates",
-                                err
-                            );
-                            super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
-                            Ok(prev_nfc_state.clone())
-                        }
-                    }
-                }
+        let list_device_fut = libwebauthn::transport::nfc::get_nfc_device();
+        let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
+            // TODO: We should introduce a cancelled-error variant and return this here,
+            //       so we can differentiate between internal errors, cancellation by user
+            //       and cancellation because other transfers finished
+            tracing::debug!("NFC idle polling cancelled");
+            return Err(Error::Internal("Request cancelled".to_string()));
+        };
+        match result {
+            Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
+            Ok(None) => {
+                let state = NfcStateInternal::Waiting;
+                Ok(state)
             }
-            _ = cancellation.cancelled() => {
-                tracing::debug!("NFC idle polling cancelled");
-                Err(Error::Internal("Request cancelled".to_string()))
+            Err(err) => {
+                *failures += 1;
+                if *failures == 5 {
+                    Err(Error::Internal(format!(
+                        "Failed to list NFC authenticators: {:?}. Cancelling NFC state updates.",
+                        err
+                    )))
+                } else {
+                    tracing::warn!(
+                        "Failed to list NFC authenticators: {:?}. Throttling NFC state updates",
+                        err
+                    );
+                    super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
+                    Ok(prev_nfc_state.clone())
+                }
             }
         }
     }
@@ -182,52 +182,56 @@ impl InProcessNfcHandler {
             tracing::debug!("current nfc state: {:?}", state);
             let prev_nfc_state = state;
 
-            tokio::select! {
-                next_nfc_state = async {
-                    match prev_nfc_state {
-                        NfcStateInternal::Idle | NfcStateInternal::Waiting => {
-                            Self::process_idle_waiting(&mut failures, &prev_nfc_state, &cancellation).await
-                        }
-                        NfcStateInternal::Connected(device) => {
-                            let signal_tx2 = signal_tx.clone();
-                            let cred_request = cred_request.clone();
-                            tokio::spawn(async move {
-                                handle_events(&cred_request, device, &signal_tx2).await;
-                            });
-                            Self::process_user_interaction(&mut signal_rx, &cred_tx).await
-                        }
-                        NfcStateInternal::NeedsPin { .. }
-                        | NfcStateInternal::PinNotSet { .. }
-                        | NfcStateInternal::NeedsUserVerification { .. } => {
-                            Self::process_user_interaction(&mut signal_rx, &cred_tx).await
-                        }
-                        NfcStateInternal::SelectCredential {
-                            response,
-                            cred_tx: _,
-                        } => Self::process_select_credential(response, &mut cred_rx).await,
-                        // Terminal states - preserve state unchanged, will break loop after sending
-                        NfcStateInternal::Completed(_) | NfcStateInternal::Failed(_) => {
-                            Ok(prev_nfc_state.clone())
-                        }
+            let select_next_nfc_state_fut = async {
+                match prev_nfc_state {
+                    NfcStateInternal::Idle | NfcStateInternal::Waiting => {
+                        Self::process_idle_waiting(&mut failures, &prev_nfc_state, &cancellation)
+                            .await
                     }
-                } => {
-                    state = next_nfc_state.unwrap_or_else(NfcStateInternal::Failed);
-
-                    tx.send(state.clone()).await.map_err(|_| {
-                        Error::Internal("NFC state channel receiver closed prematurely".to_string())
-                    })?;
-
-                    // Check for terminal states AFTER sending
-                    match state {
-                        NfcStateInternal::Completed(_) => break Ok(()),
-                        NfcStateInternal::Failed(err) => break Err(err),
-                        _ => {}
+                    NfcStateInternal::Connected(device) => {
+                        let signal_tx2 = signal_tx.clone();
+                        let cred_request = cred_request.clone();
+                        let cancellation = cancellation.clone();
+                        tokio::spawn(async move {
+                            handle_events(&cred_request, device, &signal_tx2, cancellation).await;
+                        });
+                        Self::process_user_interaction(&mut signal_rx, &cred_tx).await
+                    }
+                    NfcStateInternal::NeedsPin { .. }
+                    | NfcStateInternal::PinNotSet { .. }
+                    | NfcStateInternal::NeedsUserVerification { .. } => {
+                        Self::process_user_interaction(&mut signal_rx, &cred_tx).await
+                    }
+                    NfcStateInternal::SelectCredential {
+                        response,
+                        cred_tx: _,
+                    } => Self::process_select_credential(response, &mut cred_rx).await,
+                    // Terminal states - preserve state unchanged, will break loop after sending
+                    NfcStateInternal::Completed(_) | NfcStateInternal::Failed(_) => {
+                        Ok(prev_nfc_state.clone())
                     }
                 }
-                _ = cancellation.cancelled() => {
-                    tracing::debug!("NFC handler cancelled, stopping processing");
-                    break Err(Error::Internal("Request cancelled".to_string()));
-                }
+            };
+
+            let Some(next_nfc_state) = cancellation
+                .run_until_cancelled(select_next_nfc_state_fut)
+                .await
+            else {
+                tracing::debug!("NFC handler cancelled, stopping processing");
+                break Err(Error::Internal("Request cancelled".to_string()));
+            };
+
+            state = next_nfc_state.unwrap_or_else(NfcStateInternal::Failed);
+
+            tx.send(state.clone()).await.map_err(|_| {
+                Error::Internal("NFC state channel receiver closed prematurely".to_string())
+            })?;
+
+            // Check for terminal states AFTER sending
+            match state {
+                NfcStateInternal::Completed(_) => break Ok(()),
+                NfcStateInternal::Failed(err) => break Err(err),
+                _ => {}
             }
         }
     }
@@ -237,6 +241,7 @@ async fn handle_events(
     cred_request: &CredentialRequest,
     mut device: NfcDevice,
     signal_tx: &Sender<Result<NfcUvMessage, Error>>,
+    cancellation: CancellationToken,
 ) {
     let device_debug = device.to_string();
     match device
@@ -262,49 +267,71 @@ async fn handle_events(
                 "Polling for credential from NFC authenticator {}",
                 &device_debug
             );
-            let response: Result<NfcUvMessage, Error> = loop {
-                let response = match cred_request {
-                    CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
-                        channel
-                            .webauthn_make_credential(make_cred_request)
-                            .await
-                            .map(|response| {
-                                NfcUvMessage::ReceivedCredentials(Box::new(response.into()))
-                            })
-                    }
-                    CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
-                        .webauthn_get_assertion(get_cred_request)
-                        .await
-                        .map(|response| {
-                            NfcUvMessage::ReceivedCredentials(Box::new(response.into()))
-                        }),
-                };
-                match response {
-                    Ok(response) => {
-                        tracing::debug!("Received credential from NFC authenticator");
-                        break Ok(response);
-                    }
-                    Err(WebAuthnError::Ctap(ctap_error))
-                        if ctap_error.is_retryable_user_error() =>
-                    {
-                        warn!("Retrying WebAuthn credential operation");
-                        continue;
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            "Failed to make/get credential with NFC authenticator: {:?}",
-                            err
-                        );
-                        break Err(err);
+
+            // Un-awaited async block
+            let wait_for_cred_response_fut = async {
+                loop {
+                    let response = match cred_request {
+                        CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
+                            channel
+                                .webauthn_make_credential(make_cred_request)
+                                .await
+                                .map(|response| {
+                                    NfcUvMessage::ReceivedCredentials(Box::new(response.into()))
+                                })
+                        }
+                        CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => {
+                            channel
+                                .webauthn_get_assertion(get_cred_request)
+                                .await
+                                .map(|response| {
+                                    NfcUvMessage::ReceivedCredentials(Box::new(response.into()))
+                                })
+                        }
+                    };
+                    match response {
+                        Ok(response) => {
+                            tracing::debug!("Received credential from NFC authenticator");
+                            break Ok(response);
+                        }
+                        Err(WebAuthnError::Ctap(ctap_error))
+                            if ctap_error.is_retryable_user_error() =>
+                        {
+                            warn!("Retrying WebAuthn credential operation");
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                "Failed to make/get credential with NFC authenticator: {:?}",
+                                err
+                            );
+                            break Err(err);
+                        }
                     }
                 }
-            }
-            .map_err(|err| match err {
-                WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
-                WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
-                _ => Error::AuthenticatorError,
-            });
+                .map_err(|err| match err {
+                    WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
+                    WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                    WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
+                    _ => Error::AuthenticatorError,
+                })
+            };
+
+            let response = match cancellation
+                .run_until_cancelled(wait_for_cred_response_fut)
+                .await
+            {
+                Some(resp) => resp,
+                None => {
+                    tracing::debug!("NFC ceremony cancelled, stopping authenticator operation");
+                    // Unlike USB, NfcChannelHandle::cancel_ongoing_operation() is a no-op
+                    // because libwebauthn drops _handle_rx in NfcChannel::new(). Cancellation
+                    // takes effect at the next inter-APDU .await point when the future is
+                    // dropped.
+                    Err(Error::Internal("Request cancelled".to_string()))
+                }
+            };
+
             if let Err(err) = signal_tx.send(response).await {
                 tracing::error!("Failed to notify that ceremony completed: {:?}", err);
             }

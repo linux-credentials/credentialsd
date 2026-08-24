@@ -44,38 +44,39 @@ impl InProcessUsbHandler {
         prev_usb_state: &UsbStateInternal,
         cancellation: &CancellationToken,
     ) -> Result<UsbStateInternal, Error> {
-        tokio::select! {
-            result = libwebauthn::transport::hid::list_devices() => {
-                match result {
-                    Ok(hid_devices) => {
-                        if hid_devices.is_empty() {
-                            super::cancellable_sleep(Duration::from_millis(50), cancellation).await?;
-                            Ok(UsbStateInternal::Waiting)
-                        } else {
-                            Ok(UsbStateInternal::SelectingDevice(hid_devices))
-                        }
-                    }
-                    Err(err) => {
-                        *failures += 1;
-                        if *failures == 5 {
-                            Err(Error::Internal(format!(
-                                "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
-                                err
-                            )))
-                        } else {
-                            tracing::warn!(
-                                "Failed to list USB authenticators: {:?}. Throttling USB state updates",
-                                err
-                            );
-                            super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
-                            Ok(prev_usb_state.clone())
-                        }
-                    }
+        let list_device_fut = libwebauthn::transport::hid::list_devices();
+        let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
+            tracing::debug!("USB idle polling cancelled");
+            // TODO: We should introduce a cancelled-error variant and return this here,
+            //       so we can differentiate between internal errors, cancellation by user
+            //       and cancellation because other transfers finished
+            return Err(Error::Internal("Request cancelled".to_string()));
+        };
+
+        match result {
+            Ok(hid_devices) => {
+                if hid_devices.is_empty() {
+                    super::cancellable_sleep(Duration::from_millis(50), cancellation).await?;
+                    Ok(UsbStateInternal::Waiting)
+                } else {
+                    Ok(UsbStateInternal::SelectingDevice(hid_devices))
                 }
             }
-            _ = cancellation.cancelled() => {
-                tracing::debug!("USB idle polling cancelled");
-                Err(Error::Internal("Request cancelled".to_string()))
+            Err(err) => {
+                *failures += 1;
+                if *failures == 5 {
+                    Err(Error::Internal(format!(
+                        "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
+                        err
+                    )))
+                } else {
+                    tracing::warn!(
+                        "Failed to list USB authenticators: {:?}. Throttling USB state updates",
+                        err
+                    );
+                    super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
+                    Ok(prev_usb_state.clone())
+                }
             }
         }
     }
@@ -136,40 +137,39 @@ impl InProcessUsbHandler {
         tracing::info!("Waiting for user interaction");
         drop(blinking_tx);
         let mut state = UsbStateInternal::Idle;
+
         loop {
-            tokio::select! {
-                maybe_msg = blinking_rx.recv() => {
-                    let Some(msg) = maybe_msg else {
-                        // All blink tasks finished without a selection.
-                        break;
-                    };
-                    match msg {
-                        Some(idx) => {
-                            let (device, _handle) = channel_map.remove(&idx).unwrap();
-                            tracing::info!("User selected device {device:?}.");
-                            for (_key, (device, handle)) in channel_map.into_iter() {
-                                tracing::info!("Cancelling device {device:?}.");
-                                handle.cancel_ongoing_operation().await;
-                            }
-                            state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
-                            break;
-                        }
-                        None => {
-                            continue;
-                        }
-                    }
+            let maybe_msg_fut = blinking_rx.recv();
+            let Some(maybe_msg) = cancellation.run_until_cancelled(maybe_msg_fut).await else {
+                // The request was cancelled (e.g. another transport completed, or
+                // the user cancelled). Stop all blinking devices. This interrupts
+                // the blocking HID read within the transport (≤100ms) and sends a
+                // CTAP CANCEL frame to each device.
+                tracing::debug!("USB device selection cancelled");
+                for (_key, (device, handle)) in channel_map.into_iter() {
+                    tracing::info!("Cancelling blinking device {device:?}.");
+                    handle.cancel_ongoing_operation().await;
                 }
-                _ = cancellation.cancelled() => {
-                    // The request was cancelled (e.g. another transport completed, or
-                    // the user cancelled). Stop all blinking devices. This interrupts
-                    // the blocking HID read within the transport (≤100ms) and sends a
-                    // CTAP CANCEL frame to each device.
-                    tracing::debug!("USB device selection cancelled");
+                return Err(Error::Internal("Request cancelled".to_string()));
+            };
+
+            let Some(msg) = maybe_msg else {
+                // All blink tasks finished without a selection.
+                break;
+            };
+            match msg {
+                Some(idx) => {
+                    let (device, _handle) = channel_map.remove(&idx).unwrap();
+                    tracing::info!("User selected device {device:?}.");
                     for (_key, (device, handle)) in channel_map.into_iter() {
-                        tracing::info!("Cancelling blinking device {device:?}.");
+                        tracing::info!("Cancelling device {device:?}.");
                         handle.cancel_ongoing_operation().await;
                     }
-                    return Err(Error::Internal("Request cancelled".to_string()));
+                    state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
+                    break;
+                }
+                None => {
+                    continue;
                 }
             }
         }
@@ -285,71 +285,74 @@ impl InProcessUsbHandler {
         loop {
             tracing::trace!("current usb state: {:?}", state);
             let prev_usb_state = state;
-
-            tokio::select! {
-                next_usb_state = async {
-                    match prev_usb_state {
-                        UsbStateInternal::Idle | UsbStateInternal::Waiting => {
-                            Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation).await
-                        }
-                        UsbStateInternal::SelectingDevice(ref hid_devices) => {
-                            Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await
-                        }
-                        UsbStateInternal::Connected(ref device) => {
-                            let device = std::sync::Arc::clone(device);
-                            let signal_tx2 = signal_tx.clone();
-                            let cred_request = cred_request.clone();
-                            let cancellation = cancellation.clone();
-                            tokio::spawn(async move {
-                                handle_events(&cred_request, device.clone(), &signal_tx2, cancellation).await;
-                            });
-                            Self::process_user_interaction(&mut signal_rx, &cred_tx).await
-                        }
-                        UsbStateInternal::NeedsPin { .. }
-                        | UsbStateInternal::PinNotSet { .. }
-                        | UsbStateInternal::NeedsUserVerification { .. }
-                        | UsbStateInternal::NeedsUserPresence => {
-                            Self::process_user_interaction(&mut signal_rx, &cred_tx).await
-                        }
-                        UsbStateInternal::SelectCredential {
-                            ref response,
-                            cred_tx: _,
-                        } => Self::process_select_credential(response, &mut cred_rx).await,
-                        // Terminal states - preserve state unchanged, will break loop after sending
-                        UsbStateInternal::Completed(_) | UsbStateInternal::Failed(_) => {
-                            Ok(prev_usb_state.clone())
-                        }
+            let select_next_usb_state_fut = async {
+                match prev_usb_state {
+                    UsbStateInternal::Idle | UsbStateInternal::Waiting => {
+                        Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation)
+                            .await
                     }
-                } => {
-                    state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
-                    // Usually, comparing the Discrimimant is enough, but PinNotSet/NeedsPin
-                    // can be repeated multiple times with different or the same error reasons
-                    // (PIN wrong, PIN too short, PIN too long, etc.)
-                    let state_changed = match (&state, &prev_usb_state) {
-                        (UsbStateInternal::PinNotSet { .. }, UsbStateInternal::PinNotSet { .. }) => true,
-                        (UsbStateInternal::NeedsPin { .. }, UsbStateInternal::NeedsPin { .. }) => true,
-                        (new_state, old_state) => {
-                            std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
-                        }
-                    };
-                    if state_changed {
-                        tracing::debug!("USB current state: {state:?}");
-                        tx.send(state.clone()).await.map_err(|_| {
-                            Error::Internal("USB state channel receiver closed prematurely".to_string())
-                        })?;
+                    UsbStateInternal::SelectingDevice(ref hid_devices) => {
+                        Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await
                     }
-
-                    // Check for terminal states AFTER sending
-                    match state {
-                        UsbStateInternal::Completed(_) => break Ok(()),
-                        UsbStateInternal::Failed(err) => break Err(err),
-                        _ => {}
+                    UsbStateInternal::Connected(ref device) => {
+                        let device = std::sync::Arc::clone(device);
+                        let signal_tx2 = signal_tx.clone();
+                        let cred_request = cred_request.clone();
+                        let cancellation = cancellation.clone();
+                        tokio::spawn(async move {
+                            handle_events(&cred_request, device.clone(), &signal_tx2, cancellation)
+                                .await;
+                        });
+                        Self::process_user_interaction(&mut signal_rx, &cred_tx).await
+                    }
+                    UsbStateInternal::NeedsPin { .. }
+                    | UsbStateInternal::PinNotSet { .. }
+                    | UsbStateInternal::NeedsUserVerification { .. }
+                    | UsbStateInternal::NeedsUserPresence => {
+                        Self::process_user_interaction(&mut signal_rx, &cred_tx).await
+                    }
+                    UsbStateInternal::SelectCredential {
+                        ref response,
+                        cred_tx: _,
+                    } => Self::process_select_credential(response, &mut cred_rx).await,
+                    // Terminal states - preserve state unchanged, will break loop after sending
+                    UsbStateInternal::Completed(_) | UsbStateInternal::Failed(_) => {
+                        Ok(prev_usb_state.clone())
                     }
                 }
-                _ = cancellation.cancelled() => {
-                    tracing::debug!("USB handler cancelled, stopping processing");
-                    break Err(Error::Internal("Request cancelled".to_string()));
+            };
+
+            let Some(next_usb_state) = cancellation
+                .run_until_cancelled(select_next_usb_state_fut)
+                .await
+            else {
+                tracing::debug!("USB handler cancelled, stopping processing");
+                break Err(Error::Internal("Request cancelled".to_string()));
+            };
+
+            state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
+            // Usually, comparing the discriminant is enough, but PinNotSet/NeedsPin
+            // can be repeated multiple times with different or the same error reasons
+            // (PIN wrong, PIN too short, PIN too long, etc.)
+            let state_changed = match (&state, &prev_usb_state) {
+                (UsbStateInternal::PinNotSet { .. }, UsbStateInternal::PinNotSet { .. }) => true,
+                (UsbStateInternal::NeedsPin { .. }, UsbStateInternal::NeedsPin { .. }) => true,
+                (new_state, old_state) => {
+                    std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
+            };
+            if state_changed {
+                tracing::debug!("USB current state: {state:?}");
+                tx.send(state.clone()).await.map_err(|_| {
+                    Error::Internal("USB state channel receiver closed prematurely".to_string())
+                })?;
+            }
+
+            // Check for terminal states AFTER sending
+            match state {
+                UsbStateInternal::Completed(_) => break Ok(()),
+                UsbStateInternal::Failed(err) => break Err(err),
+                _ => {}
             }
         }
     }
@@ -387,58 +390,68 @@ async fn handle_events(
                 "Polling for credential from USB authenticator {}",
                 &device_debug
             );
-            let response: Result<UsbUvMessage, Error> = tokio::select! {
-                res = async {
-                    loop {
-                        let response = match cred_request {
-                            CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
-                                channel
-                                    .webauthn_make_credential(make_cred_request)
-                                    .await
-                                    .map(|response| {
-                                        UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
-                                    })
-                            }
-                            CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => channel
+
+            // Un-await-ed async-block
+            let wait_for_cred_response_fut = async {
+                loop {
+                    let response = match cred_request {
+                        CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request) => {
+                            channel
+                                .webauthn_make_credential(make_cred_request)
+                                .await
+                                .map(|response| {
+                                    UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
+                                })
+                        }
+                        CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request) => {
+                            channel
                                 .webauthn_get_assertion(get_cred_request)
                                 .await
                                 .map(|response| {
                                     UsbUvMessage::ReceivedCredentials(Box::new(response.into()))
-                                }),
-                        };
-                        match response {
-                            Ok(response) => {
-                                tracing::debug!("Received credential from USB authenticator");
-                                break Ok(response);
-                            }
-                            Err(WebAuthnError::Ctap(ctap_error))
-                                if ctap_error.is_retryable_user_error() =>
-                            {
-                                warn!("Retrying WebAuthn credential operation");
-                                continue;
-                            }
-                            Err(err) => {
-                                tracing::warn!(
-                                    "Failed to make/get credential with USB authenticator: {:?}",
-                                    err
-                                );
-                                break Err(err);
-                            }
+                                })
+                        }
+                    };
+                    match response {
+                        Ok(response) => {
+                            tracing::debug!("Received credential from USB authenticator");
+                            break Ok(response);
+                        }
+                        Err(WebAuthnError::Ctap(ctap_error))
+                            if ctap_error.is_retryable_user_error() =>
+                        {
+                            warn!("Retrying WebAuthn credential operation");
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                "Failed to make/get credential with USB authenticator: {:?}",
+                                err
+                            );
+                            break Err(err);
                         }
                     }
-                    .map_err(|err| match err {
-                        WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                        WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
-                        WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
-                        _ => Error::AuthenticatorError,
-                    })
-                } => res,
-                _ = cancellation.cancelled() => {
+                }
+                .map_err(|err| match err {
+                    WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
+                    WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                    WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
+                    _ => Error::AuthenticatorError,
+                })
+            };
+
+            let response = match cancellation
+                .run_until_cancelled(wait_for_cred_response_fut)
+                .await
+            {
+                Some(resp) => resp,
+                None => {
                     tracing::debug!("USB ceremony cancelled, interrupting authenticator operation");
                     cancel_handle.cancel_ongoing_operation().await;
                     Err(Error::Internal("Request cancelled".to_string()))
                 }
             };
+
             if let Err(err) = signal_tx.send(response).await {
                 tracing::error!("Failed to notify that ceremony completed: {:?}", err);
             }
@@ -455,8 +468,6 @@ impl UsbHandler for InProcessUsbHandler {
         let request = request.clone();
         let (tx, mut rx) = mpsc::channel(32);
         tokio::spawn(async move {
-            // TODO: instead of logging error here, push the errors into the
-            // stream so credential service can handle/forward them to the UI
             if let Err(err) = InProcessUsbHandler::process(tx, request, cancellation).await {
                 tracing::error!("Error getting credential from USB: {:?}", err);
             }
