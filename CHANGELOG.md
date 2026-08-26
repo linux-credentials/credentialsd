@@ -32,6 +32,7 @@ run xdg-desktop-portal while we work on upstreaming the changes.
 - daemon: Add support for CTAP2 hybrid over BLE behind a feature flag.
 - daemon: Deduplicate USB state events emitted over D-Bus.
 - daemon: Don't use hybrid when not available
+- daemon: Cancel other transports, if one succeeded/failed
 - ui: Add Georgian translations. (Thank you, @EkaterinePopova!)
 - ui: Add a portal backend API to credentialsd-ui.
 - ui: Allow setting client PIN during the flow when required.

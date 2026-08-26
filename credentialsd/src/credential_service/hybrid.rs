@@ -7,14 +7,18 @@ use tokio::sync::{
     broadcast,
     mpsc::{self, Sender},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use libwebauthn::transport::cable::channel::{CableUpdate, CableUxUpdate};
 use libwebauthn::transport::cable::qr_code_device::{
     CableQrCodeDevice, CableTransports, QrCodeOperationHint,
 };
 use libwebauthn::transport::{Channel, ChannelSettings, Device};
 use libwebauthn::webauthn::{WebAuthn, error::WebAuthnError};
+use libwebauthn::{
+    proto::CtapError,
+    transport::cable::channel::{CableUpdate, CableUxUpdate},
+};
 
 use credentialsd_common::{
     memfd::write_secret,
@@ -29,6 +33,7 @@ pub(crate) trait HybridHandler {
     fn start(
         &self,
         request: &CredentialRequest,
+        cancellation: CancellationToken,
     ) -> impl Stream<Item = HybridEvent> + Unpin + Send + Sized + 'static;
 }
 
@@ -44,6 +49,7 @@ impl HybridHandler for InternalHybridHandler {
     fn start(
         &self,
         request: &CredentialRequest,
+        cancellation: CancellationToken,
     ) -> impl Stream<Item = HybridEvent> + Unpin + Send + Sized + 'static {
         tracing::debug!("Starting hybrid operation");
         let request = request.clone();
@@ -93,65 +99,65 @@ impl HybridHandler for InternalHybridHandler {
                     debug!("Reached end of Hybrid updates stream.");
                 });
 
-                tracing::debug!("Polling hybrid channel for updates.");
-                let response: Result<AuthenticatorResponse, Error> = loop {
-                    match &request {
-                        CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
-                            match channel.webauthn_make_credential(make_request).await {
-                                Ok(response) => break Ok(response.into()),
-                                Err(WebAuthnError::Ctap(ctap_error)) => {
-                                    if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!(
-                                            "Retrying credential creation operation because of CTAP error: {:?}",
-                                            ctap_error
-                                        );
-                                        continue;
-                                    } else {
-                                        tracing::error!(
-                                            "Received CTAP unrecoverable CTAP error: {:?}",
-                                            ctap_error
-                                        );
-                                        break Err(Error::AuthenticatorError);
-                                    }
-                                }
-                                Err(err) => {
-                                    tracing::error!(
-                                        "Received unrecoverable error from authenticator: {:?}",
-                                        err
-                                    );
-                                    break Err(Error::AuthenticatorError);
-                                }
-                            };
-                        }
-                        CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
-                            match channel.webauthn_get_assertion(get_request).await {
-                                Ok(response) => break Ok(response.into()),
-                                Err(WebAuthnError::Ctap(ctap_error)) => {
-                                    if ctap_error.is_retryable_user_error() {
-                                        tracing::debug!(
-                                            "Retrying assertion operation because of CTAP error: {:?}",
-                                            ctap_error
-                                        );
-                                        continue;
-                                    } else {
-                                        tracing::error!(
-                                            "Received CTAP unrecoverable CTAP error: {:?}",
-                                            ctap_error
-                                        );
-                                        break Err(Error::AuthenticatorError);
-                                    }
-                                }
-                                Err(err) => {
-                                    tracing::error!(
-                                        "Received unrecoverable error from authenticator: {:?}",
-                                        err
-                                    );
-                                    break Err(Error::AuthenticatorError);
-                                }
-                            };
+                let wait_for_response_fut = async {
+                    loop {
+                        let response: Result<AuthenticatorResponse, _> = match &request {
+                            CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
+                                channel
+                                    .webauthn_make_credential(make_request)
+                                    .await
+                                    .map(|response| response.into())
+                            }
+                            CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
+                                channel
+                                    .webauthn_get_assertion(get_request)
+                                    .await
+                                    .map(|response| response.into())
+                            }
+                        };
+                        match response {
+                            Ok(response) => {
+                                tracing::debug!("Received credential from hybrid authenticator");
+                                break Ok(response);
+                            }
+                            Err(WebAuthnError::Ctap(ctap_error))
+                                if ctap_error.is_retryable_user_error() =>
+                            {
+                                tracing::debug!(%ctap_error, "Retrying WebAuthn operation");
+                                continue;
+                            }
+                            Err(err) => {
+                                tracing::error!(%err,
+                                    "Failed to make/get credential with hybrid authenticator"
+                                );
+                                break Err(err);
+                            }
                         }
                     }
+                    .map_err(|err| match err {
+                        WebAuthnError::Ctap(CtapError::PINAuthBlocked) => {
+                            Error::PinAttemptsExhausted
+                        }
+                        WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                        WebAuthnError::Ctap(CtapError::CredentialExcluded) => {
+                            Error::CredentialExcluded
+                        }
+                        _ => Error::AuthenticatorError,
+                    })
                 };
+
+                tracing::debug!("Polling hybrid channel for updates.");
+                let response = match cancellation
+                    .run_until_cancelled(wait_for_response_fut)
+                    .await
+                {
+                    Some(resp) => resp,
+                    None => {
+                        tracing::debug!("Hybrid handler cancelled, stopping processing");
+                        Err(Error::Internal("Request cancelled".to_string()))
+                    }
+                };
+
                 let terminal_state = match response {
                     Ok(auth_response) => HybridStateInternal::Completed(Box::new(auth_response)),
                     Err(_) => HybridStateInternal::Failed,

@@ -95,7 +95,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     activation_token: Option<String>,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let (request_tx, request_rx) = oneshot::channel();
-    let request_id = svc.lock().await.init_request(&msg, request_tx).await?;
+    let (request_id, cancellation_token) = svc.lock().await.init_request(&msg, request_tx).await?;
     let operation = msg.operation();
     let rp_id = msg.relying_party_id().to_string();
 
@@ -146,126 +146,147 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let set_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let cred_selector_tx = Arc::new(Mutex::new(None));
-        while let Some(ui_request) = flow.receive_ui_event().await {
-            match ui_request {
-                UserInteractedEvent::DiscoveryRequested => {
-                    let client_pin_tx = client_pin_tx.clone();
-                    let set_pin_tx = set_pin_tx.clone();
-                    let cred_selector_tx = cred_selector_tx.clone();
-                    let stream =
-                        svc.lock()
-                            .await
-                            .start_discovery()
-                            .await
-                            .map(move |device_update| {
-                                match &device_update {
-                                    DeviceStateUpdate::Nfc(NfcState::NeedsPin {
-                                        pin_tx, ..
-                                    }) => {
-                                        *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                    }
 
-                                    DeviceStateUpdate::Usb(UsbState::NeedsPin {
-                                        pin_tx, ..
-                                    }) => {
-                                        *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                    }
-                                    DeviceStateUpdate::Nfc(NfcState::PinNotSet {
-                                        pin_tx, ..
-                                    }) => {
-                                        *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                    }
+        let wait_for_ui_request_fut = async {
+            loop {
+                let Some(ui_request) = flow.receive_ui_event().await else {
+                    tracing::debug!("UI event stream closed");
+                    break;
+                };
+                match ui_request {
+                    UserInteractedEvent::DiscoveryRequested => {
+                        let client_pin_tx = client_pin_tx.clone();
+                        let set_pin_tx = set_pin_tx.clone();
+                        let cred_selector_tx = cred_selector_tx.clone();
+                        let stream =
+                            svc.lock()
+                                .await
+                                .start_discovery()
+                                .await
+                                .map(move |device_update| {
+                                    match &device_update {
+                                        DeviceStateUpdate::Nfc(NfcState::NeedsPin {
+                                            pin_tx,
+                                            ..
+                                        }) => {
+                                            *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                        }
 
-                                    DeviceStateUpdate::Usb(UsbState::PinNotSet {
-                                        pin_tx, ..
-                                    }) => {
-                                        *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                        DeviceStateUpdate::Usb(UsbState::NeedsPin {
+                                            pin_tx,
+                                            ..
+                                        }) => {
+                                            *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                        }
+                                        DeviceStateUpdate::Nfc(NfcState::PinNotSet {
+                                            pin_tx,
+                                            ..
+                                        }) => {
+                                            *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                        }
+
+                                        DeviceStateUpdate::Usb(UsbState::PinNotSet {
+                                            pin_tx,
+                                            ..
+                                        }) => {
+                                            *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                        }
+                                        DeviceStateUpdate::Usb(UsbState::SelectingCredential {
+                                            cred_tx,
+                                            ..
+                                        }) => {
+                                            *cred_selector_tx.lock().unwrap() =
+                                                Some(cred_tx.clone());
+                                        }
+                                        _ => {}
                                     }
-                                    DeviceStateUpdate::Usb(UsbState::SelectingCredential {
-                                        cred_tx,
-                                        ..
-                                    }) => {
-                                        *cred_selector_tx.lock().unwrap() = Some(cred_tx.clone());
-                                    }
-                                    _ => {}
-                                }
-                                device_update.into()
-                            });
-                    let flow = flow.clone();
-                    forward_background_event_stream(flow, stream);
-                }
-                UserInteractedEvent::ClientPinEntered(pin_fd) => {
-                    let pin_fd = OwnedFd::from(pin_fd);
-                    let pin = match read_secret(pin_fd)
-                        .map_err(|err| format!("Could not read from file descriptor: {err}"))
-                        .and_then(|bytes| {
-                            String::from_utf8(bytes).map_err(|err| {
-                                format!("Invalid UTF-8 data retrieved from pin: {err}")
-                            })
-                        }) {
-                        Ok(pin) => pin,
-                        // TODO: need to send an error to the UI, cancel the request and terminate the loop.
-                        Err(err) => {
-                            tracing::error!(%err, "Failed to read client PIN. Stopping event loop. TODO: cancel the request");
-                            break;
-                        }
-                    };
-                    let tx = { client_pin_tx.lock().unwrap().take() };
-                    if let Some(tx) = tx {
-                        if tx.send(pin).await.is_err() {
-                            tracing::error!("Failed to send client PIN to device");
-                        }
-                    } else {
-                        tracing::error!(
-                            "Invalid state: received a client PIN with no pending request."
-                        );
+                                    device_update.into()
+                                });
+                        let flow = flow.clone();
+                        forward_background_event_stream(flow, stream);
                     }
-                }
-                UserInteractedEvent::SetDevicePin(pin_fd) => {
-                    let pin_fd = OwnedFd::from(pin_fd);
-                    let pin = match read_secret(pin_fd)
-                        .map_err(|err| format!("Could not read from file descriptor: {err}"))
-                        .and_then(|bytes| {
-                            String::from_utf8(bytes).map_err(|err| {
-                                format!("Invalid UTF-8 data retrieved from pin: {err}")
-                            })
-                        }) {
-                        Ok(pin) => pin,
-                        // TODO: need to send an error to the UI, cancel the request and terminate the loop.
-                        Err(err) => {
-                            tracing::error!(%err, "Failed to read new device PIN. Stopping event loop. TODO: cancel the request");
-                            break;
+                    UserInteractedEvent::ClientPinEntered(pin_fd) => {
+                        let pin_fd = OwnedFd::from(pin_fd);
+                        let pin = match read_secret(pin_fd)
+                            .map_err(|err| format!("Could not read from file descriptor: {err}"))
+                            .and_then(|bytes| {
+                                String::from_utf8(bytes).map_err(|err| {
+                                    format!("Invalid UTF-8 data retrieved from pin: {err}")
+                                })
+                            }) {
+                            Ok(pin) => pin,
+                            // TODO: need to send an error to the UI, cancel the request and terminate the loop.
+                            Err(err) => {
+                                tracing::error!(%err, "Failed to read client PIN. Stopping event loop. TODO: cancel the request");
+                                break;
+                            }
+                        };
+                        let tx = { client_pin_tx.lock().unwrap().take() };
+                        if let Some(tx) = tx {
+                            if tx.send(pin).await.is_err() {
+                                tracing::error!("Failed to send client PIN to device");
+                            }
+                        } else {
+                            tracing::error!(
+                                "Invalid state: received a client PIN with no pending request."
+                            );
                         }
-                    };
-                    let tx = { set_pin_tx.lock().unwrap().take() };
-                    if let Some(tx) = tx {
-                        if tx.send(pin).await.is_err() {
-                            tracing::error!("Failed to send client PIN to device");
-                        }
-                    } else {
-                        tracing::error!(
-                            "Invalid state: received a client PIN with no pending request."
-                        );
                     }
-                }
-                UserInteractedEvent::CredentialSelected(id) => {
-                    let tx = { cred_selector_tx.lock().unwrap().take() };
-                    if let Some(tx) = tx {
-                        if tx.send(id).await.is_err() {
-                            tracing::error!("Failed to send credential selection to device");
+                    UserInteractedEvent::SetDevicePin(pin_fd) => {
+                        let pin_fd = OwnedFd::from(pin_fd);
+                        let pin = match read_secret(pin_fd)
+                            .map_err(|err| format!("Could not read from file descriptor: {err}"))
+                            .and_then(|bytes| {
+                                String::from_utf8(bytes).map_err(|err| {
+                                    format!("Invalid UTF-8 data retrieved from pin: {err}")
+                                })
+                            }) {
+                            Ok(pin) => pin,
+                            // TODO: need to send an error to the UI, cancel the request and terminate the loop.
+                            Err(err) => {
+                                tracing::error!(%err, "Failed to read new device PIN. Stopping event loop. TODO: cancel the request");
+                                break;
+                            }
+                        };
+                        let tx = { set_pin_tx.lock().unwrap().take() };
+                        if let Some(tx) = tx {
+                            if tx.send(pin).await.is_err() {
+                                tracing::error!("Failed to send client PIN to device");
+                            }
+                        } else {
+                            tracing::error!(
+                                "Invalid state: received a client PIN with no pending request."
+                            );
                         }
-                    } else {
-                        tracing::error!(
-                            "Invalid state: received a credential selection ID with no pending request."
-                        );
                     }
-                }
-                UserInteractedEvent::RequestCancelled => {
-                    tracing::debug!(%request_id, "Cancelling request");
-                    svc.lock().await.cancel_request(request_id).await;
+                    UserInteractedEvent::CredentialSelected(id) => {
+                        let tx = { cred_selector_tx.lock().unwrap().take() };
+                        if let Some(tx) = tx {
+                            if tx.send(id).await.is_err() {
+                                tracing::error!("Failed to send credential selection to device");
+                            }
+                        } else {
+                            tracing::error!(
+                                "Invalid state: received a credential selection ID with no pending request."
+                            );
+                        }
+                    }
+                    UserInteractedEvent::RequestCancelled => {
+                        tracing::debug!(%request_id, "Cancelling request");
+                        svc.lock().await.cancel_request(request_id).await;
+                        break;
+                    }
                 }
             }
-        }
+        };
+
+        let Some(_) = cancellation_token
+            .run_until_cancelled(wait_for_ui_request_fut)
+            .await
+        else {
+            tracing::debug!("Request cancelled, stopping UI event handler");
+            return;
+        };
     });
     tracing::debug!("Finished setting up request {request_id}");
 
@@ -286,6 +307,7 @@ fn forward_background_event_stream(
                 break;
             }
         }
+        tracing::debug!("Background event stream ended");
     });
 }
 
