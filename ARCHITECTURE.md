@@ -4,33 +4,42 @@ place!
 
 # High-level Overview
 
-There are three APIs defined in [doc/api.md](/doc/api.md). This repository contains
-two services that implement the three APIs defined by the specification:
+There are a few roles that are used in this architecture:
 
-- `credentialsd`: Implements the Gateway API and Flow Control API
-- `credentialsd-ui`: Implements the UI Control API.
+- User: The user who owns the credential and interacts with the client and UI Controller.
+- Client: The application that is requesting a credential.
+- Trusted Caller: A caller trusted by credentialsd to validate the permissions of the client appliation.
+- Gateway: Receives requests from the Trusted Caller, verifies request parameters and manages request concurrency.
+- Flow Controller: Proxies between the UI Controller and Credential Manager
+- UI Controller: Draws the UI and receives input from the user during the ceremony.
+- Authenticator: A source of credentials.
+- Credential Manager: The service that queries authenticators on the host.
 
-These two services communicate with each other over D-Bus IPC.
+At this time, xdg-desktop-portal is the **Trusted Caller**, and any application
+that calls the Credential Portal that it serves is a **Client**.
 
-The **Gateway** is the entrypoint for clients to interact with. The Flow
-Controller and UI Controller work together to guide the user through the
-process of selecting an appropriate credential based on the request received by
-the Gateway.
+The **Gateway** is the entrypoint for clients to interact with. The Gateway
+validates the request and caller permissions, then passes the request to the
+**Flow Controller**, which in turn calls the Credential Manager, and the UI
+Controller.
 
-The **UI Controller** is used to launch a UI for the user to respond to
-authenticator requests for user interaction. The **Flow Controller** interacts
-with the OS and hardware, like detecting available transports and
-authenticators. It then relays the information needed for the UI to guide the
-user through the authentication ceremony, like prompts for a user to enter their PIN
-or touch the device. The UI Controller takes user input and responds back to the
-Flow Controller.
+The **UI Controller** is launches a UI for the user to respond to authenticator
+requests for user interaction, like entering a client PIN or touching an
+authenticator for user presence. The **Credential Manager** interacts with the
+OS and hardware, like discovering available transports and authenticators.
+**Authenticators**, which may be discrete devices like USB keys, or a credential
+provider like a password manager, respond to Credential Manager requests.  The
+Credential Manager relays the information needed for the UI to guide the user
+through the authentication ceremony, like prompts for a user to enter their PIN
+or touch the device.
 
-The UI Controller and Flow Controller pass user interaction request and action
-messages back and forth until the authenticator releases the credential. Then,
-the Flow Controller sends the credential to the Gateway, which relays the
-credential to the client.
+The UI Controller and Credential Manager pass user interaction and authenticator
+events messages back and forth via the Flow Controller until an Authenticator
+releases a credential, an terminal error is returned, or the request is
+cancelled. Then, the Flow Controller sends the response back to the Gateway,
+which relays the credential to the Client.
 
-Here is a diagram of the intended usage and interactions between the APIs.
+Here is a diagram of the interactions between the roles. (User is ommitted for simplicity.)
 
 ```mermaid
 sequenceDiagram
@@ -38,21 +47,34 @@ sequenceDiagram
     participant G as Gateway
     participant U as UI Controller
     participant F as Flow Controller
+    participant CM as Credential Manager
     participant A as Authenticator
 
-    C ->> +G: Initiate request
-    G ->>  U: Launch UI
-    U ->>  F: Subscribe to events
+    C ->> +G: Request Credential
+    G ->>  F: Initiate request
+    F ->> CM: Initiate request
+    F ->> CM: Subscribe to authenticator events
+    CM ->> F: Subscribe to UI events
+    F ->> U:  Launch UI
+    U ->>  F: Subscribe to authenticator events
+    F ->>  U: Subscribe to UI events
+
     loop
     F ->> +A: Send control messages
-    A ->>  F: Request user interaction
-    F ->>  U: Request user interaction
-    U ->>  F: Respond with user interaction
+    A ->>  CM: Request user interaction
+    CM -->> F:
+    F -->> U:
+    U ->>  F:  Respond to user interaction
+    F -->> CM:
+    CM -->> A:
     end
     A ->> -F: Release credential
     F ->>  G: Respond with credential
     G ->> -C: Respond with credential
 ```
+
+`credentialsd` implements the Gateway, Flow Controller, and Credential Manager
+roles, while `credentialsd-ui` implements just the UI Controller role.
 
 The division into multiple services and APIs has two purposes:
 
@@ -71,7 +93,7 @@ The division into multiple services and APIs has two purposes:
 
 ## credentialsd
 
-A Rust binary project for the service hosting the Gateway and Flow Control APIs.
+A Rust binary project for the service hosting a D-Bus service fulfilling the Gateway role.
 Interacts with authenticators and clients/user agents.
 
 `credentialsd` does not start the UI directly; it sends a request to start the
@@ -89,23 +111,25 @@ do that via the UI.
 also holds request context to return back to the Gateway for request completion
 or when the Flow Controller notifies it that the request is cancelled.
 
-Various authenticator transports are handled in sub-modules, for now USB and
-hybrid transports are supported. Each handler starts a `Stream` of events that
-represents requests from the authenticator for user interaction. If a response
-is required from the user, the event should contain a channel for the credential
-service to send the response after it receives user input.
+Various authenticator transports are handled in sub-modules, called _handlers_,
+for now USB and hybrid transports are supported. Each handler starts a `Stream`
+of events that represents requests from the authenticator for user interaction.
+If a response is required from the user, the event should contain a channel for
+the credential service to send the response after it receives user input.
 
-The credential service mostly just forwards events over to the UI service, minus
+The `CredentialService` mostly just forwards events over to the UI service, minus
 any details that are not necessary for the UI to know (like the response
 channels mentioned above, which cannot be serialized over D-Bus anyway).
 
-Actual interaction I/O is performed in the [libwebauthn][libwebauthn] library.
+Actual interaction I/O is performed using the [libwebauthn][libwebauthn] library.
 
 [libwebauthn]: https://github.com/linux-credentials/libwebauthn
 
 ### `credentialsd/src/gateway/`
 
-The Gateway service is defined here, along with its D-Bus interface.
+The Gateway service is defined here, along with its D-Bus interface. Currently,
+this is just an API specifically crafted for use from xdg-desktop-portal. We may
+wish to make this more generic to support other trusted callers.
 
 ### `credentialsd/src/dbus/`
 
@@ -140,14 +164,13 @@ The `tests/` directory contains a setup for integration tests, allowing
 `credentialsd` to connect to a test D-Bus instance. There is currently only a
 few tests there; this should be expanded in the future.
 
-## `credentialsd-common/`
+## `credentialsd-common/src/`
 
-Rust types shared between `credentialsd` and `credentials-ui`.
+Rust types shared between `credentialsd` and `credentials-ui` live in
+`model.rs`. These are types that are serialized across the D-Bus APIs.
 
-Most of the types live in `src/model.rs`, and some are duplicated in
-`src/server.rs`. The duplicates in the `server` module have tweaks that make it
-easier to serialize over D-Bus, but more difficult to work with in Rust. So
-conversion methods are provided between the two modules.
+There are also some helper functions for reading and writing `memfd_secret` file
+descriptors in `memfd.rs`.
 
 ## `credentialsd-ui/`
 
