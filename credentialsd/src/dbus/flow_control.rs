@@ -352,15 +352,9 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             tracing::error!("Credential response channel closed prematurely");
             WebAuthnError::NotAllowedError
         })?;
-        // TODO: CredentialServiceError is returning the wrong errors types to the flow controller
-        // We need to be able to bubble up the InvalidStateError, when the
-        // selected authenticator has the credential known by the RP, and
-        // the user wants to let the RP know.
-        // All the other possible errors from the spec (AbortError,
-        // ConstraintError, SecurityError, TypeError) should be handled
-        // earlier by the gateway.
-        // Every other error should be squashed into NotAllowed as a catch-all
-        // For now, just squashing.
-        response.map_err(|_| WebAuthnError::NotAllowedError)
+        response.map_err(|err| match err {
+            CredentialServiceError::CredentialExcluded => WebAuthnError::InvalidStateError,
+            _ => WebAuthnError::NotAllowedError,
+        })
     }
 }

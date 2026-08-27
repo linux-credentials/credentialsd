@@ -683,7 +683,7 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Completed => BackgroundEvent::CeremonyCompleted,
             UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
             UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
-            UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorCredentialExcluded,
             UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
             UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }

@@ -547,7 +547,7 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::Completed => BackgroundEvent::CeremonyCompleted,
             NfcState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
             NfcState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
-            NfcState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorAuthenticator,
+            NfcState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorCredentialExcluded,
             NfcState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
             NfcState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }

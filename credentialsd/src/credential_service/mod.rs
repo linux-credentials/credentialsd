@@ -139,7 +139,11 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(HybridStateStream { inner: stream, ctx })
+            Box::pin(HybridStateStream {
+                inner: stream,
+                ctx,
+                cancellation_token: cancellation.clone(),
+            })
         } else {
             tracing::error!(
                 "Attempted to start hybrid credential flow, but no request context was found."
@@ -162,7 +166,11 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(UsbStateStream { inner: stream, ctx })
+            Box::pin(UsbStateStream {
+                inner: stream,
+                ctx,
+                cancellation_token: cancellation.clone(),
+            })
         } else {
             tracing::error!(
                 "Attempted to start usb credential flow, but no request context was found."
@@ -185,7 +193,11 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(NfcStateStream { inner: stream, ctx })
+            Box::pin(NfcStateStream {
+                inner: stream,
+                ctx,
+                cancellation_token: cancellation.clone(),
+            })
         } else {
             tracing::error!(
                 "Attempted to start nfc credential flow, but no request context was found."
@@ -311,6 +323,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
 pub struct HybridStateStream<H> {
     inner: H,
     ctx: Arc<Mutex<Option<RequestContext>>>,
+    cancellation_token: CancellationToken,
 }
 
 impl<H> Stream for HybridStateStream<H>
@@ -324,34 +337,19 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         let ctx = &self.ctx.clone();
+        let cancellation_token = self.cancellation_token.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(HybridEvent { state })) => {
+                if cancellation_token.is_cancelled() {
+                    return Poll::Ready(None);
+                }
                 match &state {
-                    HybridStateInternal::Completed(hybrid_response) => {
-                        let response = match &**hybrid_response {
-                            AuthenticatorResponse::CredentialCreated(make_credential_response) => {
-                                CredentialResponse::from_make_credential(
-                                    make_credential_response,
-                                    &["hybrid"],
-                                    "cross-platform",
-                                )
-                            }
-                            AuthenticatorResponse::CredentialsAsserted(get_assertion_response) => {
-                                CredentialResponse::from_get_assertion(
-                                    // When doing hybrid, the authenticator is capable of displaying it's own UI.
-                                    // So we assume here, it only ever returns one assertion.
-                                    // In case this doesn't hold true, we have to implement credential selection here,
-                                    // as is done for USB.
-                                    &get_assertion_response.assertions[0],
-                                    "cross-platform",
-                                )
-                            }
-                        };
+                    HybridStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
-                    HybridStateInternal::Failed => {
-                        complete_request(ctx, Err(CredentialServiceError::AuthenticatorError));
+                    HybridStateInternal::Failed(err) => {
+                        complete_request(ctx, Err(err.clone()));
                     }
                     _ => {}
                 }
@@ -365,6 +363,7 @@ where
 struct UsbStateStream<H> {
     inner: H,
     ctx: Arc<Mutex<Option<RequestContext>>>,
+    cancellation_token: CancellationToken,
 }
 
 impl<H> Stream for UsbStateStream<H>
@@ -378,9 +377,13 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         let ctx = &self.ctx.clone();
+        let cancellation_token = self.cancellation_token.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(UsbEvent { state })) => {
+                if cancellation_token.is_cancelled() {
+                    return Poll::Ready(None);
+                }
                 match &state {
                     UsbStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
@@ -401,6 +404,7 @@ where
 struct NfcStateStream<H> {
     inner: H,
     ctx: Arc<Mutex<Option<RequestContext>>>,
+    cancellation_token: CancellationToken,
 }
 
 impl<H> Stream for NfcStateStream<H>
@@ -414,9 +418,14 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         let ctx = &self.ctx.clone();
+        let cancellation_token = self.cancellation_token.clone();
         match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Some(NfcEvent { state })) => {
+                if cancellation_token.is_cancelled() {
+                    return Poll::Ready(None);
+                }
+
                 match &state {
                     NfcStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
@@ -770,15 +779,24 @@ mod tests {
     {
         Box::pin(async_stream::stream! {
             let Some(mut rx) = rx else { return; };
+            // This allows to simulate when the handler detected cancellation,
+            // but still emit a single event after cancellation to simulate a
+            // race.
+            let mut cancel_detected = false;
             loop {
                 tokio::select! {
                     biased;
-                    _ = cancellation.cancelled() => {
+                    _ = cancellation.cancelled(), if !cancel_detected => {
+                        cancel_detected = true;
                         cancelled.store(true, Ordering::SeqCst);
-                        break;
                     }
                     maybe = rx.recv() => match maybe {
-                        Some(state) => yield wrap(state),
+                        Some(state) => {
+                            yield wrap(state)
+                            if cancel_detected {
+                                break;
+                            }
+                        },
                         None => break, // all senders dropped
                     }
                 }
@@ -1018,6 +1036,10 @@ mod tests {
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered after cancel_request"
         );
+        // Add explicit post-cancellation message.
+        usb_ref.shift_state(UsbStateInternal::Failed(CredentialServiceError::Internal(
+            "Cancelled".to_string(),
+        )));
 
         // biased select! polls cancellation first, discarding the queued states
         let usb_remaining: Vec<_> = usb_stream.collect().await;
