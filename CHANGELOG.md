@@ -1,5 +1,7 @@
 # [unreleased]
 
+# 0.3.0 [2026-08-27]
+
 This release is a big milestone toward our goal of providing a Credential
 portal. To that end, we have changed the structure of credentialsd to fit the
 patterns from credentialsd portal. We also now have a dependency on
