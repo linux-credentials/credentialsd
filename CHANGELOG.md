@@ -1,5 +1,9 @@
 # [unreleased]
 
+## Improvements
+
+- ui: Remove process ID from credential prompt.
+
 # 0.3.0 [2026-08-27]
 
 This release is a big milestone toward our goal of providing a Credential

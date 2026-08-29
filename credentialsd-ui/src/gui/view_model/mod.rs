@@ -30,7 +30,6 @@ pub(crate) struct ViewModel {
     rp_id: String,
     app_name: String,
     app_path_or_id: String,
-    app_pid: u32,
 
     // This includes devices like platform authenticator, USB, hybrid
     devices: Vec<Device>,
@@ -49,7 +48,7 @@ impl ViewModel {
         let RequestingApplication {
             name: app_name,
             path_or_app_id: path,
-            pid,
+            pid: _,
         } = request.requesting_app;
 
         let app_name: Option<String> = app_name.into();
@@ -62,7 +61,6 @@ impl ViewModel {
             rp_id: request.rp_id,
             app_name: app_name.unwrap_or_else(|| gettext("unknown application")),
             app_path_or_id: path,
-            app_pid: pid,
             title: String::default(),
             subtitle: String::default(),
             devices,
@@ -89,21 +87,18 @@ impl ViewModel {
             Operation::PublicKeyCreate => {
                 // TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
-                // TRANSLATORS: %i1 is the process ID of the requesting application
                 // TRANSLATORS: %s3 is the app ID (think: org.mozilla.firefox) of the requesting application
-                gettext("<b>\"%s2\"</b> (process ID: %i1, app ID: %s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
+                gettext("<b>\"%s2\"</b> (%s3) is asking to create a credential to register at \"%s1\". Only proceed if you trust this process.")
             }
             Operation::PublicKeyGet => {
                 // TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
                 // TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
-                // TRANSLATORS: %i1 is the process ID of the requesting application
                 // TRANSLATORS: %s3 is the app ID (think: org.mozilla.firefox) of the requesting application
-                gettext("<b>\"%s2\"</b> (process ID: %i1, app ID: %s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
+                gettext("<b>\"%s2\"</b> (%s3) is asking to use a credential to sign in to \"%s1\". Only proceed if you trust this process.")
             }
         }
         .to_string();
         subtitle = subtitle.replace("%s1", &self.rp_id);
-        subtitle = subtitle.replace("%i1", &format!("{}", self.app_pid));
         subtitle = subtitle.replace("%s2", &self.app_name);
         subtitle = subtitle.replace("%s3", &self.app_path_or_id);
         self.title = title;
