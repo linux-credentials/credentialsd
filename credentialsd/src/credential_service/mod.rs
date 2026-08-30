@@ -66,10 +66,14 @@ fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
 }
 
 #[derive(Debug)]
+struct RequestMarker;
+
+#[derive(Debug)]
 struct RequestContext {
     request: CredentialRequest,
     response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
+    request_marker: Arc<RequestMarker>,
     cancellation: CancellationToken,
 }
 
@@ -132,6 +136,8 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         if let Some(RequestContext {
             ref request,
             ref cancellation,
+            ref request_marker,
+            request_id,
             ..
         }) = *guard
         {
@@ -141,7 +147,13 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            credential_state_stream(stream, ctx, cancellation.clone())
+            credential_state_stream(
+                stream,
+                ctx,
+                request_id,
+                request_marker.clone(),
+                cancellation.clone(),
+            )
         } else {
             tracing::error!(
                 "Attempted to start hybrid credential flow, but no request context was found."
@@ -155,6 +167,8 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         if let Some(RequestContext {
             ref request,
             ref cancellation,
+            ref request_marker,
+            request_id,
             ..
         }) = *guard
         {
@@ -164,7 +178,13 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            credential_state_stream(stream, ctx, cancellation.clone())
+            credential_state_stream(
+                stream,
+                ctx,
+                request_id,
+                request_marker.clone(),
+                cancellation.clone(),
+            )
         } else {
             tracing::error!(
                 "Attempted to start usb credential flow, but no request context was found."
@@ -178,6 +198,8 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         if let Some(RequestContext {
             ref request,
             ref cancellation,
+            ref request_marker,
+            request_id,
             ..
         }) = *guard
         {
@@ -187,7 +209,13 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            credential_state_stream(stream, ctx, cancellation.clone())
+            credential_state_stream(
+                stream,
+                ctx,
+                request_id,
+                request_marker.clone(),
+                cancellation.clone(),
+            )
         } else {
             tracing::error!(
                 "Attempted to start nfc credential flow, but no request context was found."
@@ -221,6 +249,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 request: request.clone(),
                 response_channel: tx,
                 request_id,
+                request_marker: Arc::new(RequestMarker),
                 cancellation: cancellation.clone(),
             };
             _ = cred_request.insert(ctx);
@@ -306,6 +335,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 .boxed();
             selected_transports.push(hybrid);
         }
+
         futures::stream::select_all(selected_transports).boxed()
     }
 }
@@ -384,6 +414,8 @@ impl TransportEvent for NfcEvent {
 fn credential_state_stream<S, E>(
     mut inner: S,
     ctx: Arc<Mutex<Option<RequestContext>>>,
+    request_id: RequestId,
+    request_marker: Arc<RequestMarker>,
     cancellation_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = E::PublicState> + Send + 'static>>
 where
@@ -407,7 +439,9 @@ where
 
             let (state, result) = event.into_state_and_result();
             if let Some(result) = result {
-                complete_request(&ctx, result);
+                if !complete_request(&ctx, request_id, &request_marker, result) {
+                    break;
+                }
                 yield state;
                 break;
             }
@@ -453,17 +487,25 @@ impl From<UsbState> for DeviceStateUpdate {
 
 fn complete_request(
     ctx: &Mutex<Option<RequestContext>>,
+    request_id: RequestId,
+    request_marker: &Arc<RequestMarker>,
     response: Result<CredentialResponse, CredentialServiceError>,
-) {
-    match ctx.lock().unwrap().take() {
-        Some(ctx) => {
-            ctx.cancellation.cancel();
-            ctx.send_response(response);
-        }
-        _ => {
-            tracing::error!("Tried to consume context to respond to caller, but none was found.")
-        }
-    }
+) -> bool {
+    let request_ctx = ctx.lock().unwrap().take_if(|request_ctx| {
+        request_ctx.request_id == request_id
+            && Arc::ptr_eq(&request_ctx.request_marker, request_marker)
+    });
+    let Some(request_ctx) = request_ctx else {
+        tracing::debug!(
+            request_id,
+            "Ignoring terminal event for a request that is no longer active."
+        );
+        return false;
+    };
+
+    request_ctx.cancellation.cancel();
+    request_ctx.send_response(response);
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -963,15 +1005,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scripted_hybrid_transport_propagates_successful_response() {
+        let (hybrid_handler, hybrid_controller) = ScriptedTransport::<HybridStateInternal>::new();
+        let service = CredentialService::new(hybrid_handler, EmptyTransport, EmptyTransport);
+        let request = create_test_request().await;
+        let (tx, rx) = oneshot::channel();
+
+        let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        hybrid_controller.emit(HybridStateInternal::Connecting);
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Connecting)
+        ));
+
+        hybrid_controller.complete(create_test_credential_response());
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Completed)
+        ));
+        assert!(cancellation_token.is_cancelled());
+
+        let result = rx.await.expect("request result should be sent");
+        let Ok(CredentialResponse::GetPublicKeyCredentialResponse(response)) = result else {
+            panic!("Hybrid completion should propagate the credential response");
+        };
+        assert_eq!(response.attachment_modality, "cross-platform");
+    }
+
+    #[tokio::test]
     async fn test_lifecycle_stream_discards_event_after_cancellation() {
         let request = create_test_request().await;
         let (response_channel, _response_rx) = oneshot::channel();
         let cancellation = CancellationToken::new();
+        let request_marker = Arc::new(RequestMarker);
         cancellation.cancel();
         let ctx = Arc::new(Mutex::new(Some(RequestContext {
             request,
             response_channel,
             request_id: 1,
+            request_marker: request_marker.clone(),
             cancellation: cancellation.clone(),
         })));
         let mut stream = credential_state_stream(
@@ -979,6 +1053,8 @@ mod tests {
                 state: UsbStateInternal::Waiting,
             }]),
             ctx.clone(),
+            1,
+            request_marker,
             cancellation,
         );
 
@@ -994,10 +1070,12 @@ mod tests {
         let request = create_test_request().await;
         let (response_channel, _response_rx) = oneshot::channel();
         let cancellation = CancellationToken::new();
+        let request_marker = Arc::new(RequestMarker);
         let ctx = Arc::new(Mutex::new(Some(RequestContext {
             request,
             response_channel,
             request_id: 1,
+            request_marker: request_marker.clone(),
             cancellation: cancellation.clone(),
         })));
         let (polled_tx, polled_rx) = oneshot::channel();
@@ -1008,7 +1086,13 @@ mod tests {
             }
             Poll::<Option<UsbEvent>>::Pending
         });
-        let mut stream = credential_state_stream(pending_inner, ctx.clone(), cancellation.clone());
+        let mut stream = credential_state_stream(
+            pending_inner,
+            ctx.clone(),
+            1,
+            request_marker,
+            cancellation.clone(),
+        );
 
         let waiting_task = tokio::spawn(async move { stream.next().await });
         polled_rx.await.expect("inner stream should be polled");
@@ -1023,6 +1107,44 @@ mod tests {
             ctx.lock().unwrap().is_some(),
             "cancelling a pending stream must not complete the active request"
         );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_stream_cannot_complete_a_newer_request() {
+        let request = create_test_request().await;
+        let (response_channel, mut response_rx) = oneshot::channel();
+        let current_cancellation = CancellationToken::new();
+        let current_request_marker = Arc::new(RequestMarker);
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id: 1,
+            request_marker: current_request_marker,
+            cancellation: current_cancellation.clone(),
+        })));
+        let stale_cancellation = CancellationToken::new();
+        let stale_request_marker = Arc::new(RequestMarker);
+        let mut stale_stream = credential_state_stream(
+            futures::stream::iter([UsbEvent {
+                state: UsbStateInternal::Completed(create_test_credential_response()),
+            }]),
+            ctx.clone(),
+            1,
+            stale_request_marker,
+            stale_cancellation.clone(),
+        );
+
+        assert!(stale_stream.next().await.is_none());
+        assert!(!stale_cancellation.is_cancelled());
+        assert!(!current_cancellation.is_cancelled());
+        assert_eq!(
+            ctx.lock().unwrap().as_ref().map(|ctx| ctx.request_id),
+            Some(1)
+        );
+        assert!(matches!(
+            response_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
     }
 
     #[tokio::test]
