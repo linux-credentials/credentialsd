@@ -23,7 +23,7 @@ use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 use super::{AuthenticatorResponse, CredentialResponse};
 
 pub(crate) trait NfcHandler {
-    #[expect(unused)]
+    #[cfg_attr(not(test), expect(unused))]
     fn start(
         &self,
         request: &CredentialRequest,
@@ -364,13 +364,13 @@ impl NfcHandler for InProcessNfcHandler {
 
 // this exists to prevent making NfcStateInternal type public to the whole crate.
 /// A message between NFC handler and credential service
-#[expect(unused)]
+#[cfg_attr(not(test), expect(unused))]
 pub struct NfcEvent {
     pub(super) state: NfcStateInternal,
 }
 
 /// Used to share internal state between handler and credential service
-#[expect(unused)]
+#[cfg_attr(not(test), expect(unused))]
 #[derive(Clone, Debug, Default)]
 pub(super) enum NfcStateInternal {
     /// Not polling for FIDO NFC device.
