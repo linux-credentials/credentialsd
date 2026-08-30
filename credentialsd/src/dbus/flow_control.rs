@@ -18,7 +18,7 @@ use credentialsd_common::{
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
-use tokio::sync::{Mutex as AsyncMutex, mpsc::Sender};
+use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore, mpsc::Sender};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
@@ -146,6 +146,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let set_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let cred_selector_tx = Arc::new(Mutex::new(None));
+        let discovery_gate = Arc::new(Semaphore::new(1));
 
         let wait_for_ui_request_fut = async {
             loop {
@@ -155,6 +156,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                 };
                 match ui_request {
                     UserInteractedEvent::DiscoveryRequested => {
+                        let Some(discovery_permit) = claim_discovery(&discovery_gate) else {
+                            tracing::debug!(
+                                %request_id,
+                                "Ignoring discovery request while discovery is already active."
+                            );
+                            continue;
+                        };
                         let client_pin_tx = client_pin_tx.clone();
                         let set_pin_tx = set_pin_tx.clone();
                         let cred_selector_tx = cred_selector_tx.clone();
@@ -203,7 +211,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                                     device_update.into()
                                 });
                         let flow = flow.clone();
-                        forward_background_event_stream(flow, stream);
+                        forward_background_event_stream(flow, stream, discovery_permit);
                     }
                     UserInteractedEvent::ClientPinEntered(pin_fd) => {
                         let pin_fd = OwnedFd::from(pin_fd);
@@ -295,9 +303,20 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .expect("Credential service not to drop request channel before responding.")
 }
 
+/// Claims the single active discovery slot for a credential request.
+///
+/// The semaphore must be scoped to one request, and the returned permit must be
+/// held until its discovery stream ends. D-Bus sender and session validation is
+/// handled before this point; this additional bound protects the daemon from a
+/// faulty trusted UI without preventing a later discovery attempt.
+fn claim_discovery(discovery_gate: &Arc<Semaphore>) -> Option<OwnedSemaphorePermit> {
+    discovery_gate.clone().try_acquire_owned().ok()
+}
+
 fn forward_background_event_stream(
     flow: Ceremony,
     mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
+    _discovery_permit: OwnedSemaphorePermit,
 ) {
     tokio::spawn(async move {
         while let Some(event) = stream.next().await {
@@ -309,6 +328,29 @@ fn forward_background_event_stream(
         }
         tracing::debug!("Background event stream ended");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_can_restart_after_the_active_stream_releases_its_claim() {
+        let discovery_gate = Arc::new(Semaphore::new(1));
+
+        let active_discovery =
+            claim_discovery(&discovery_gate).expect("first discovery should claim the slot");
+        assert!(
+            claim_discovery(&discovery_gate).is_none(),
+            "a concurrent discovery must not claim the same request"
+        );
+
+        drop(active_discovery);
+        assert!(
+            claim_discovery(&discovery_gate).is_some(),
+            "ending the active discovery must allow a later attempt"
+        );
+    }
 }
 
 /// Coordinates between user and various devices connected to the machine to
