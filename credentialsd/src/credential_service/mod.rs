@@ -392,7 +392,15 @@ where
     E::PublicState: Send + 'static,
 {
     Box::pin(async_stream::stream! {
-        while let Some(event) = inner.next().await {
+        loop {
+            let Some(event) = cancellation_token
+                .run_until_cancelled(inner.next())
+                .await
+                .flatten()
+            else {
+                break;
+            };
+
             if cancellation_token.is_cancelled() {
                 break;
             }
@@ -478,7 +486,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{task::Poll, time::Duration};
 
     use super::test_support::{EmptyTransport, ScriptedTransport};
     use super::*;
@@ -978,6 +986,42 @@ mod tests {
         assert!(
             ctx.lock().unwrap().is_some(),
             "discarding a stale event must not complete the active request"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_stream_wakes_when_cancelled_while_inner_is_pending() {
+        let request = create_test_request().await;
+        let (response_channel, _response_rx) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id: 1,
+            cancellation: cancellation.clone(),
+        })));
+        let (polled_tx, polled_rx) = oneshot::channel();
+        let mut polled_tx = Some(polled_tx);
+        let pending_inner = futures::stream::poll_fn(move |_cx| {
+            if let Some(polled_tx) = polled_tx.take() {
+                _ = polled_tx.send(());
+            }
+            Poll::<Option<UsbEvent>>::Pending
+        });
+        let mut stream = credential_state_stream(pending_inner, ctx.clone(), cancellation.clone());
+
+        let waiting_task = tokio::spawn(async move { stream.next().await });
+        polled_rx.await.expect("inner stream should be polled");
+        cancellation.cancel();
+
+        let event = tokio::time::timeout(Duration::from_secs(1), waiting_task)
+            .await
+            .expect("cancellation should wake the lifecycle stream")
+            .expect("stream task should not panic");
+        assert!(event.is_none());
+        assert!(
+            ctx.lock().unwrap().is_some(),
+            "cancelling a pending stream must not complete the active request"
         );
     }
 
