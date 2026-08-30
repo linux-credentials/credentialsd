@@ -230,6 +230,14 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
+    fn merge_discovery_streams(
+        &self,
+        selected_transports: Vec<Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>>,
+        lifecycle: RequestLifecycle,
+    ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
+        let selected_transports = futures::stream::select_all(selected_transports);
+        discovery_state_stream(selected_transports, self.ctx.clone(), lifecycle)
+    }
 }
 
 #[async_trait]
@@ -346,7 +354,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             selected_transports.push(hybrid);
         }
 
-        futures::stream::select_all(selected_transports).boxed()
+        self.merge_discovery_streams(selected_transports, lifecycle)
     }
 }
 
@@ -459,7 +467,41 @@ where
     })
 }
 
+/// Completes the request if every selected credential transport stops without
+/// producing a terminal event.
+fn discovery_state_stream<S>(
+    mut inner: S,
+    ctx: Arc<Mutex<Option<RequestContext>>>,
+    lifecycle: RequestLifecycle,
+) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>
+where
+    S: Stream<Item = DeviceStateUpdate> + Unpin + Send + 'static,
+{
+    Box::pin(async_stream::stream! {
+        loop {
+            match lifecycle.cancellation.run_until_cancelled(inner.next()).await {
+                None => break,
+                Some(Some(state)) => yield state,
+                Some(None) => {
+                    if lifecycle.cancellation.is_cancelled() {
+                        break;
+                    }
+
+                    let error = CredentialServiceError::Internal(
+                        "All credential transports ended without a terminal event.".to_string(),
+                    );
+                    if complete_request(&ctx, &lifecycle, Err(error.clone())) {
+                        yield DeviceStateUpdate::Failed(error);
+                    }
+                    break;
+                }
+            }
+        }
+    })
+}
+
 pub enum DeviceStateUpdate {
+    Failed(CredentialServiceError),
     Hybrid(HybridState),
     Nfc(NfcState),
     Usb(UsbState),
@@ -468,6 +510,15 @@ pub enum DeviceStateUpdate {
 impl From<DeviceStateUpdate> for BackgroundEvent {
     fn from(value: DeviceStateUpdate) -> Self {
         match value {
+            DeviceStateUpdate::Failed(error) => match error {
+                CredentialServiceError::AuthenticatorError => BackgroundEvent::ErrorAuthenticator,
+                CredentialServiceError::NoCredentials => BackgroundEvent::ErrorNoCredentials,
+                CredentialServiceError::CredentialExcluded => {
+                    BackgroundEvent::ErrorCredentialExcluded
+                }
+                CredentialServiceError::PinAttemptsExhausted => BackgroundEvent::ErrorAuthenticator,
+                CredentialServiceError::Internal(_) => BackgroundEvent::ErrorInternal,
+            },
             DeviceStateUpdate::Hybrid(state) => (&state).into(),
             DeviceStateUpdate::Nfc(state) => (&state).into(),
             DeviceStateUpdate::Usb(state) => (&state).into(),
@@ -1113,6 +1164,224 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_discovery_continues_when_one_transport_ends_unexpectedly() {
+        let request = create_test_request().await;
+        let (response_channel, response_rx) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let request_id = 7;
+        let request_marker = Arc::new(RequestMarker);
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id,
+            request_marker: request_marker.clone(),
+            cancellation: cancellation.clone(),
+        })));
+        let lifecycle = RequestLifecycle {
+            request_id,
+            request_marker,
+            cancellation: cancellation.clone(),
+        };
+        let hybrid_stream = credential_state_stream(
+            futures::stream::empty::<HybridEvent>(),
+            ctx.clone(),
+            lifecycle.clone(),
+        )
+        .map(DeviceStateUpdate::from)
+        .boxed();
+        let usb_stream = credential_state_stream(
+            futures::stream::iter([
+                UsbEvent {
+                    state: UsbStateInternal::Waiting,
+                },
+                UsbEvent {
+                    state: UsbStateInternal::Completed(create_test_credential_response()),
+                },
+            ]),
+            ctx.clone(),
+            lifecycle.clone(),
+        )
+        .map(DeviceStateUpdate::from)
+        .boxed();
+        let mut stream = discovery_state_stream(
+            futures::stream::select_all(vec![hybrid_stream, usb_stream]),
+            ctx,
+            lifecycle,
+        );
+
+        assert!(matches!(
+            stream.next().await,
+            Some(DeviceStateUpdate::Usb(UsbState::Waiting))
+        ));
+        assert!(!cancellation.is_cancelled());
+        assert!(matches!(
+            stream.next().await,
+            Some(DeviceStateUpdate::Usb(UsbState::Completed))
+        ));
+
+        let result = response_rx.await.expect("request result should be sent");
+        assert!(result.is_ok());
+        assert!(cancellation.is_cancelled());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_discovery_fails_when_all_transports_end_unexpectedly() {
+        let service = CredentialService::new(EmptyTransport, EmptyTransport, EmptyTransport);
+        let request = create_test_request().await;
+        let (response_channel, response_rx) = oneshot::channel();
+        let (_request_id, cancellation) = service
+            .init_request(&request, response_channel)
+            .await
+            .unwrap();
+        let lifecycle = service.current_request().unwrap().1;
+        let usb_stream = futures::stream::iter([DeviceStateUpdate::Usb(UsbState::Waiting)]).boxed();
+        let hybrid_stream = futures::stream::empty::<DeviceStateUpdate>().boxed();
+        let mut stream =
+            service.merge_discovery_streams(vec![usb_stream, hybrid_stream], lifecycle);
+
+        assert!(matches!(
+            stream.next().await,
+            Some(DeviceStateUpdate::Usb(UsbState::Waiting))
+        ));
+
+        let state = stream
+            .next()
+            .await
+            .expect("exhausting all transports should emit a failure state");
+        assert!(matches!(
+            &state,
+            DeviceStateUpdate::Failed(CredentialServiceError::Internal(message))
+                if message == "All credential transports ended without a terminal event."
+        ));
+        assert_eq!(BackgroundEvent::from(state), BackgroundEvent::ErrorInternal);
+
+        let result = response_rx.await.expect("request result should be sent");
+        assert!(matches!(
+            result,
+            Err(CredentialServiceError::Internal(message))
+                if message == "All credential transports ended without a terminal event."
+        ));
+        assert!(cancellation.is_cancelled());
+        assert!(service.ctx.lock().unwrap().is_none());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cancelling_pending_discovery_does_not_report_transport_exhaustion() {
+        let (usb_handler, usb_controller) = ScriptedTransport::<UsbStateInternal>::new();
+        let service = CredentialService::new(EmptyTransport, EmptyTransport, usb_handler);
+        let request = create_test_request().await;
+        let (response_channel, response_rx) = oneshot::channel();
+        let (request_id, cancellation) = service
+            .init_request(&request, response_channel)
+            .await
+            .unwrap();
+        let usb_stream = service
+            .get_usb_credential()
+            .await
+            .map(DeviceStateUpdate::from)
+            .boxed();
+        let lifecycle = service.current_request().unwrap().1;
+        let mut stream = service.merge_discovery_streams(vec![usb_stream], lifecycle);
+
+        usb_controller.emit(UsbStateInternal::Waiting);
+        assert!(matches!(
+            stream.next().await,
+            Some(DeviceStateUpdate::Usb(UsbState::Waiting))
+        ));
+
+        let waiting_task = tokio::spawn(async move { stream.next().await });
+        tokio::task::yield_now().await;
+        service.cancel_request(request_id).await;
+
+        let event = tokio::time::timeout(Duration::from_secs(1), waiting_task)
+            .await
+            .expect("cancellation should wake the aggregate discovery stream")
+            .expect("discovery task should not panic");
+        assert!(event.is_none());
+        assert!(cancellation.is_cancelled());
+        assert!(usb_controller.was_cancelled());
+
+        let result = response_rx.await.expect("request result should be sent");
+        assert!(matches!(
+            result,
+            Err(CredentialServiceError::Internal(message))
+                if message == format!("Cancelled request {request_id}.")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_concurrent_terminal_events_emit_only_one_terminal_state() {
+        let request = create_test_request().await;
+        let (response_channel, response_rx) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let request_id = 11;
+        let request_marker = Arc::new(RequestMarker);
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id,
+            request_marker: request_marker.clone(),
+            cancellation: cancellation.clone(),
+        })));
+        let lifecycle = RequestLifecycle {
+            request_id,
+            request_marker,
+            cancellation: cancellation.clone(),
+        };
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+
+        let make_discovery = || {
+            let barrier = barrier.clone();
+            let usb_events = futures::stream::once(async move {
+                barrier.wait().await;
+                UsbEvent {
+                    state: UsbStateInternal::Completed(create_test_credential_response()),
+                }
+            })
+            .boxed();
+            let usb_stream = credential_state_stream(usb_events, ctx.clone(), lifecycle.clone())
+                .map(DeviceStateUpdate::from)
+                .boxed();
+            discovery_state_stream(
+                futures::stream::select_all(vec![usb_stream]),
+                ctx.clone(),
+                lifecycle.clone(),
+            )
+        };
+        let mut first_discovery = make_discovery();
+        let mut second_discovery = make_discovery();
+        let first = tokio::spawn(async move { first_discovery.next().await });
+        let second = tokio::spawn(async move { second_discovery.next().await });
+
+        barrier.wait().await;
+        let (first, second) = tokio::join!(first, second);
+        let events = [
+            first.expect("first discovery task should not panic"),
+            second.expect("second discovery task should not panic"),
+        ];
+        assert_eq!(
+            events
+                .into_iter()
+                .filter(|event| {
+                    matches!(event, Some(DeviceStateUpdate::Usb(UsbState::Completed)))
+                })
+                .count(),
+            1,
+            "only the winning terminal event should be emitted"
+        );
+        assert!(cancellation.is_cancelled());
+        assert!(ctx.lock().unwrap().is_none());
+        assert!(
+            response_rx
+                .await
+                .expect("request result should be sent")
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn test_lifecycle_stream_cannot_complete_a_newer_request() {
         let request = create_test_request().await;
         let (response_channel, mut response_rx) = oneshot::channel();
@@ -1150,6 +1419,48 @@ mod tests {
             response_rx.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_stale_discovery_exhaustion_cannot_complete_a_newer_request() {
+        let service = CredentialService::new(EmptyTransport, EmptyTransport, EmptyTransport);
+        let request = create_test_request().await;
+        let (stale_response_tx, stale_response_rx) = oneshot::channel();
+        let (stale_request_id, _stale_cancellation) = service
+            .init_request(&request, stale_response_tx)
+            .await
+            .unwrap();
+        let stale_lifecycle = service.current_request().unwrap().1;
+
+        service.cancel_request(stale_request_id).await;
+        assert!(stale_response_rx.await.unwrap().is_err());
+
+        let (current_response_tx, mut current_response_rx) = oneshot::channel();
+        let (current_request_id, current_cancellation) = service
+            .init_request(&request, current_response_tx)
+            .await
+            .unwrap();
+        let stale_transport = futures::stream::empty::<DeviceStateUpdate>().boxed();
+        let mut stale_discovery =
+            service.merge_discovery_streams(vec![stale_transport], stale_lifecycle);
+
+        assert!(stale_discovery.next().await.is_none());
+        assert!(!current_cancellation.is_cancelled());
+        assert_eq!(
+            service
+                .ctx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|ctx| ctx.request_id),
+            Some(current_request_id)
+        );
+        assert!(matches!(
+            current_response_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+
+        service.cancel_request(current_request_id).await;
     }
 
     #[tokio::test]
