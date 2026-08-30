@@ -1121,6 +1121,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_lifecycle_stream_discards_terminal_event_ready_during_cancellation() {
+        let request = create_test_request().await;
+        let (response_channel, mut response_rx) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let cancellation_from_inner = cancellation.clone();
+        let request_marker = Arc::new(RequestMarker);
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id: 1,
+            request_marker: request_marker.clone(),
+            cancellation: cancellation.clone(),
+        })));
+        let lifecycle = RequestLifecycle {
+            request_id: 1,
+            request_marker,
+            cancellation,
+        };
+        let mut event = Some(UsbEvent {
+            state: UsbStateInternal::Completed(create_test_credential_response()),
+        });
+        let inner = futures::stream::poll_fn(move |_cx| {
+            cancellation_from_inner.cancel();
+            Poll::Ready(event.take())
+        });
+        let mut stream = credential_state_stream(inner, ctx.clone(), lifecycle);
+
+        assert!(stream.next().await.is_none());
+        assert!(
+            ctx.lock().unwrap().is_some(),
+            "a terminal event concurrent with cancellation must not complete the request"
+        );
+        assert!(matches!(
+            response_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
     async fn test_lifecycle_stream_wakes_when_cancelled_while_inner_is_pending() {
         let request = create_test_request().await;
         let (response_channel, _response_rx) = oneshot::channel();
