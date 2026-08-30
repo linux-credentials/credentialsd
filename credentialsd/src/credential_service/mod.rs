@@ -9,11 +9,10 @@ use std::{
     fmt::Debug,
     pin::Pin,
     sync::{Arc, Mutex, OnceLock},
-    task::Poll,
 };
 
 use async_trait::async_trait;
-use futures_lite::{FutureExt, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use libwebauthn::{
     self,
     ops::webauthn::{GetAssertionResponse, MakeCredentialResponse},
@@ -142,11 +141,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(HybridStateStream {
-                inner: stream,
-                ctx,
-                cancellation_token: cancellation.clone(),
-            })
+            credential_state_stream(stream, ctx, cancellation.clone())
         } else {
             tracing::error!(
                 "Attempted to start hybrid credential flow, but no request context was found."
@@ -169,11 +164,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(UsbStateStream {
-                inner: stream,
-                ctx,
-                cancellation_token: cancellation.clone(),
-            })
+            credential_state_stream(stream, ctx, cancellation.clone())
         } else {
             tracing::error!(
                 "Attempted to start usb credential flow, but no request context was found."
@@ -196,11 +187,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .unwrap()
                 .start(request, cancellation.clone());
             let ctx = self.ctx.clone();
-            Box::pin(NfcStateStream {
-                inner: stream,
-                ctx,
-                cancellation_token: cancellation.clone(),
-            })
+            credential_state_stream(stream, ctx, cancellation.clone())
         } else {
             tracing::error!(
                 "Attempted to start nfc credential flow, but no request context was found."
@@ -323,126 +310,103 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
     }
 }
 
-pub struct HybridStateStream<H> {
-    inner: H,
-    ctx: Arc<Mutex<Option<RequestContext>>>,
-    cancellation_token: CancellationToken,
+/// An event emitted by a credential transport.
+///
+/// Transport implementations keep their privileged internal states private and
+/// use this trait to expose the corresponding public state. Terminal events
+/// additionally carry the result used to complete the active request.
+trait TransportEvent {
+    type PublicState;
+
+    fn into_state_and_result(
+        self,
+    ) -> (
+        Self::PublicState,
+        Option<Result<CredentialResponse, CredentialServiceError>>,
+    );
 }
 
-impl<H> Stream for HybridStateStream<H>
-where
-    H: Stream<Item = HybridEvent> + Unpin + Sized,
-{
-    type Item = HybridState;
+impl TransportEvent for HybridEvent {
+    type PublicState = HybridState;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let ctx = &self.ctx.clone();
-        let cancellation_token = self.cancellation_token.clone();
-        match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(HybridEvent { state })) => {
-                if cancellation_token.is_cancelled() {
-                    return Poll::Ready(None);
-                }
-                match &state {
-                    HybridStateInternal::Completed(response) => {
-                        complete_request(ctx, Ok(response.clone()));
-                    }
-                    HybridStateInternal::Failed(err) => {
-                        complete_request(ctx, Err(err.clone()));
-                    }
-                    _ => {}
-                }
-                Poll::Ready(Some(state.into()))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-        }
+    fn into_state_and_result(
+        self,
+    ) -> (
+        Self::PublicState,
+        Option<Result<CredentialResponse, CredentialServiceError>>,
+    ) {
+        let result = match &self.state {
+            HybridStateInternal::Completed(response) => Some(Ok(response.clone())),
+            HybridStateInternal::Failed(error) => Some(Err(error.clone())),
+            _ => None,
+        };
+        (self.state.into(), result)
     }
 }
 
-struct UsbStateStream<H> {
-    inner: H,
-    ctx: Arc<Mutex<Option<RequestContext>>>,
-    cancellation_token: CancellationToken,
-}
+impl TransportEvent for UsbEvent {
+    type PublicState = UsbState;
 
-impl<H> Stream for UsbStateStream<H>
-where
-    H: Stream<Item = UsbEvent> + Unpin + Sized,
-{
-    type Item = UsbState;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let ctx = &self.ctx.clone();
-        let cancellation_token = self.cancellation_token.clone();
-        match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(UsbEvent { state })) => {
-                if cancellation_token.is_cancelled() {
-                    return Poll::Ready(None);
-                }
-                match &state {
-                    UsbStateInternal::Completed(response) => {
-                        complete_request(ctx, Ok(response.clone()));
-                    }
-                    UsbStateInternal::Failed(error) => {
-                        complete_request(ctx, Err(error.clone()));
-                    }
-                    _ => {}
-                }
-                Poll::Ready(Some(state.into()))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-        }
+    fn into_state_and_result(
+        self,
+    ) -> (
+        Self::PublicState,
+        Option<Result<CredentialResponse, CredentialServiceError>>,
+    ) {
+        let result = match &self.state {
+            UsbStateInternal::Completed(response) => Some(Ok(response.clone())),
+            UsbStateInternal::Failed(error) => Some(Err(error.clone())),
+            _ => None,
+        };
+        (self.state.into(), result)
     }
 }
 
-#[expect(unused)]
-struct NfcStateStream<H> {
-    inner: H,
-    ctx: Arc<Mutex<Option<RequestContext>>>,
-    cancellation_token: CancellationToken,
+impl TransportEvent for NfcEvent {
+    type PublicState = NfcState;
+
+    fn into_state_and_result(
+        self,
+    ) -> (
+        Self::PublicState,
+        Option<Result<CredentialResponse, CredentialServiceError>>,
+    ) {
+        let result = match &self.state {
+            NfcStateInternal::Completed(response) => Some(Ok(response.clone())),
+            NfcStateInternal::Failed(error) => Some(Err(error.clone())),
+            _ => None,
+        };
+        (self.state.into(), result)
+    }
 }
 
-impl<H> Stream for NfcStateStream<H>
+/// Applies request lifecycle handling to a transport's stream of events.
+fn credential_state_stream<S, E>(
+    mut inner: S,
+    ctx: Arc<Mutex<Option<RequestContext>>>,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = E::PublicState> + Send + 'static>>
 where
-    H: Stream<Item = NfcEvent> + Unpin + Sized,
+    S: Stream<Item = E> + Unpin + Send + 'static,
+    E: TransportEvent + Send + 'static,
+    E::PublicState: Send + 'static,
 {
-    type Item = NfcState;
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let ctx = &self.ctx.clone();
-        let cancellation_token = self.cancellation_token.clone();
-        match Box::pin(Box::pin(self).as_mut().inner.next()).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(NfcEvent { state })) => {
-                if cancellation_token.is_cancelled() {
-                    return Poll::Ready(None);
-                }
-
-                match &state {
-                    NfcStateInternal::Completed(response) => {
-                        complete_request(ctx, Ok(response.clone()));
-                    }
-                    NfcStateInternal::Failed(error) => {
-                        complete_request(ctx, Err(error.clone()));
-                    }
-                    _ => {}
-                }
-                Poll::Ready(Some(state.into()))
+    Box::pin(async_stream::stream! {
+        while let Some(event) = inner.next().await {
+            if cancellation_token.is_cancelled() {
+                break;
             }
-            Poll::Ready(None) => Poll::Ready(None),
+
+            let (state, result) = event.into_state_and_result();
+            if let Some(result) = result {
+                complete_request(&ctx, result);
+                yield state;
+                break;
+            }
+
+            yield state;
         }
-    }
+    })
 }
 
 pub enum DeviceStateUpdate {
@@ -891,7 +855,7 @@ mod tests {
 
         let service = CredentialService::new(EmptyTransport, EmptyTransport, usb_handler);
         let request = create_test_request().await;
-        let (tx, _rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
@@ -904,10 +868,116 @@ mod tests {
         usb_ref.fail(Error::Internal("test failure".to_string()));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Failed(_))));
 
-        // UsbStateStream calls complete_request on Failed, which cancels the token
+        let result = rx.await.expect("request result should be sent");
+        assert!(matches!(result, Err(Error::Internal(message)) if message == "test failure"));
+
+        // CredentialStateStream calls complete_request on Failed, which cancels the token
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_nfc_transport_uses_generic_lifecycle_stream() {
+        use credentialsd_common::model::Error;
+
+        let (nfc_handler, nfc_controller) = ScriptedTransport::<NfcStateInternal>::new();
+        let service = CredentialService::new(EmptyTransport, nfc_handler, EmptyTransport);
+        let request = create_test_request().await;
+        let (tx, rx) = oneshot::channel();
+
+        let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let mut nfc_stream = service._get_nfc_credential().await;
+
+        nfc_controller.emit(NfcStateInternal::Waiting);
+        assert!(matches!(nfc_stream.next().await, Some(NfcState::Waiting)));
+
+        nfc_controller.fail(Error::Internal("mock NFC failure".to_string()));
+        assert!(matches!(nfc_stream.next().await, Some(NfcState::Failed(_))));
+        assert!(cancellation_token.is_cancelled());
+
+        let result = rx.await.expect("request result should be sent");
+        assert!(matches!(result, Err(Error::Internal(message)) if message == "mock NFC failure"));
+    }
+
+    #[tokio::test]
+    async fn test_scripted_nfc_transport_propagates_successful_response() {
+        let (nfc_handler, nfc_controller) = ScriptedTransport::<NfcStateInternal>::new();
+        let service = CredentialService::new(EmptyTransport, nfc_handler, EmptyTransport);
+        let request = create_test_request().await;
+        let (tx, rx) = oneshot::channel();
+
+        let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let mut nfc_stream = service._get_nfc_credential().await;
+
+        nfc_controller.emit(NfcStateInternal::Waiting);
+        assert!(matches!(nfc_stream.next().await, Some(NfcState::Waiting)));
+
+        nfc_controller.complete(create_test_credential_response());
+        assert!(matches!(nfc_stream.next().await, Some(NfcState::Completed)));
+        assert!(cancellation_token.is_cancelled());
+
+        let result = rx.await.expect("request result should be sent");
+        let Ok(CredentialResponse::GetPublicKeyCredentialResponse(response)) = result else {
+            panic!("NFC completion should propagate the credential response");
+        };
+        assert_eq!(response.attachment_modality, "cross-platform");
+    }
+
+    #[tokio::test]
+    async fn test_scripted_hybrid_transport_propagates_failure() {
+        use credentialsd_common::model::Error;
+
+        let (hybrid_handler, hybrid_controller) = ScriptedTransport::<HybridStateInternal>::new();
+        let service = CredentialService::new(hybrid_handler, EmptyTransport, EmptyTransport);
+        let request = create_test_request().await;
+        let (tx, rx) = oneshot::channel();
+
+        let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        hybrid_controller.emit(HybridStateInternal::Connecting);
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Connecting)
+        ));
+
+        hybrid_controller.fail(Error::NoCredentials);
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Failed(Error::NoCredentials))
+        ));
+        assert!(cancellation_token.is_cancelled());
+
+        let result = rx.await.expect("request result should be sent");
+        assert!(matches!(result, Err(Error::NoCredentials)));
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_stream_discards_event_after_cancellation() {
+        let request = create_test_request().await;
+        let (response_channel, _response_rx) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let ctx = Arc::new(Mutex::new(Some(RequestContext {
+            request,
+            response_channel,
+            request_id: 1,
+            cancellation: cancellation.clone(),
+        })));
+        let mut stream = credential_state_stream(
+            futures::stream::iter([UsbEvent {
+                state: UsbStateInternal::Waiting,
+            }]),
+            ctx.clone(),
+            cancellation,
+        );
+
+        assert!(stream.next().await.is_none());
+        assert!(
+            ctx.lock().unwrap().is_some(),
+            "discarding a stale event must not complete the active request"
         );
     }
 
@@ -969,7 +1039,7 @@ mod tests {
 
         let service = CredentialService::new(EmptyTransport, EmptyTransport, usb_handler);
         let request = create_test_request().await;
-        let (tx, _rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
 
         let (_request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
 
@@ -981,7 +1051,9 @@ mod tests {
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Completed)));
 
-        // UsbStateStream calls complete_request on Completed, which cancels the token
+        assert!(rx.await.expect("request result should be sent").is_ok());
+
+        // CredentialStateStream calls complete_request on Completed, which cancels the token
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request completes successfully"
