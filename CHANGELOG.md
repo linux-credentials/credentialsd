@@ -2,6 +2,8 @@
 
 ## Improvements
 
+- daemon: Prevent credential discovery from hanging after cancellation or transport shutdown.
+- daemon: Ignore stale authenticator results from completed requests.
 - ui: Remove process ID from credential prompt.
 
 # 0.3.0 [2026-08-27]

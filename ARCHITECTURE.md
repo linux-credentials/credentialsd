@@ -121,6 +121,12 @@ The `CredentialService` mostly just forwards events over to the UI service, minu
 any details that are not necessary for the UI to know (like the response
 channels mentioned above, which cannot be serialized over D-Bus anyway).
 
+Handler events pass through shared request lifecycle handling. Terminal events
+are scoped to the request that started their stream, so stale streams cannot
+complete a newer request. Cancellation wakes pending streams, and if every
+selected transport ends without a terminal event, the request fails instead of
+remaining pending.
+
 Actual interaction I/O is performed using the [libwebauthn][libwebauthn] library.
 
 [libwebauthn]: https://github.com/linux-credentials/libwebauthn
