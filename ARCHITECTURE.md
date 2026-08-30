@@ -8,7 +8,7 @@ There are a few roles that are used in this architecture:
 
 - User: The user who owns the credential and interacts with the client and UI Controller.
 - Client: The application that is requesting a credential.
-- Trusted Caller: A caller trusted by credentialsd to validate the permissions of the client appliation.
+- Trusted Caller: A caller trusted by credentialsd to validate the permissions of the client application.
 - Gateway: Receives requests from the Trusted Caller, verifies request parameters and manages request concurrency.
 - Flow Controller: Proxies between the UI Controller and Credential Manager
 - UI Controller: Draws the UI and receives input from the user during the ceremony.
@@ -23,7 +23,7 @@ validates the request and caller permissions, then passes the request to the
 **Flow Controller**, which in turn calls the Credential Manager, and the UI
 Controller.
 
-The **UI Controller** is launches a UI for the user to respond to authenticator
+The **UI Controller** launches a UI for the user to respond to authenticator
 requests for user interaction, like entering a client PIN or touching an
 authenticator for user presence. The **Credential Manager** interacts with the
 OS and hardware, like discovering available transports and authenticators.
@@ -34,12 +34,12 @@ through the authentication ceremony, like prompts for a user to enter their PIN
 or touch the device.
 
 The UI Controller and Credential Manager pass user interaction and authenticator
-events messages back and forth via the Flow Controller until an Authenticator
-releases a credential, an terminal error is returned, or the request is
+events back and forth via the Flow Controller until an Authenticator releases a
+credential, a terminal error is returned, or the request is
 cancelled. Then, the Flow Controller sends the response back to the Gateway,
 which relays the credential to the Client.
 
-Here is a diagram of the interactions between the roles. (User is ommitted for simplicity.)
+Here is a diagram of the interactions between the roles. (User is omitted for simplicity.)
 
 ```mermaid
 sequenceDiagram
