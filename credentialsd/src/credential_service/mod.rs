@@ -68,6 +68,13 @@ fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
 #[derive(Debug)]
 struct RequestMarker;
 
+#[derive(Clone, Debug)]
+struct RequestLifecycle {
+    request_id: RequestId,
+    request_marker: Arc<RequestMarker>,
+    cancellation: CancellationToken,
+}
+
 #[derive(Debug)]
 struct RequestContext {
     request: CredentialRequest,
@@ -78,6 +85,14 @@ struct RequestContext {
 }
 
 impl RequestContext {
+    fn lifecycle(&self) -> RequestLifecycle {
+        RequestLifecycle {
+            request_id: self.request_id,
+            request_marker: self.request_marker.clone(),
+            cancellation: self.cancellation.clone(),
+        }
+    }
+
     fn send_response(self, response: Result<CredentialResponse, CredentialServiceError>) {
         if self.response_channel.send(response).is_err() {
             tracing::error!(
@@ -129,31 +144,60 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
 impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
     CredentialService<H, N, U>
 {
+    fn current_request(&self) -> Option<(CredentialRequest, RequestLifecycle)> {
+        self.ctx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|ctx| (ctx.request.clone(), ctx.lifecycle()))
+    }
+
+    fn hybrid_credential_stream(
+        &self,
+        request: &CredentialRequest,
+        lifecycle: RequestLifecycle,
+    ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
+        let stream = self
+            .hybrid_handler
+            .lock()
+            .unwrap()
+            .start(request, lifecycle.cancellation.clone());
+        credential_state_stream(stream, self.ctx.clone(), lifecycle)
+    }
+
+    fn usb_credential_stream(
+        &self,
+        request: &CredentialRequest,
+        lifecycle: RequestLifecycle,
+    ) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+        let stream = self
+            .usb_handler
+            .lock()
+            .unwrap()
+            .start(request, lifecycle.cancellation.clone());
+        credential_state_stream(stream, self.ctx.clone(), lifecycle)
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    fn nfc_credential_stream(
+        &self,
+        request: &CredentialRequest,
+        lifecycle: RequestLifecycle,
+    ) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+        let stream = self
+            ._nfc_handler
+            .lock()
+            .unwrap()
+            .start(request, lifecycle.cancellation.clone());
+        credential_state_stream(stream, self.ctx.clone(), lifecycle)
+    }
+
+    #[cfg(test)]
     async fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext {
-            ref request,
-            ref cancellation,
-            ref request_marker,
-            request_id,
-            ..
-        }) = *guard
-        {
-            let stream = self
-                .hybrid_handler
-                .lock()
-                .unwrap()
-                .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
-            credential_state_stream(
-                stream,
-                ctx,
-                request_id,
-                request_marker.clone(),
-                cancellation.clone(),
-            )
+        if let Some((request, lifecycle)) = self.current_request() {
+            self.hybrid_credential_stream(&request, lifecycle)
         } else {
             tracing::error!(
                 "Attempted to start hybrid credential flow, but no request context was found."
@@ -162,29 +206,10 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
+    #[cfg(test)]
     async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext {
-            ref request,
-            ref cancellation,
-            ref request_marker,
-            request_id,
-            ..
-        }) = *guard
-        {
-            let stream = self
-                .usb_handler
-                .lock()
-                .unwrap()
-                .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
-            credential_state_stream(
-                stream,
-                ctx,
-                request_id,
-                request_marker.clone(),
-                cancellation.clone(),
-            )
+        if let Some((request, lifecycle)) = self.current_request() {
+            self.usb_credential_stream(&request, lifecycle)
         } else {
             tracing::error!(
                 "Attempted to start usb credential flow, but no request context was found."
@@ -193,29 +218,10 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
+    #[cfg(test)]
     async fn _get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext {
-            ref request,
-            ref cancellation,
-            ref request_marker,
-            request_id,
-            ..
-        }) = *guard
-        {
-            let stream = self
-                ._nfc_handler
-                .lock()
-                .unwrap()
-                .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
-            credential_state_stream(
-                stream,
-                ctx,
-                request_id,
-                request_marker.clone(),
-                cancellation.clone(),
-            )
+        if let Some((request, lifecycle)) = self.current_request() {
+            self.nfc_credential_stream(&request, lifecycle)
         } else {
             tracing::error!(
                 "Attempted to start nfc credential flow, but no request context was found."
@@ -223,6 +229,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
             todo!("Handle error when context is not set up.")
         }
     }
+
 }
 
 #[async_trait]
@@ -301,11 +308,16 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         &self,
     ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
         let available_transports = available_transports().await;
+        let Some((request, lifecycle)) = self.current_request() else {
+            tracing::error!(
+                "Attempted to start credential discovery, but no request context was found."
+            );
+            return futures::stream::empty().boxed();
+        };
         let mut selected_transports = Vec::new();
         if available_transports.contains(&libwebauthn::Transport::Usb) {
             let usb = self
-                .get_usb_credential()
-                .await
+                .usb_credential_stream(&request, lifecycle.clone())
                 .map(DeviceStateUpdate::from)
                 .boxed();
             selected_transports.push(usb);
@@ -320,8 +332,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         or verification message is sent.
         if available_transports.contains(&libwebauthn::Transport::Nfc) {
             let nfc = self
-                .get_nfc_credential()
-                .await
+                .nfc_credential_stream(&request, lifecycle.clone())
                 .map(DeviceStateUpdate::from)
                 .boxed();
             selected_transports.push(nfc);
@@ -329,8 +340,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         */
         if available_transports.contains(&libwebauthn::Transport::Hybrid) {
             let hybrid = self
-                .get_hybrid_credential()
-                .await
+                .hybrid_credential_stream(&request, lifecycle.clone())
                 .map(DeviceStateUpdate::from)
                 .boxed();
             selected_transports.push(hybrid);
@@ -414,9 +424,7 @@ impl TransportEvent for NfcEvent {
 fn credential_state_stream<S, E>(
     mut inner: S,
     ctx: Arc<Mutex<Option<RequestContext>>>,
-    request_id: RequestId,
-    request_marker: Arc<RequestMarker>,
-    cancellation_token: CancellationToken,
+    lifecycle: RequestLifecycle,
 ) -> Pin<Box<dyn Stream<Item = E::PublicState> + Send + 'static>>
 where
     S: Stream<Item = E> + Unpin + Send + 'static,
@@ -425,7 +433,7 @@ where
 {
     Box::pin(async_stream::stream! {
         loop {
-            let Some(event) = cancellation_token
+            let Some(event) = lifecycle.cancellation
                 .run_until_cancelled(inner.next())
                 .await
                 .flatten()
@@ -433,13 +441,13 @@ where
                 break;
             };
 
-            if cancellation_token.is_cancelled() {
+            if lifecycle.cancellation.is_cancelled() {
                 break;
             }
 
             let (state, result) = event.into_state_and_result();
             if let Some(result) = result {
-                if !complete_request(&ctx, request_id, &request_marker, result) {
+                if !complete_request(&ctx, &lifecycle, result) {
                     break;
                 }
                 yield state;
@@ -487,17 +495,16 @@ impl From<UsbState> for DeviceStateUpdate {
 
 fn complete_request(
     ctx: &Mutex<Option<RequestContext>>,
-    request_id: RequestId,
-    request_marker: &Arc<RequestMarker>,
+    lifecycle: &RequestLifecycle,
     response: Result<CredentialResponse, CredentialServiceError>,
 ) -> bool {
     let request_ctx = ctx.lock().unwrap().take_if(|request_ctx| {
-        request_ctx.request_id == request_id
-            && Arc::ptr_eq(&request_ctx.request_marker, request_marker)
+        request_ctx.request_id == lifecycle.request_id
+            && Arc::ptr_eq(&request_ctx.request_marker, &lifecycle.request_marker)
     });
     let Some(request_ctx) = request_ctx else {
         tracing::debug!(
-            request_id,
+            request_id = lifecycle.request_id,
             "Ignoring terminal event for a request that is no longer active."
         );
         return false;
@@ -713,7 +720,6 @@ mod tests {
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        // Push and consume one state from each to confirm streams are live
         usb_ref.emit(UsbStateInternal::Waiting);
         hybrid_ref.emit(HybridStateInternal::Init("qr".to_string()));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
@@ -722,18 +728,13 @@ mod tests {
             Some(HybridState::Init(_))
         ));
 
-        // Queue additional states that should never be emitted after cancellation.
-        // These sit in the channel when cancel_request() fires.
         usb_ref.emit(UsbStateInternal::Waiting);
         usb_ref.emit(UsbStateInternal::Waiting);
         hybrid_ref.emit(HybridStateInternal::Connecting);
 
-        // Cancel the request — token is now cancelled synchronously
         service.cancel_request(request_id).await;
         assert!(cancellation_token.is_cancelled());
 
-        // biased select! polls cancellation first each iteration, discarding
-        // the queued states before they can be emitted.
         let usb_remaining: Vec<_> = usb_stream.collect().await;
         let hybrid_remaining: Vec<_> = hybrid_stream.collect().await;
 
@@ -921,7 +922,7 @@ mod tests {
         let result = rx.await.expect("request result should be sent");
         assert!(matches!(result, Err(Error::Internal(message)) if message == "test failure"));
 
-        // CredentialStateStream calls complete_request on Failed, which cancels the token
+        // The lifecycle stream completes a failed request and cancels its token.
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request fails"
@@ -1048,14 +1049,17 @@ mod tests {
             request_marker: request_marker.clone(),
             cancellation: cancellation.clone(),
         })));
+        let lifecycle = RequestLifecycle {
+            request_id: 1,
+            request_marker,
+            cancellation,
+        };
         let mut stream = credential_state_stream(
             futures::stream::iter([UsbEvent {
                 state: UsbStateInternal::Waiting,
             }]),
             ctx.clone(),
-            1,
-            request_marker,
-            cancellation,
+            lifecycle,
         );
 
         assert!(stream.next().await.is_none());
@@ -1078,6 +1082,11 @@ mod tests {
             request_marker: request_marker.clone(),
             cancellation: cancellation.clone(),
         })));
+        let lifecycle = RequestLifecycle {
+            request_id: 1,
+            request_marker,
+            cancellation: cancellation.clone(),
+        };
         let (polled_tx, polled_rx) = oneshot::channel();
         let mut polled_tx = Some(polled_tx);
         let pending_inner = futures::stream::poll_fn(move |_cx| {
@@ -1086,13 +1095,7 @@ mod tests {
             }
             Poll::<Option<UsbEvent>>::Pending
         });
-        let mut stream = credential_state_stream(
-            pending_inner,
-            ctx.clone(),
-            1,
-            request_marker,
-            cancellation.clone(),
-        );
+        let mut stream = credential_state_stream(pending_inner, ctx.clone(), lifecycle);
 
         let waiting_task = tokio::spawn(async move { stream.next().await });
         polled_rx.await.expect("inner stream should be polled");
@@ -1129,9 +1132,11 @@ mod tests {
                 state: UsbStateInternal::Completed(create_test_credential_response()),
             }]),
             ctx.clone(),
-            1,
-            stale_request_marker,
-            stale_cancellation.clone(),
+            RequestLifecycle {
+                request_id: 1,
+                request_marker: stale_request_marker,
+                cancellation: stale_cancellation.clone(),
+            },
         );
 
         assert!(stale_stream.next().await.is_none());
@@ -1174,7 +1179,7 @@ mod tests {
         // It sits in the channel when complete_request() cancels the token.
         hybrid_ref.emit(HybridStateInternal::Connecting);
 
-        // USB fails — CredentialStateStream calls complete_request → token cancelled
+        // USB failure completes the request and cancels the token.
         usb_ref.emit(UsbStateInternal::Waiting);
         usb_ref.fail(Error::Internal("test".to_string()));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
@@ -1219,7 +1224,7 @@ mod tests {
 
         assert!(rx.await.expect("request result should be sent").is_ok());
 
-        // CredentialStateStream calls complete_request on Completed, which cancels the token
+        // The lifecycle stream completes the request and cancels its token.
         assert!(
             cancellation_token.is_cancelled(),
             "Cancellation token should be triggered when request completes successfully"
@@ -1253,7 +1258,7 @@ mod tests {
         // It sits in the channel when complete_request() cancels the token.
         hybrid_ref.emit(HybridStateInternal::Connecting);
 
-        // USB completes — CredentialStateStream calls complete_request → token cancelled
+        // USB completion completes the request and cancels the token.
         usb_ref.emit(UsbStateInternal::Waiting);
         usb_ref.complete(credential_response);
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
