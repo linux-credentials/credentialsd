@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 use zbus::{
     Connection, MatchRule, MessageStream,
     fdo::{self, DBusProxy},
-    names::OwnedUniqueName,
+    names::{OwnedUniqueName, WellKnownName},
     proxy,
     zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
 };
@@ -400,6 +400,14 @@ impl UiController for UiControlServiceClient {
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
         let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        // Calling `create_session()` below would activate the service automatically,
+        // but we want to subscribe to UI-events before creating a session, and filter
+        // events according to the sender.
+        // Therefore, we call `start_service_by_name()` explicitly, then subscribe, then
+        // issue the function call.
+        let service_name = WellKnownName::try_from(backend_proxy.as_ref().destination().clone())
+            .expect("UiControl destination is a well-known name");
+        dbus_proxy.start_service_by_name(service_name, 0).await?;
         let sender = dbus_proxy
             .get_name_owner(backend_proxy.as_ref().destination().clone())
             .await?;
