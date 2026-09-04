@@ -166,16 +166,27 @@ impl HybridHandler for InternalHybridHandler {
                     Some(resp) => resp,
                     None => {
                         tracing::debug!("Hybrid handler cancelled, stopping processing");
-                        Err(Error::Internal("Request cancelled".to_string()))
+                        Err(Error::RequestCancelled)
                     }
                 };
 
                 let terminal_state = match response {
-                    Ok(auth_response) => HybridStateInternal::Completed(auth_response),
-                    Err(err) => HybridStateInternal::Failed(err),
+                    Ok(auth_response) => Some(HybridStateInternal::Completed(auth_response)),
+                    Err(Error::RequestCancelled) => {
+                        // Cancelled by another transport winning or an explicit user cancel.
+                        // Do not emit a Failed state — complete_request was already called
+                        // by the winning path, and emitting Failed here would produce a
+                        // spurious ErrorAuthenticator in the UI and a redundant
+                        // complete_request invocation.
+                        tracing::debug!("Hybrid handler cancelled, exiting silently");
+                        None
+                    }
+                    Err(err) => Some(HybridStateInternal::Failed(err)),
                 };
-                if let Err(err) = tx.send(terminal_state).await {
-                    tracing::error!("Failed to send caBLE update: {:?}", err)
+                if let Some(state) = terminal_state {
+                    if let Err(err) = tx.send(state).await {
+                        tracing::error!("Failed to send caBLE update: {:?}", err)
+                    }
                 }
             });
         });
@@ -204,10 +215,6 @@ pub(super) enum HybridStateInternal {
     Completed(CredentialResponse),
 
     Failed(Error),
-    // TODO(cancellation)
-    // This isn't actually sent from the server.
-    #[allow(dead_code)]
-    UserCancelled,
 }
 
 // this is here to prevent making HybridStateInternal public to the whole crate.
@@ -234,9 +241,6 @@ pub enum HybridState {
 
     /// Hybrid operation failed.
     Failed(Error),
-
-    // This isn't actually sent from the server.
-    UserCancelled,
 }
 
 impl From<HybridStateInternal> for HybridState {
@@ -246,7 +250,6 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Connecting => HybridState::Connecting,
             HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
-            HybridStateInternal::UserCancelled => HybridState::UserCancelled,
             HybridStateInternal::Failed(err) => HybridState::Failed(err),
         }
     }
@@ -269,13 +272,14 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
-            HybridState::UserCancelled => BackgroundEvent::ErrorCancelled,
             HybridState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
             HybridState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
             HybridState::Failed(Error::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
             }
             HybridState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            // This should currently never be reached, but we'll likely use it in future refactoring
+            HybridState::Failed(Error::RequestCancelled) => BackgroundEvent::ErrorCancelled,
             HybridState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }

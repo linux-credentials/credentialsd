@@ -50,7 +50,7 @@ async fn cancellable_sleep(
     tokio::select! {
         _ = tokio::time::sleep(duration) => Ok(()),
         _ = cancellation.cancelled() => {
-            Err(CredentialServiceError::Internal("Request cancelled".to_string()))
+            Err(CredentialServiceError::RequestCancelled)
         }
     }
 }
@@ -348,6 +348,10 @@ where
                     HybridStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    HybridStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     HybridStateInternal::Failed(err) => {
                         complete_request(ctx, Err(err.clone()));
                     }
@@ -388,6 +392,10 @@ where
                     UsbStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    UsbStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     UsbStateInternal::Failed(error) => {
                         complete_request(ctx, Err(error.clone()));
                     }
@@ -430,6 +438,10 @@ where
                     NfcStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    NfcStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     NfcStateInternal::Failed(error) => {
                         complete_request(ctx, Err(error.clone()));
                     }
@@ -672,7 +684,11 @@ mod tests {
         let start = tokio::time::Instant::now();
         let result = cancellable_sleep(Duration::from_secs(5), &token).await;
 
-        assert!(result.is_err());
+        // Must return RequestCancelled, not a generic Internal error
+        assert!(
+            matches!(result, Err(CredentialServiceError::RequestCancelled)),
+            "cancellable_sleep must return RequestCancelled when the token is cancelled"
+        );
         // Should return immediately, not after 5 seconds
         assert!(start.elapsed() < Duration::from_millis(100));
     }
@@ -1227,6 +1243,81 @@ mod tests {
         assert!(
             hybrid_ref.was_cancelled(),
             "Hybrid handler should have detected cancellation when USB completed"
+        );
+    }
+
+    /// When USB is cancelled (by another transport winning), the stream must emit
+    /// no Failed/ErrorInternal state — it should simply end cleanly.
+    #[tokio::test]
+    async fn test_cancelled_usb_emits_no_failed_state() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (request_id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        // Confirm stream is live
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+
+        // Queue a RequestCancelled — simulates what process() emits when the
+        // cancellation token fires internally before the outer branch catches it.
+        usb_ref.shift_state(UsbStateInternal::Failed(
+            CredentialServiceError::RequestCancelled,
+        ));
+
+        // Cancel the request synchronously so the token is already cancelled
+        // when the stream is next polled.
+        service.cancel_request(request_id).await;
+        assert!(token.is_cancelled());
+
+        // The stream must not yield the Failed(RequestCancelled) state.
+        // biased select! polls cancellation first; the queued state is discarded.
+        let remaining: Vec<_> = usb_stream.collect().await;
+        assert!(
+            remaining.is_empty(),
+            "cancelled USB stream must emit no further states, including Failed(RequestCancelled)"
+        );
+    }
+
+    /// When hybrid is cancelled, it must not emit a Failed state on the stream.
+    /// complete_request must be invoked exactly once (by the winning transport or
+    /// cancel_request), not a second time from hybrid's terminal-state path.
+    #[tokio::test]
+    async fn test_cancelled_hybrid_emits_no_failed_state() {
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
+
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (request_id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        // Confirm stream is live
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
+
+        // Queue a RequestCancelled — what the real handler would emit when
+        // run_until_cancelled returns None
+        hybrid_ref.shift_state(HybridStateInternal::Failed(
+            CredentialServiceError::RequestCancelled,
+        ));
+
+        service.cancel_request(request_id).await;
+        assert!(token.is_cancelled());
+
+        // Stream must stop without emitting the Failed(RequestCancelled) state.
+        let remaining: Vec<_> = hybrid_stream.collect().await;
+        assert!(
+            remaining.is_empty(),
+            "cancelled hybrid stream must emit no further states"
         );
     }
 }

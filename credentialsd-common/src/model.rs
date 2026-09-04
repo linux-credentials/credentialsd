@@ -119,6 +119,11 @@ pub enum Error {
     /// Note that this is different than exhausting the PIN count that fully
     /// locks out the device.
     PinAttemptsExhausted,
+    /// The request was cancelled — either because another transport completed the
+    /// ceremony first, or because the user or client explicitly cancelled it.
+    /// This is an expected, non-error termination and should not be treated as an
+    /// authenticator failure.
+    RequestCancelled,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -133,6 +138,7 @@ impl Display for Error {
             Self::NoCredentials => f.write_str("NoCredentials"),
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
+            Self::RequestCancelled => f.write_str("RequestCancelled"),
             Self::Internal(s) => write!(f, "InternalError: {s}"),
         }
     }
@@ -148,6 +154,7 @@ impl TryFrom<&Value<'_>> for Error {
             "NoCredentials" => crate::model::Error::NoCredentials,
             "CredentialExcluded" => crate::model::Error::CredentialExcluded,
             "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
+            "RequestCancelled" => crate::model::Error::RequestCancelled,
             s => crate::model::Error::Internal(String::from(s)),
         };
         Ok(err)

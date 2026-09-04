@@ -47,10 +47,7 @@ impl InProcessUsbHandler {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
         let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
             tracing::debug!("USB idle polling cancelled");
-            // TODO: We should introduce a cancelled-error variant and return this here,
-            //       so we can differentiate between internal errors, cancellation by user
-            //       and cancellation because other transfers finished
-            return Err(Error::Internal("Request cancelled".to_string()));
+            return Err(Error::RequestCancelled);
         };
 
         match result {
@@ -150,7 +147,7 @@ impl InProcessUsbHandler {
                     tracing::info!("Cancelling blinking device {device:?}.");
                     handle.cancel_ongoing_operation().await;
                 }
-                return Err(Error::Internal("Request cancelled".to_string()));
+                return Err(Error::RequestCancelled);
             };
 
             let Some(msg) = maybe_msg else {
@@ -327,8 +324,17 @@ impl InProcessUsbHandler {
                 .await
             else {
                 tracing::debug!("USB handler cancelled, stopping processing");
-                break Err(Error::Internal("Request cancelled".to_string()));
+                break Ok(());
             };
+
+            // Guard: an inner future may have raced the cancellation token and
+            // returned RequestCancelled as a value rather than the outer branch
+            // firing. Treat it the same way — break cleanly without emitting a
+            // spurious Failed state to the UI.
+            if matches!(next_usb_state, Err(Error::RequestCancelled)) {
+                tracing::debug!("USB handler cancelled (inner path), stopping processing");
+                break Ok(());
+            }
 
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
             // Usually, comparing the discriminant is enough, but PinNotSet/NeedsPin
@@ -448,7 +454,7 @@ async fn handle_events(
                 None => {
                     tracing::debug!("USB ceremony cancelled, interrupting authenticator operation");
                     cancel_handle.cancel_ongoing_operation().await;
-                    Err(Error::Internal("Request cancelled".to_string()))
+                    Err(Error::RequestCancelled)
                 }
             };
 
@@ -532,9 +538,6 @@ pub(super) enum UsbStateInternal {
 
     /// There was an error while interacting with the authenticator.
     Failed(Error),
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
 }
 
 /// Used to share public state between  credential service and UI.
@@ -573,9 +576,6 @@ pub enum UsbState {
 
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
@@ -612,7 +612,6 @@ impl From<UsbStateInternal> for UsbState {
             }
             UsbStateInternal::NeedsUserPresence => UsbState::NeedsUserPresence,
             UsbStateInternal::Completed(_) => UsbState::Completed,
-            // UsbStateInternal::UserCancelled => UsbState:://UserCancelled,
             UsbStateInternal::SelectingDevice(_) => UsbState::SelectingDevice,
             UsbStateInternal::SelectCredential { response, cred_tx } => {
                 UsbState::SelectingCredential {
@@ -685,6 +684,7 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
             UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorCredentialExcluded,
             UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            UsbState::Failed(Error::RequestCancelled) => BackgroundEvent::ErrorCancelled,
             UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
