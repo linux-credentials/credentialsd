@@ -2308,8 +2308,7 @@ dependencies = [
 [[package]]
 name = "libwebauthn"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7bf92efada8fcf40982774a4d8e1760ab7d086728ce2669ea1413a9a9f8c577"
+source = "git+https://github.com/linux-credentials/libwebauthn.git?rev=efa374d6303eb1ebeff373878fa76736f3d2c308#efa374d6303eb1ebeff373878fa76736f3d2c308"
 dependencies = [
  "aes",
  "aes-gcm",

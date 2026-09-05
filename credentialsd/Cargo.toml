@@ -18,7 +18,11 @@ async-stream = "=0.3.6"
 async-trait = "=0.1.91"
 base64 = "=0.22.1"
 futures = "=0.3.33"
-libwebauthn = { version = "=0.10.0", features = ["nfc-backend-libnfc", "nfc-backend-pcsc", "reqwest-related-origins-source"] }
+libwebauthn = {
+  git = "https://github.com/linux-credentials/libwebauthn.git",
+  rev = "efa374d6303eb1ebeff373878fa76736f3d2c308",
+  features = ["nfc-backend-libnfc", "nfc-backend-pcsc", "reqwest-related-origins-source"]
+}
 nfc1 = { version = "=0.7.1", default-features = false }
 rand = "=0.10.2"
 ring = "=0.17.14"

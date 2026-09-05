@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Decrease USB logging level.
 - ui: Remove process ID from credential prompt.
 
 # 0.3.0 [2026-08-27]
