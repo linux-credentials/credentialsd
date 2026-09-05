@@ -2,6 +2,8 @@
 
 ## Improvements
 
+- daemon: Wake pending credential streams when their request is cancelled.
+- daemon: Ignore stale authenticator results from completed requests.
 - ui: Remove process ID from credential prompt.
 
 # 0.3.0 [2026-08-27]

@@ -229,7 +229,6 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
             todo!("Handle error when context is not set up.")
         }
     }
-
 }
 
 #[async_trait]

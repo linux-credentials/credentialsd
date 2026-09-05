@@ -122,7 +122,10 @@ any details that are not necessary for the UI to know (like the response
 channels mentioned above, which cannot be serialized over D-Bus anyway).
 
 USB, hybrid, and NFC handler events pass through shared request lifecycle
-handling, while each transport keeps its own public states.
+handling, while each transport keeps its own public states. All selected
+transports share one snapshot of their originating request. Terminal events
+are scoped to that request, so stale streams cannot complete a newer request.
+Cancellation wakes pending streams.
 
 Actual interaction I/O is performed using the [libwebauthn][libwebauthn] library.
 
