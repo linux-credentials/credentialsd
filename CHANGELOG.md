@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Fail credential discovery when all selected transports stop without a result.
 - daemon: Wake pending credential streams when their request is cancelled.
 - daemon: Ignore stale authenticator results from completed requests.
 - ui: Remove process ID from credential prompt.

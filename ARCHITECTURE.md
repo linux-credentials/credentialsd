@@ -125,7 +125,8 @@ USB, hybrid, and NFC handler events pass through shared request lifecycle
 handling, while each transport keeps its own public states. All selected
 transports share one snapshot of their originating request. Terminal events
 are scoped to that request, so stale streams cannot complete a newer request.
-Cancellation wakes pending streams.
+Cancellation wakes pending streams. If every selected transport ends without
+a terminal event, the request fails instead of remaining pending.
 
 Actual interaction I/O is performed using the [libwebauthn][libwebauthn] library.
 
