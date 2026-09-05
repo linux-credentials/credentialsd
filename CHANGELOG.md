@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Fix failure to activate UI service automatically.
 - daemon: Decrease USB logging level.
 - ui: Remove process ID from credential prompt.
 
