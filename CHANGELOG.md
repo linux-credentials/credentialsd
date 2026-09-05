@@ -1,5 +1,7 @@
 # [unreleased]
 
+# 0.3.1 [2026-09-05]
+
 ## Improvements
 
 - daemon: Fix failure to activate UI service automatically.
