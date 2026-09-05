@@ -121,6 +121,9 @@ The `CredentialService` mostly just forwards events over to the UI service, minu
 any details that are not necessary for the UI to know (like the response
 channels mentioned above, which cannot be serialized over D-Bus anyway).
 
+USB, hybrid, and NFC handler events pass through shared request lifecycle
+handling, while each transport keeps its own public states.
+
 Actual interaction I/O is performed using the [libwebauthn][libwebauthn] library.
 
 [libwebauthn]: https://github.com/linux-credentials/libwebauthn
