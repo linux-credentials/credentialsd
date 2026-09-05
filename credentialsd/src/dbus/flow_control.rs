@@ -24,6 +24,7 @@ use zbus::connection::Connection;
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::dbus::UiControlServiceClient;
+use crate::gateway::WebAuthnError;
 use crate::{
     credential_service::UsbState,
     dbus::ui_control::UiController,
@@ -33,7 +34,6 @@ use crate::{
     credential_service::{DeviceStateUpdate, ManageDevice, nfc::NfcState},
     model::ClientDetails,
 };
-use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
 
 pub struct UiRequestContext {
     request: CredentialRequest,
@@ -211,7 +211,14 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                                     device_update.into()
                                 });
                         let flow = flow.clone();
-                        forward_background_event_stream(flow, stream, discovery_permit);
+                        forward_background_event_stream(
+                            move |event| {
+                                let flow = flow.clone();
+                                async move { flow.send_state_update(event).await }
+                            },
+                            stream,
+                            discovery_permit,
+                        );
                     }
                     UserInteractedEvent::ClientPinEntered(pin_fd) => {
                         let pin_fd = OwnedFd::from(pin_fd);
@@ -313,14 +320,15 @@ fn claim_discovery(discovery_gate: &Arc<Semaphore>) -> Option<OwnedSemaphorePerm
     discovery_gate.clone().try_acquire_owned().ok()
 }
 
-fn forward_background_event_stream(
-    flow: Ceremony,
+fn forward_background_event_stream<F: Future<Output = Result<(), ()>> + Send>(
+    mut send_state_update: impl FnMut(BackgroundEvent) -> F + Send + 'static,
     mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
-    _discovery_permit: OwnedSemaphorePermit,
+    discovery_permit: OwnedSemaphorePermit,
 ) {
     tokio::spawn(async move {
+        let _discovery_permit = discovery_permit;
         while let Some(event) = stream.next().await {
-            let send_result = flow.send_state_update(event).await;
+            let send_result = send_state_update(event).await;
             if send_result.is_err() {
                 tracing::error!("Failed to send state update event to backend. Stopping flow");
                 break;
@@ -333,6 +341,40 @@ fn forward_background_event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn discovery_slot_is_held_until_background_stream_ends() {
+        let discovery_gate = Arc::new(Semaphore::new(1));
+        let permit = claim_discovery(&discovery_gate).unwrap();
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (polled_tx, polled_rx) = oneshot::channel();
+        let mut polled_tx = Some(polled_tx);
+        let stream = futures::stream::poll_fn(move |cx| {
+            if let Some(tx) = polled_tx.take() {
+                let _ = tx.send(());
+            }
+            events_rx.poll_recv(cx)
+        });
+
+        forward_background_event_stream(|_| async { Ok(()) }, stream, permit);
+        assert!(claim_discovery(&discovery_gate).is_none());
+        tokio::time::timeout(std::time::Duration::from_secs(1), polled_rx)
+            .await
+            .expect("background stream should be polled")
+            .unwrap();
+        assert!(claim_discovery(&discovery_gate).is_none());
+
+        drop(events_tx);
+        let next_permit = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            discovery_gate.clone().acquire_owned(),
+        )
+        .await
+        .expect("ending the stream should release the discovery slot")
+        .unwrap();
+        drop(next_permit);
+        assert!(claim_discovery(&discovery_gate).is_some());
+    }
 
     #[test]
     fn discovery_can_restart_after_the_active_stream_releases_its_claim() {

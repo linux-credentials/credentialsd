@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Prevent concurrent discovery streams for the same credential request.
 - ui: Remove process ID from credential prompt.
 
 # 0.3.0 [2026-08-27]
