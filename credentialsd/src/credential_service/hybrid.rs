@@ -21,10 +21,8 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use credentialsd_common::{
-    memfd::write_secret,
-    model::{BackgroundEvent, Error},
-};
+use super::CredentialServiceError;
+use credentialsd_common::{memfd::write_secret, model::BackgroundEvent};
 
 use crate::model::{CredentialRequest, CredentialResponse};
 
@@ -148,13 +146,15 @@ impl HybridHandler for InternalHybridHandler {
                     }
                     .map_err(|err| match err {
                         WebAuthnError::Ctap(CtapError::PINAuthBlocked) => {
-                            Error::PinAttemptsExhausted
+                            CredentialServiceError::PinAttemptsExhausted
                         }
-                        WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
+                        WebAuthnError::Ctap(CtapError::NoCredentials) => {
+                            CredentialServiceError::NoCredentials
+                        }
                         WebAuthnError::Ctap(CtapError::CredentialExcluded) => {
-                            Error::CredentialExcluded
+                            CredentialServiceError::CredentialExcluded
                         }
-                        _ => Error::AuthenticatorError,
+                        _ => CredentialServiceError::AuthenticatorError,
                     })
                 };
 
@@ -166,13 +166,13 @@ impl HybridHandler for InternalHybridHandler {
                     Some(resp) => resp,
                     None => {
                         tracing::debug!("Hybrid handler cancelled, stopping processing");
-                        Err(Error::RequestCancelled)
+                        Err(CredentialServiceError::RequestCancelled)
                     }
                 };
 
                 let terminal_state = match response {
                     Ok(auth_response) => Some(HybridStateInternal::Completed(auth_response)),
-                    Err(Error::RequestCancelled) => {
+                    Err(CredentialServiceError::RequestCancelled) => {
                         // Cancelled by another transport winning or an explicit user cancel.
                         // Do not emit a Failed state — complete_request was already called
                         // by the winning path, and emitting Failed here would produce a
@@ -183,10 +183,10 @@ impl HybridHandler for InternalHybridHandler {
                     }
                     Err(err) => Some(HybridStateInternal::Failed(err)),
                 };
-                if let Some(state) = terminal_state {
-                    if let Err(err) = tx.send(state).await {
-                        tracing::error!("Failed to send caBLE update: {:?}", err)
-                    }
+                if let Some(state) = terminal_state
+                    && let Err(err) = tx.send(state).await
+                {
+                    tracing::error!("Failed to send caBLE update: {:?}", err)
                 }
             });
         });
@@ -214,7 +214,7 @@ pub(super) enum HybridStateInternal {
     /// Authenticator data
     Completed(CredentialResponse),
 
-    Failed(Error),
+    Failed(CredentialServiceError),
 }
 
 // this is here to prevent making HybridStateInternal public to the whole crate.
@@ -240,7 +240,7 @@ pub enum HybridState {
     Completed,
 
     /// Hybrid operation failed.
-    Failed(Error),
+    Failed(CredentialServiceError),
 }
 
 impl From<HybridStateInternal> for HybridState {
@@ -272,15 +272,25 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
-            HybridState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
-            HybridState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
-            HybridState::Failed(Error::CredentialExcluded) => {
+            HybridState::Failed(CredentialServiceError::AuthenticatorError) => {
+                BackgroundEvent::ErrorAuthenticator
+            }
+            HybridState::Failed(CredentialServiceError::NoCredentials) => {
+                BackgroundEvent::ErrorNoCredentials
+            }
+            HybridState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
             }
-            HybridState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
+            HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorAuthenticator
+            }
             // This should currently never be reached, but we'll likely use it in future refactoring
-            HybridState::Failed(Error::RequestCancelled) => BackgroundEvent::ErrorCancelled,
-            HybridState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
+            HybridState::Failed(CredentialServiceError::RequestCancelled) => {
+                BackgroundEvent::ErrorCancelled
+            }
+            HybridState::Failed(CredentialServiceError::Internal(_)) => {
+                BackgroundEvent::ErrorInternal
+            }
         }
     }
 }
@@ -306,7 +316,9 @@ async fn handle_hybrid_updates(
                 CableUpdate::Connected => Some(HybridStateInternal::Connected),
                 CableUpdate::Error(transport_error) => {
                     error!(?transport_error, "Hybrid transport error");
-                    Some(HybridStateInternal::Failed(Error::AuthenticatorError))
+                    Some(HybridStateInternal::Failed(
+                        CredentialServiceError::AuthenticatorError,
+                    ))
                 }
             },
         };

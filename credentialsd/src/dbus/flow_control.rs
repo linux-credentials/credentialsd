@@ -10,10 +10,7 @@ use std::{
 use async_trait::async_trait;
 use credentialsd_common::{
     memfd::read_secret,
-    model::{
-        BackgroundEvent, Error as CredentialServiceError, PortalBackendOptions,
-        UserInteractedEvent, WindowHandle,
-    },
+    model::{BackgroundEvent, PortalBackendOptions, UserInteractedEvent, WindowHandle},
 };
 use futures_lite::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
@@ -30,7 +27,7 @@ use crate::{
     model::{CredentialRequest, CredentialResponse},
 };
 use crate::{
-    credential_service::{DeviceStateUpdate, ManageDevice, nfc::NfcState},
+    credential_service::{CredentialServiceError, DeviceStateUpdate, ManageDevice, nfc::NfcState},
     model::ClientDetails,
 };
 use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
