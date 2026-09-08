@@ -561,7 +561,7 @@ impl From<UsbState> for DeviceStateUpdate {
 /// deliberate decision here. The mapping follows the WebAuthn specification:
 ///   - https://www.w3.org/TR/webauthn-3/#sctn-create-request-exceptions
 ///   - https://www.w3.org/TR/webauthn-3/#sctn-get-request-exceptions
-fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
+pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
     match err {
         // WebAuthn spec requires CredentialExcluded be remapped to InvalidStateError
         // and returned to the RP. The credential is already registered on this
@@ -1503,5 +1503,132 @@ mod tests {
         assert!(!is_ceremony_terminating(
             &CredentialServiceError::NonTerminatingCancellation
         ));
+    }
+
+    /// After a non-terminating USB failure, the mock stream remains live and
+    /// continues to emit subsequent states.
+    #[tokio::test]
+    async fn test_usb_non_terminating_error_transport_continues() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        // Non-terminating error: forwarded to UI, ceremony stays alive
+        usb_ref.shift_state(UsbStateInternal::Failed(
+            CredentialServiceError::AuthenticatorError,
+        ));
+        assert!(matches!(
+            usb_stream.next().await,
+            Some(UsbState::Failed(CredentialServiceError::AuthenticatorError))
+        ));
+        assert!(
+            !token.is_cancelled(),
+            "ceremony must stay alive on non-terminating error"
+        );
+
+        // Transport is still live — subsequent states arrive
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+
+        service.cancel_request(id).await;
+    }
+
+    /// After a non-terminating hybrid failure, a new QR Init is emitted — simulating
+    /// the retry loop in run_hybrid_ceremony / start() re-issuing a fresh QR code.
+    #[tokio::test]
+    async fn test_hybrid_qr_reissued_after_non_terminating_error() {
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
+
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        // First QR issued
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr-code-1".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
+
+        // Tunnel fails with a non-terminating error — forwarded to UI
+        hybrid_ref.shift_state(HybridStateInternal::Failed(
+            CredentialServiceError::AuthenticatorError,
+        ));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Failed(
+                CredentialServiceError::AuthenticatorError
+            ))
+        ));
+        assert!(!token.is_cancelled(), "ceremony must stay alive");
+
+        // Real retry loop re-issues a new QR; simulated here via shift_state
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr-code-2".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
+
+        service.cancel_request(id).await;
+    }
+
+    /// A Restarting state from the hybrid handler is forwarded to the UI stream
+    /// and does not call complete_request or cancel the ceremony token.
+    #[tokio::test]
+    async fn test_hybrid_restarting_forwarded_ceremony_alive() {
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
+
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        hybrid_ref.shift_state(HybridStateInternal::Restarting);
+        assert!(
+            matches!(hybrid_stream.next().await, Some(HybridState::Restarting)),
+            "Restarting state must be forwarded to the UI stream"
+        );
+        assert!(
+            !token.is_cancelled(),
+            "ceremony must stay alive on Restarting"
+        );
+
+        service.cancel_request(id).await;
+    }
+
+    /// A Restarting state from the USB handler is forwarded to the UI stream
+    /// and does not call complete_request or cancel the ceremony token.
+    #[tokio::test]
+    async fn test_usb_restarting_forwarded_ceremony_alive() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        usb_ref.shift_state(UsbStateInternal::Restarting);
+        assert!(
+            matches!(usb_stream.next().await, Some(UsbState::Restarting)),
+            "Restarting state must be forwarded to the UI stream"
+        );
+        assert!(
+            !token.is_cancelled(),
+            "ceremony must stay alive on Restarting"
+        );
+
+        service.cancel_request(id).await;
     }
 }

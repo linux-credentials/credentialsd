@@ -68,127 +68,65 @@ impl HybridHandler for InternalHybridHandler {
             } else {
                 CableTransports::CloudAssistedOnly
             };
-            let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
-                Ok(device) => device,
-                Err(err) => {
-                    tracing::error!("Failed to create caBLE QR code device: {:?}", err);
-                    return;
+
+            // Outer retry loop: re-issues QR on non-terminating failures.
+            // Each iteration creates a fresh CableQrCodeDevice (the previous one
+            // is consumed by channel()), so the old QR secret is discarded.
+            loop {
+                let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
+                    Ok(device) => device,
+                    Err(err) => {
+                        tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                        // Device creation failure cannot be retried meaningfully —
+                        // break to avoid a tight error loop.
+                        let _ = tx
+                            .send(HybridStateInternal::Failed(
+                                CredentialServiceError::Internal(format!(
+                                    "Failed to create caBLE device: {err:?}"
+                                )),
+                            ))
+                            .await;
+                        break;
+                    }
+                };
+
+                let qr_code = device.qr_code.to_string();
+                if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
+                    tracing::error!("Failed to send caBLE update: {:?}", err);
+                    break;
                 }
-            };
-            let qr_code = device.qr_code.to_string();
-            if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
-                tracing::error!("Failed to send caBLE update: {:?}", err);
-                return;
-            };
-            tokio::spawn(async move {
-                let mut channel = match device.channel(ChannelSettings::default()).await {
-                    Ok(channel) => channel,
-                    Err(e) => {
-                        tracing::error!("Failed to open hybrid channel: {:?}", e);
-                        panic!();
-                    }
-                };
 
-                let state_sender_clone = tx.clone();
-                let ux_updates_rx = channel.get_ux_update_receiver();
-                tokio::spawn(async move {
-                    handle_hybrid_updates(&state_sender_clone, ux_updates_rx).await;
-                    debug!("Reached end of Hybrid updates stream.");
-                });
+                // Run the ceremony awaited directly (not in a nested spawn) so that
+                // the retry loop is sequential and no orphaned tasks can arise.
+                let response =
+                    run_hybrid_ceremony(&mut device, &request, &tx, cancellation.clone()).await;
 
-                let wait_for_response_fut = async {
-                    loop {
-                        let response: Result<CredentialResponse, _> = match &request {
-                            CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
-                                channel.webauthn_make_credential(make_request).await.map(
-                                    |make_credential_response| {
-                                        CredentialResponse::from_make_credential(
-                                            &make_credential_response,
-                                            &["hybrid"],
-                                            "cross-platform",
-                                        )
-                                    },
-                                )
-                            }
-                            CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
-                                channel.webauthn_get_assertion(get_request).await.map(
-                                    |get_assertion_response| {
-                                        CredentialResponse::from_get_assertion(
-                                            // When doing hybrid, the authenticator is capable of displaying it's own UI.
-                                            // So we assume here, it only ever returns one assertion.
-                                            // In case this doesn't hold true, we have to implement credential selection here,
-                                            // like USB, for example.
-                                            &get_assertion_response.assertions[0],
-                                            "cross-platform",
-                                        )
-                                    },
-                                )
-                            }
-                        };
-                        match response {
-                            Ok(response) => {
-                                tracing::debug!("Received credential from hybrid authenticator");
-                                break Ok(response);
-                            }
-                            Err(WebAuthnError::Ctap(ctap_error))
-                                if ctap_error.is_retryable_user_error() =>
-                            {
-                                tracing::debug!(%ctap_error, "Retrying WebAuthn operation");
-                                continue;
-                            }
-                            Err(err) => {
-                                tracing::error!(%err,
-                                    "Failed to make/get credential with hybrid authenticator"
-                                );
-                                break Err(err);
-                            }
-                        }
+                match response {
+                    Ok(auth_response) => {
+                        let _ = tx.send(HybridStateInternal::Completed(auth_response)).await;
+                        break;
                     }
-                    .map_err(|err| match err {
-                        WebAuthnError::Ctap(CtapError::PINAuthBlocked) => {
-                            CredentialServiceError::PinAttemptsExhausted
+                    Err(err) if super::is_ceremony_terminating(&err) => {
+                        // Terminating errors (CredentialExcluded, NonTerminatingCancellation
+                        // from a winning transport, etc.) stop the loop.
+                        // NonTerminatingCancellation exits silently; others surface as Failed.
+                        if !matches!(err, CredentialServiceError::NonTerminatingCancellation) {
+                            let _ = tx.send(HybridStateInternal::Failed(err)).await;
+                        } else {
+                            tracing::debug!("Hybrid handler cancelled, exiting silently");
                         }
-                        WebAuthnError::Ctap(CtapError::NoCredentials) => {
-                            CredentialServiceError::NoCredentials
-                        }
-                        WebAuthnError::Ctap(CtapError::CredentialExcluded) => {
-                            CredentialServiceError::CredentialExcluded
-                        }
-                        _ => CredentialServiceError::AuthenticatorError,
-                    })
-                };
-
-                tracing::debug!("Polling hybrid channel for updates.");
-                let response = match cancellation
-                    .run_until_cancelled(wait_for_response_fut)
-                    .await
-                {
-                    Some(resp) => resp,
-                    None => {
-                        tracing::debug!("Hybrid handler cancelled, stopping processing");
-                        Err(CredentialServiceError::NonTerminatingCancellation)
+                        break;
                     }
-                };
-
-                let terminal_state = match response {
-                    Ok(auth_response) => Some(HybridStateInternal::Completed(auth_response)),
-                    Err(CredentialServiceError::NonTerminatingCancellation) => {
-                        // Cancelled by another transport winning or an explicit user cancel.
-                        // Do not emit a Failed state — complete_request was already called
-                        // by the winning path, and emitting Failed here would produce a
-                        // spurious ErrorAuthenticator in the UI and a redundant
-                        // complete_request invocation.
-                        tracing::debug!("Hybrid handler cancelled, exiting silently");
-                        None
+                    Err(err) => {
+                        // Non-terminating: notify the UI that a restart is in progress
+                        // so it can navigate back to the start page, then reissue a
+                        // fresh QR on the next iteration.
+                        tracing::warn!(?err, "Hybrid error, reissuing QR");
+                        let _ = tx.send(HybridStateInternal::Restarting).await;
+                        continue;
                     }
-                    Err(err) => Some(HybridStateInternal::Failed(err)),
-                };
-                if let Some(state) = terminal_state
-                    && let Err(err) = tx.send(state).await
-                {
-                    tracing::error!("Failed to send caBLE update: {:?}", err)
                 }
-            });
+            }
         });
         Box::pin(stream! {
             while let Some(state) = rx.recv().await {
@@ -215,6 +153,10 @@ pub(super) enum HybridStateInternal {
     Completed(CredentialResponse),
 
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error. A fresh QR code
+    /// is about to be issued on the next iteration.
+    Restarting,
 }
 
 // this is here to prevent making HybridStateInternal public to the whole crate.
@@ -241,6 +183,10 @@ pub enum HybridState {
 
     /// Hybrid operation failed.
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error and a new QR
+    /// code is being issued. The UI should navigate back to the start page.
+    Restarting,
 }
 
 impl From<HybridStateInternal> for HybridState {
@@ -251,6 +197,7 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::Failed(err) => HybridState::Failed(err),
+            HybridStateInternal::Restarting => HybridState::Restarting,
         }
     }
 }
@@ -272,6 +219,7 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
+            HybridState::Restarting => BackgroundEvent::HybridRestarting,
             HybridState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
@@ -291,6 +239,103 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Failed(CredentialServiceError::Internal(_)) => {
                 BackgroundEvent::ErrorInternal
             }
+        }
+    }
+}
+
+/// Runs a single hybrid ceremony attempt: opens the caBLE channel, spawns the UX
+/// update forwarder, and drives the `webauthn_make_credential` / `webauthn_get_assertion`
+/// retry loop until a terminal result or cancellation.
+///
+/// Returns `Ok(CredentialResponse)` on success, or `Err(CredentialServiceError)` on
+/// failure. `NonTerminatingCancellation` is returned when the cancellation token fires.
+async fn run_hybrid_ceremony(
+    device: &mut CableQrCodeDevice,
+    request: &CredentialRequest,
+    tx: &Sender<HybridStateInternal>,
+    cancellation: CancellationToken,
+) -> Result<CredentialResponse, CredentialServiceError> {
+    let mut channel = match device.channel(ChannelSettings::default()).await {
+        Ok(channel) => channel,
+        Err(e) => {
+            tracing::error!("Failed to open hybrid channel: {:?}", e);
+            return Err(CredentialServiceError::AuthenticatorError);
+        }
+    };
+
+    let state_sender_clone = tx.clone();
+    let ux_updates_rx = channel.get_ux_update_receiver();
+    tokio::spawn(async move {
+        handle_hybrid_updates(&state_sender_clone, ux_updates_rx).await;
+        debug!("Reached end of Hybrid updates stream.");
+    });
+
+    let wait_for_response_fut = async {
+        loop {
+            let response: Result<CredentialResponse, _> = match request {
+                CredentialRequest::CreatePublicKeyCredentialRequest(make_request) => {
+                    channel.webauthn_make_credential(make_request).await.map(
+                        |make_credential_response| {
+                            CredentialResponse::from_make_credential(
+                                &make_credential_response,
+                                &["hybrid"],
+                                "cross-platform",
+                            )
+                        },
+                    )
+                }
+                CredentialRequest::GetPublicKeyCredentialRequest(get_request) => {
+                    channel.webauthn_get_assertion(get_request).await.map(
+                        |get_assertion_response| {
+                            CredentialResponse::from_get_assertion(
+                                // When doing hybrid, the authenticator is capable of
+                                // displaying its own UI, so we assume it only ever
+                                // returns one assertion. If this doesn't hold true,
+                                // credential selection must be implemented here, as
+                                // done for USB.
+                                &get_assertion_response.assertions[0],
+                                "cross-platform",
+                            )
+                        },
+                    )
+                }
+            };
+            match response {
+                Ok(response) => {
+                    tracing::debug!("Received credential from hybrid authenticator");
+                    break Ok(response);
+                }
+                Err(WebAuthnError::Ctap(ctap_error)) if ctap_error.is_retryable_user_error() => {
+                    tracing::debug!(%ctap_error, "Retrying WebAuthn operation");
+                    continue;
+                }
+                Err(err) => {
+                    tracing::error!(%err, "Failed to make/get credential with hybrid authenticator");
+                    break Err(err);
+                }
+            }
+        }
+        .map_err(|err| match err {
+            WebAuthnError::Ctap(CtapError::PINAuthBlocked) => {
+                CredentialServiceError::PinAttemptsExhausted
+            }
+            WebAuthnError::Ctap(CtapError::NoCredentials) => CredentialServiceError::NoCredentials,
+            WebAuthnError::Ctap(CtapError::CredentialExcluded) => {
+                CredentialServiceError::CredentialExcluded
+            }
+            _ => CredentialServiceError::AuthenticatorError,
+        })
+    };
+
+    tracing::debug!("Polling hybrid channel for updates.");
+    match cancellation
+        .run_until_cancelled(wait_for_response_fut)
+        .await
+    {
+        Some(resp) => resp,
+        None => {
+            tracing::debug!("Hybrid handler cancelled, stopping processing");
+            Err(CredentialServiceError::NonTerminatingCancellation)
         }
     }
 }
