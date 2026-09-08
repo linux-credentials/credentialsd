@@ -22,9 +22,10 @@ use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
+    NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
+    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
+    NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
+    NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
     PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
 };
 
@@ -146,6 +147,27 @@ trait UiControlService {
         &self,
         session_handle: ObjectPath<'_>,
         _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_hybrid_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridRestartingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_usb_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyUsbRestartingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_nfc_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()>;
 
     #[zbus(no_reply)]
@@ -296,6 +318,30 @@ impl Ceremony {
                     .notify_usb_connected(
                         self.session_handle.as_ref(),
                         NotifyUsbConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::HybridRestarting => {
+                self.proxy
+                    .notify_hybrid_restarting(
+                        self.session_handle.as_ref(),
+                        NotifyHybridRestartingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::UsbRestarting => {
+                self.proxy
+                    .notify_usb_restarting(
+                        self.session_handle.as_ref(),
+                        NotifyUsbRestartingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NfcRestarting => {
+                self.proxy
+                    .notify_nfc_restarting(
+                        self.session_handle.as_ref(),
+                        NotifyNfcRestartingOptions {},
                     )
                     .await
             }

@@ -348,6 +348,17 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                Event::Background(
+                    BackgroundEvent::HybridRestarting
+                    | BackgroundEvent::UsbRestarting
+                    | BackgroundEvent::NfcRestarting,
+                ) => {
+                    self.hybrid_qr_code_data = None;
+                    self.tx_update
+                        .send(ViewUpdate::TransportRestarting)
+                        .await
+                        .unwrap();
+                }
                 Event::Background(BackgroundEvent::ErrorCancelled) => {
                     self.hybrid_qr_code_data = None;
                     break;

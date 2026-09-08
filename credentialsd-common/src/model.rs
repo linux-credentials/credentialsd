@@ -17,25 +17,45 @@ pub const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
 #[derive(Debug, PartialEq)]
 pub enum BackgroundEvent {
     CeremonyCompleted,
-    NeedsPin { attempts_left: Option<u32> },
-    PinNotSet { error: PinNotSetError },
-    NeedsUserVerification { attempts_left: Option<u32> },
+    NeedsPin {
+        attempts_left: Option<u32>,
+    },
+    PinNotSet {
+        error: PinNotSetError,
+    },
+    NeedsUserVerification {
+        attempts_left: Option<u32>,
+    },
     NeedsUserPresence,
-    SelectingCredential { creds: Vec<Credential> },
+    SelectingCredential {
+        creds: Vec<Credential>,
+    },
 
     HybridIdle,
     HybridStarted(OwnedFd),
     HybridConnecting,
     HybridConnected,
+    /// The hybrid ceremony was interrupted by a non-terminating error and a new
+    /// QR code is about to be issued. The UI should navigate back to the start
+    /// page so the new QR becomes visible.
+    HybridRestarting,
 
     NfcIdle,
     NfcWaiting,
     NfcConnected,
+    /// The NFC ceremony was interrupted by a non-terminating error and the
+    /// transport is polling for a new device tap. The UI should navigate back
+    /// to the start page.
+    NfcRestarting,
 
     UsbIdle,
     UsbWaiting,
     UsbSelectingDevice,
     UsbConnected,
+    /// The USB ceremony was interrupted by a non-terminating error and the
+    /// transport is polling for a device. The UI should navigate back to the
+    /// start page.
+    UsbRestarting,
 
     ErrorInternal,
     ErrorTimedOut,
@@ -145,6 +165,18 @@ pub struct NotifyNfcConnectedOptions {}
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct NotifyUsbConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyHybridRestartingOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyUsbRestartingOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyNfcRestartingOptions {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub enum Operation {

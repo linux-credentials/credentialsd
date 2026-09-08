@@ -85,6 +85,9 @@ mod imp {
         pub qr_spinner_visible: RefCell<bool>,
 
         #[property(get, set)]
+        pub transport_restarting: RefCell<bool>,
+
+        #[property(get, set)]
         pub start_setting_new_pin_visible: RefCell<bool>,
 
         #[property(get, set)]
@@ -138,6 +141,7 @@ impl ViewModel {
                             // TODO: hack so I don't have to unset this in every event manually.
                             view_model.set_usb_nfc_pin_entry_visible(false);
                             view_model.set_start_setting_new_pin_visible(false);
+                            view_model.set_transport_restarting(false);
                             view_model.set_failed(false);
                             match update {
                                 ViewUpdate::SetTitle {
@@ -238,6 +242,14 @@ impl ViewModel {
                                         "Device connected. Follow the instructions on your device",
                                     ));
                                     view_model.set_qr_spinner_visible(false);
+                                }
+                                ViewUpdate::TransportRestarting => {
+                                    // Signal the window to navigate back to start_page.
+                                    // The transport will emit a fresh Init/Connected state
+                                    // next, which will update the prompt and show the new
+                                    // QR code or device-waiting UI from start_page.
+                                    view_model.set_qr_spinner_visible(false);
+                                    view_model.set_transport_restarting(true);
                                 }
                                 ViewUpdate::Completed => {
                                     view_model.set_qr_spinner_visible(false);
