@@ -21,11 +21,11 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, Error, PinNotSetError};
+use credentialsd_common::model::{BackgroundEvent, Credential, PinNotSetError};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
-use super::{AuthenticatorResponse, CredentialResponse};
+use super::{AuthenticatorResponse, CredentialResponse, CredentialServiceError};
 
 pub(crate) trait UsbHandler {
     fn start(
@@ -43,14 +43,11 @@ impl InProcessUsbHandler {
         failures: &mut usize,
         prev_usb_state: &UsbStateInternal,
         cancellation: &CancellationToken,
-    ) -> Result<UsbStateInternal, Error> {
+    ) -> Result<UsbStateInternal, CredentialServiceError> {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
         let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
             tracing::debug!("USB idle polling cancelled");
-            // TODO: We should introduce a cancelled-error variant and return this here,
-            //       so we can differentiate between internal errors, cancellation by user
-            //       and cancellation because other transfers finished
-            return Err(Error::Internal("Request cancelled".to_string()));
+            return Err(CredentialServiceError::RequestCancelled);
         };
 
         match result {
@@ -65,7 +62,7 @@ impl InProcessUsbHandler {
             Err(err) => {
                 *failures += 1;
                 if *failures == 5 {
-                    Err(Error::Internal(format!(
+                    Err(CredentialServiceError::Internal(format!(
                         "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
                         err
                     )))
@@ -84,7 +81,7 @@ impl InProcessUsbHandler {
     async fn process_selecting_device(
         hid_devices: &[HidDevice],
         cancellation: &CancellationToken,
-    ) -> Result<UsbStateInternal, Error> {
+    ) -> Result<UsbStateInternal, CredentialServiceError> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
             tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
@@ -150,7 +147,7 @@ impl InProcessUsbHandler {
                     tracing::info!("Cancelling blinking device {device:?}.");
                     handle.cancel_ongoing_operation().await;
                 }
-                return Err(Error::Internal("Request cancelled".to_string()));
+                return Err(CredentialServiceError::RequestCancelled);
             };
 
             let Some(msg) = maybe_msg else {
@@ -179,7 +176,7 @@ impl InProcessUsbHandler {
     async fn process_select_credential(
         response: &GetAssertionResponse,
         cred_rx: &mut Receiver<String>,
-    ) -> Result<UsbStateInternal, Error> {
+    ) -> Result<UsbStateInternal, CredentialServiceError> {
         match cred_rx.recv().await {
             Some(cred_id) => {
                 let assertion = response
@@ -208,12 +205,12 @@ impl InProcessUsbHandler {
                             ),
                         )),
                     )),
-                    None => Err(Error::NoCredentials),
+                    None => Err(CredentialServiceError::NoCredentials),
                 }
             }
             None => {
                 tracing::debug!("cred channel closed before receiving cred from client.");
-                Err(Error::Internal(
+                Err(CredentialServiceError::Internal(
                     "Cred channel disconnected prematurely".to_string(),
                 ))
             }
@@ -221,9 +218,9 @@ impl InProcessUsbHandler {
     }
 
     async fn process_user_interaction(
-        signal_rx: &mut Receiver<Result<UsbUvMessage, Error>>,
+        signal_rx: &mut Receiver<Result<UsbUvMessage, CredentialServiceError>>,
         cred_tx: &Sender<String>,
-    ) -> Result<UsbStateInternal, Error> {
+    ) -> Result<UsbStateInternal, CredentialServiceError> {
         match signal_rx.recv().await {
             Some(msg) => match msg {
                 Ok(UsbUvMessage::NeedsPin {
@@ -266,7 +263,9 @@ impl InProcessUsbHandler {
                 },
                 Err(err) => Err(err),
             },
-            None => Err(Error::Internal("USB UV handler channel closed".to_string())),
+            None => Err(CredentialServiceError::Internal(
+                "USB UV handler channel closed".to_string(),
+            )),
         }
     }
 
@@ -274,7 +273,7 @@ impl InProcessUsbHandler {
         tx: Sender<UsbStateInternal>,
         cred_request: CredentialRequest,
         cancellation: CancellationToken,
-    ) -> Result<(), Error> {
+    ) -> Result<(), CredentialServiceError> {
         let mut state = UsbStateInternal::Idle;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
@@ -327,8 +326,20 @@ impl InProcessUsbHandler {
                 .await
             else {
                 tracing::debug!("USB handler cancelled, stopping processing");
-                break Err(Error::Internal("Request cancelled".to_string()));
+                break Ok(());
             };
+
+            // Guard: an inner future may have raced the cancellation token and
+            // returned RequestCancelled as a value rather than the outer branch
+            // firing. Treat it the same way — break cleanly without emitting a
+            // spurious Failed state to the UI.
+            if matches!(
+                next_usb_state,
+                Err(CredentialServiceError::RequestCancelled)
+            ) {
+                tracing::debug!("USB handler cancelled (inner path), stopping processing");
+                break Ok(());
+            }
 
             state = next_usb_state.unwrap_or_else(UsbStateInternal::Failed);
             // Usually, comparing the discriminant is enough, but PinNotSet/NeedsPin
@@ -344,7 +355,9 @@ impl InProcessUsbHandler {
             if state_changed {
                 tracing::debug!("USB current state: {state:?}");
                 tx.send(state.clone()).await.map_err(|_| {
-                    Error::Internal("USB state channel receiver closed prematurely".to_string())
+                    CredentialServiceError::Internal(
+                        "USB state channel receiver closed prematurely".to_string(),
+                    )
                 })?;
             }
 
@@ -361,7 +374,7 @@ impl InProcessUsbHandler {
 async fn handle_events(
     cred_request: &CredentialRequest,
     device: Arc<AsyncMutex<HidDevice>>,
-    signal_tx: &Sender<Result<UsbUvMessage, Error>>,
+    signal_tx: &Sender<Result<UsbUvMessage, CredentialServiceError>>,
     cancellation: CancellationToken,
 ) {
     let mut device = device.lock().await;
@@ -433,10 +446,16 @@ async fn handle_events(
                     }
                 }
                 .map_err(|err| match err {
-                    WebAuthnError::Ctap(CtapError::PINAuthBlocked) => Error::PinAttemptsExhausted,
-                    WebAuthnError::Ctap(CtapError::NoCredentials) => Error::NoCredentials,
-                    WebAuthnError::Ctap(CtapError::CredentialExcluded) => Error::CredentialExcluded,
-                    _ => Error::AuthenticatorError,
+                    WebAuthnError::Ctap(CtapError::PINAuthBlocked) => {
+                        CredentialServiceError::PinAttemptsExhausted
+                    }
+                    WebAuthnError::Ctap(CtapError::NoCredentials) => {
+                        CredentialServiceError::NoCredentials
+                    }
+                    WebAuthnError::Ctap(CtapError::CredentialExcluded) => {
+                        CredentialServiceError::CredentialExcluded
+                    }
+                    _ => CredentialServiceError::AuthenticatorError,
                 })
             };
 
@@ -448,7 +467,7 @@ async fn handle_events(
                 None => {
                     tracing::debug!("USB ceremony cancelled, interrupting authenticator operation");
                     cancel_handle.cancel_ongoing_operation().await;
-                    Err(Error::Internal("Request cancelled".to_string()))
+                    Err(CredentialServiceError::RequestCancelled)
                 }
             };
 
@@ -531,10 +550,7 @@ pub(super) enum UsbStateInternal {
     Completed(CredentialResponse),
 
     /// There was an error while interacting with the authenticator.
-    Failed(Error),
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
+    Failed(CredentialServiceError),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -573,9 +589,6 @@ pub enum UsbState {
 
     /// The device needs evidence of user presence (e.g. touch) to release the credential.
     NeedsUserPresence,
-    // TODO: implement cancellation
-    // This isn't actually sent from the server.
-    //UserCancelled,
 
     // Multiple credentials have been found and the user has to select which to use
     // List of user-identities to decide which to use.
@@ -588,7 +601,7 @@ pub enum UsbState {
     Completed,
 
     /// Interaction with the authenticator failed.
-    Failed(Error),
+    Failed(CredentialServiceError),
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -612,7 +625,6 @@ impl From<UsbStateInternal> for UsbState {
             }
             UsbStateInternal::NeedsUserPresence => UsbState::NeedsUserPresence,
             UsbStateInternal::Completed(_) => UsbState::Completed,
-            // UsbStateInternal::UserCancelled => UsbState:://UserCancelled,
             UsbStateInternal::SelectingDevice(_) => UsbState::SelectingDevice,
             UsbStateInternal::SelectCredential { response, cred_tx } => {
                 UsbState::SelectingCredential {
@@ -681,17 +693,28 @@ impl From<&UsbState> for BackgroundEvent {
                 creds: creds.to_vec(),
             },
             UsbState::Completed => BackgroundEvent::CeremonyCompleted,
-            UsbState::Failed(Error::AuthenticatorError) => BackgroundEvent::ErrorAuthenticator,
-            UsbState::Failed(Error::NoCredentials) => BackgroundEvent::ErrorNoCredentials,
-            UsbState::Failed(Error::CredentialExcluded) => BackgroundEvent::ErrorCredentialExcluded,
-            UsbState::Failed(Error::PinAttemptsExhausted) => BackgroundEvent::ErrorAuthenticator,
-            UsbState::Failed(Error::Internal(_)) => BackgroundEvent::ErrorInternal,
+            UsbState::Failed(CredentialServiceError::AuthenticatorError) => {
+                BackgroundEvent::ErrorAuthenticator
+            }
+            UsbState::Failed(CredentialServiceError::NoCredentials) => {
+                BackgroundEvent::ErrorNoCredentials
+            }
+            UsbState::Failed(CredentialServiceError::CredentialExcluded) => {
+                BackgroundEvent::ErrorCredentialExcluded
+            }
+            UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorAuthenticator
+            }
+            UsbState::Failed(CredentialServiceError::RequestCancelled) => {
+                BackgroundEvent::ErrorCancelled
+            }
+            UsbState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
         }
     }
 }
 
 async fn handle_usb_updates(
-    signal_tx: &WeakSender<Result<UsbUvMessage, Error>>,
+    signal_tx: &WeakSender<Result<UsbUvMessage, CredentialServiceError>>,
     mut state_rx: broadcast::Receiver<UvUpdate>,
 ) {
     while let Ok(msg) = state_rx.recv().await {

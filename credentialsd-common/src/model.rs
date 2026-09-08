@@ -105,55 +105,6 @@ pub enum PinNotSetError {
     PinNotSet,
 }
 
-#[derive(Debug, Clone)]
-pub enum Error {
-    /// Some unknown error with the authenticator occurred.
-    AuthenticatorError,
-    /// No matching credentials were found on the device.
-    NoCredentials,
-    /// Credential was already registered with this device (credential ID contained in excludeCredentials)
-    CredentialExcluded,
-    /// Too many incorrect PIN attempts, and authenticator must be removed and
-    /// reinserted to continue any more PIN attempts.
-    ///
-    /// Note that this is different than exhausting the PIN count that fully
-    /// locks out the device.
-    PinAttemptsExhausted,
-    // TODO: We may want to hide the details on this variant from the public API.
-    /// Something went wrong with the credential service itself, not the authenticator.
-    Internal(String),
-}
-
-impl std::error::Error for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AuthenticatorError => f.write_str("AuthenticatorError"),
-            Self::NoCredentials => f.write_str("NoCredentials"),
-            Self::CredentialExcluded => f.write_str("CredentialExcluded"),
-            Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
-            Self::Internal(s) => write!(f, "InternalError: {s}"),
-        }
-    }
-}
-
-impl TryFrom<&Value<'_>> for Error {
-    type Error = zvariant::Error;
-
-    fn try_from(value: &Value<'_>) -> Result<Self, Self::Error> {
-        let err_code: &str = value.downcast_ref()?;
-        let err = match err_code {
-            "AuthenticatorError" => crate::model::Error::AuthenticatorError,
-            "NoCredentials" => crate::model::Error::NoCredentials,
-            "CredentialExcluded" => crate::model::Error::CredentialExcluded,
-            "PinAttemptsExhausted" => crate::model::Error::PinAttemptsExhausted,
-            s => crate::model::Error::Internal(String::from(s)),
-        };
-        Ok(err)
-    }
-}
-
 #[derive(Debug, PartialEq, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct NotifyNeedsPinOptions {}

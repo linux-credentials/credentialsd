@@ -3,7 +3,7 @@ pub mod nfc;
 pub mod usb;
 
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     pin::Pin,
     sync::{Arc, Mutex, OnceLock},
     task::Poll,
@@ -23,9 +23,8 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use credentialsd_common::model::{
-    BackgroundEvent, Device, Error as CredentialServiceError, Transport,
-};
+use credentialsd_common::model::{BackgroundEvent, Device, Transport};
+use zbus::zvariant::{self, Value};
 
 use crate::{
     credential_service::{hybrid::HybridEvent, usb::UsbEvent},
@@ -50,7 +49,7 @@ async fn cancellable_sleep(
     tokio::select! {
         _ = tokio::time::sleep(duration) => Ok(()),
         _ = cancellation.cancelled() => {
-            Err(CredentialServiceError::Internal("Request cancelled".to_string()))
+            Err(CredentialServiceError::RequestCancelled)
         }
     }
 }
@@ -61,6 +60,62 @@ fn persistent_token_store() -> Arc<dyn PersistentTokenStore> {
     STORE
         .get_or_init(|| Arc::new(MemoryPersistentTokenStore::new()))
         .clone()
+}
+
+#[derive(Debug, Clone)]
+pub enum CredentialServiceError {
+    /// Some unknown error with the authenticator occurred.
+    AuthenticatorError,
+    /// No matching credentials were found on the device.
+    NoCredentials,
+    /// Credential was already registered with this device (credential ID contained in excludeCredentials)
+    CredentialExcluded,
+    /// Too many incorrect PIN attempts, and authenticator must be removed and
+    /// reinserted to continue any more PIN attempts.
+    ///
+    /// Note that this is different than exhausting the PIN count that fully
+    /// locks out the device.
+    PinAttemptsExhausted,
+    /// The request was cancelled — either because another transport completed the
+    /// ceremony first, or because the user or client explicitly cancelled it.
+    /// This is an expected, non-error termination and should not be treated as an
+    /// authenticator failure.
+    RequestCancelled,
+    // TODO: We may want to hide the details on this variant from the public API.
+    /// Something went wrong with the credential service itself, not the authenticator.
+    Internal(String),
+}
+
+impl std::error::Error for CredentialServiceError {}
+
+impl Display for CredentialServiceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthenticatorError => f.write_str("AuthenticatorError"),
+            Self::NoCredentials => f.write_str("NoCredentials"),
+            Self::CredentialExcluded => f.write_str("CredentialExcluded"),
+            Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
+            Self::RequestCancelled => f.write_str("RequestCancelled"),
+            Self::Internal(s) => write!(f, "InternalError: {s}"),
+        }
+    }
+}
+
+impl TryFrom<&Value<'_>> for CredentialServiceError {
+    type Error = zvariant::Error;
+
+    fn try_from(value: &Value<'_>) -> Result<Self, Self::Error> {
+        let err_code: &str = value.downcast_ref()?;
+        let err = match err_code {
+            "AuthenticatorError" => Self::AuthenticatorError,
+            "NoCredentials" => Self::NoCredentials,
+            "CredentialExcluded" => Self::CredentialExcluded,
+            "PinAttemptsExhausted" => Self::PinAttemptsExhausted,
+            "RequestCancelled" => Self::RequestCancelled,
+            s => Self::Internal(String::from(s)),
+        };
+        Ok(err)
+    }
 }
 
 #[derive(Debug)]
@@ -348,6 +403,10 @@ where
                     HybridStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    HybridStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     HybridStateInternal::Failed(err) => {
                         complete_request(ctx, Err(err.clone()));
                     }
@@ -388,6 +447,10 @@ where
                     UsbStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    UsbStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     UsbStateInternal::Failed(error) => {
                         complete_request(ctx, Err(error.clone()));
                     }
@@ -430,6 +493,10 @@ where
                     NfcStateInternal::Completed(response) => {
                         complete_request(ctx, Ok(response.clone()));
                     }
+                    // RequestCancelled (another transport won or user cancelled)
+                    // should not call complete_request — it was already called
+                    // by the winning transport or cancel_request().
+                    NfcStateInternal::Failed(CredentialServiceError::RequestCancelled) => {}
                     NfcStateInternal::Failed(error) => {
                         complete_request(ctx, Err(error.clone()));
                     }
@@ -672,7 +739,11 @@ mod tests {
         let start = tokio::time::Instant::now();
         let result = cancellable_sleep(Duration::from_secs(5), &token).await;
 
-        assert!(result.is_err());
+        // Must return RequestCancelled, not a generic Internal error
+        assert!(
+            matches!(result, Err(CredentialServiceError::RequestCancelled)),
+            "cancellable_sleep must return RequestCancelled when the token is cancelled"
+        );
         // Should return immediately, not after 5 seconds
         assert!(start.elapsed() < Duration::from_millis(100));
     }
@@ -1067,8 +1138,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_failed_request_triggers_cancellation() {
-        use credentialsd_common::model::Error;
-
         let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
         let usb_ref = usb_handler.get_handler_ref();
 
@@ -1084,7 +1153,7 @@ mod tests {
         usb_ref.shift_state(UsbStateInternal::Waiting);
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
 
-        usb_ref.shift_state(UsbStateInternal::Failed(Error::Internal(
+        usb_ref.shift_state(UsbStateInternal::Failed(CredentialServiceError::Internal(
             "test failure".to_string(),
         )));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Failed(_))));
@@ -1098,8 +1167,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_failed_request_cancels_other_transports() {
-        use credentialsd_common::model::Error;
-
         let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
         let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
         let usb_ref = usb_handler.get_handler_ref();
@@ -1127,7 +1194,7 @@ mod tests {
 
         // USB fails — UsbStateStream calls complete_request → token cancelled
         usb_ref.shift_state(UsbStateInternal::Waiting);
-        usb_ref.shift_state(UsbStateInternal::Failed(Error::Internal(
+        usb_ref.shift_state(UsbStateInternal::Failed(CredentialServiceError::Internal(
             "test".to_string(),
         )));
         assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
@@ -1227,6 +1294,81 @@ mod tests {
         assert!(
             hybrid_ref.was_cancelled(),
             "Hybrid handler should have detected cancellation when USB completed"
+        );
+    }
+
+    /// When USB is cancelled (by another transport winning), the stream must emit
+    /// no Failed/ErrorInternal state — it should simply end cleanly.
+    #[tokio::test]
+    async fn test_cancelled_usb_emits_no_failed_state() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (request_id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        // Confirm stream is live
+        usb_ref.shift_state(UsbStateInternal::Waiting);
+        assert!(matches!(usb_stream.next().await, Some(UsbState::Waiting)));
+
+        // Queue a RequestCancelled — simulates what process() emits when the
+        // cancellation token fires internally before the outer branch catches it.
+        usb_ref.shift_state(UsbStateInternal::Failed(
+            CredentialServiceError::RequestCancelled,
+        ));
+
+        // Cancel the request synchronously so the token is already cancelled
+        // when the stream is next polled.
+        service.cancel_request(request_id).await;
+        assert!(token.is_cancelled());
+
+        // The stream must not yield the Failed(RequestCancelled) state.
+        // biased select! polls cancellation first; the queued state is discarded.
+        let remaining: Vec<_> = usb_stream.collect().await;
+        assert!(
+            remaining.is_empty(),
+            "cancelled USB stream must emit no further states, including Failed(RequestCancelled)"
+        );
+    }
+
+    /// When hybrid is cancelled, it must not emit a Failed state on the stream.
+    /// complete_request must be invoked exactly once (by the winning transport or
+    /// cancel_request), not a second time from hybrid's terminal-state path.
+    #[tokio::test]
+    async fn test_cancelled_hybrid_emits_no_failed_state() {
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
+
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (request_id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        // Confirm stream is live
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
+
+        // Queue a RequestCancelled — what the real handler would emit when
+        // run_until_cancelled returns None
+        hybrid_ref.shift_state(HybridStateInternal::Failed(
+            CredentialServiceError::RequestCancelled,
+        ));
+
+        service.cancel_request(request_id).await;
+        assert!(token.is_cancelled());
+
+        // Stream must stop without emitting the Failed(RequestCancelled) state.
+        let remaining: Vec<_> = hybrid_stream.collect().await;
+        assert!(
+            remaining.is_empty(),
+            "cancelled hybrid stream must emit no further states"
         );
     }
 }
