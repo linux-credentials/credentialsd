@@ -166,13 +166,13 @@ impl HybridHandler for InternalHybridHandler {
                     Some(resp) => resp,
                     None => {
                         tracing::debug!("Hybrid handler cancelled, stopping processing");
-                        Err(CredentialServiceError::RequestCancelled)
+                        Err(CredentialServiceError::NonTerminatingCancellation)
                     }
                 };
 
                 let terminal_state = match response {
                     Ok(auth_response) => Some(HybridStateInternal::Completed(auth_response)),
-                    Err(CredentialServiceError::RequestCancelled) => {
+                    Err(CredentialServiceError::NonTerminatingCancellation) => {
                         // Cancelled by another transport winning or an explicit user cancel.
                         // Do not emit a Failed state — complete_request was already called
                         // by the winning path, and emitting Failed here would produce a
@@ -285,7 +285,7 @@ impl From<&HybridState> for BackgroundEvent {
                 BackgroundEvent::ErrorAuthenticator
             }
             // This should currently never be reached, but we'll likely use it in future refactoring
-            HybridState::Failed(CredentialServiceError::RequestCancelled) => {
+            HybridState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
             HybridState::Failed(CredentialServiceError::Internal(_)) => {
