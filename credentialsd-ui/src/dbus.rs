@@ -25,15 +25,14 @@ use zbus::{
 use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
     BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
-    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
-    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
-    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
-    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
-    NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
-    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+    BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent, ClientPinEnteredOptions, Credential,
+    CredentialSelectedOptions, Device, DiscoveryRequestedOptions, NotifyHybridConnectedOptions,
+    NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
+    NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
+    NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
+    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, TransportRestartReason,
+    UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -312,12 +311,15 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyHybridRestartingOptions,
     ) -> fdo::Result<()> {
+        let reason =
+            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,
-            BackgroundEvent::HybridRestarting,
+            BackgroundEvent::HybridRestarting { reason },
         )
         .await
     }
@@ -326,12 +328,15 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyUsbRestartingOptions,
     ) -> fdo::Result<()> {
+        let reason =
+            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,
-            BackgroundEvent::UsbRestarting,
+            BackgroundEvent::UsbRestarting { reason },
         )
         .await
     }
@@ -340,12 +345,15 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()> {
+        let reason =
+            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,
-            BackgroundEvent::NfcRestarting,
+            BackgroundEvent::NfcRestarting { reason },
         )
         .await
     }
@@ -376,14 +384,9 @@ impl CredentialPortalBackend {
             BACKGROUND_EVENT_ERROR_TIMED_OUT => Ok(BackgroundEvent::ErrorTimedOut),
             BACKGROUND_EVENT_ERROR_CANCELLED => Ok(BackgroundEvent::ErrorCancelled),
             BACKGROUND_EVENT_ERROR_AUTHENTICATOR => Ok(BackgroundEvent::ErrorAuthenticator),
-            BACKGROUND_EVENT_ERROR_NO_CREDENTIALS => Ok(BackgroundEvent::ErrorNoCredentials),
             BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED => {
                 Ok(BackgroundEvent::ErrorCredentialExcluded)
             }
-            BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED => {
-                Ok(BackgroundEvent::ErrorPinAttemptsExhausted)
-            }
-            BACKGROUND_EVENT_ERROR_PIN_NOT_SET => Ok(BackgroundEvent::ErrorPinNotSet),
             _ => Err(fdo::Error::Failed("Unknown error code".to_string())),
         }?;
         self.notify_state_changed(object_server, session_handle, error_event)

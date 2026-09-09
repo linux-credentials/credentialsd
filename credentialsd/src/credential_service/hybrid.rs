@@ -22,7 +22,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use super::CredentialServiceError;
-use credentialsd_common::{memfd::write_secret, model::BackgroundEvent};
+use credentialsd_common::{
+    memfd::write_secret,
+    model::{BackgroundEvent, TransportRestartReason},
+};
 
 use crate::model::{CredentialRequest, CredentialResponse};
 
@@ -132,8 +135,17 @@ impl HybridHandler for InternalHybridHandler {
                             // Post-active: the phone was engaged — surface the error
                             // via the Restarting signal so the UI navigates back to
                             // start_page, then reissue a fresh QR.
+                            let reason = match err {
+                                CredentialServiceError::NoCredentials => {
+                                    TransportRestartReason::NoCredentials
+                                }
+                                CredentialServiceError::PinAttemptsExhausted => {
+                                    TransportRestartReason::PinAttemptsExhausted
+                                }
+                                _ => TransportRestartReason::Interrupted,
+                            };
                             tracing::warn!(?err, "Hybrid post-active error, reissuing QR");
-                            let _ = tx.send(HybridStateInternal::Restarting).await;
+                            let _ = tx.send(HybridStateInternal::Restarting(reason)).await;
                         } else {
                             // Pre-active: the QR was never consumed or the BLE channel
                             // failed before the phone responded. Reissue silently.
@@ -172,7 +184,7 @@ pub(super) enum HybridStateInternal {
 
     /// The ceremony was interrupted by a non-terminating error. A fresh QR code
     /// is about to be issued on the next iteration.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 // this is here to prevent making HybridStateInternal public to the whole crate.
@@ -202,7 +214,7 @@ pub enum HybridState {
 
     /// The ceremony was interrupted by a non-terminating error and a new QR
     /// code is being issued. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 impl From<HybridStateInternal> for HybridState {
@@ -213,7 +225,7 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::Failed(err) => HybridState::Failed(err),
-            HybridStateInternal::Restarting => HybridState::Restarting,
+            HybridStateInternal::Restarting(reason) => HybridState::Restarting(reason),
         }
     }
 }
@@ -235,24 +247,22 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
-            HybridState::Restarting => BackgroundEvent::HybridRestarting,
+            HybridState::Restarting(reason) => {
+                BackgroundEvent::HybridRestarting { reason: *reason }
+            }
             HybridState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            HybridState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             HybridState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
-            }
-            HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
             }
             // This should currently never be reached, but we'll likely use it in future refactoring
             HybridState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            HybridState::Failed(CredentialServiceError::Internal(_)) => {
+            HybridState::Failed(CredentialServiceError::Internal(_))
+            | HybridState::Failed(CredentialServiceError::NoCredentials)
+            | HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
                 BackgroundEvent::ErrorInternal
             }
         }
