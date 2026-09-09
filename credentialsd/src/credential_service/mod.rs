@@ -623,6 +623,7 @@ fn devices_for_transports(available: &[libwebauthn::Transport]) -> Vec<Device> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentialsd_common::model::TransportRestartReason;
     use std::time::Duration;
 
     // Mock handlers for testing
@@ -1635,9 +1636,14 @@ mod tests {
         let (id, token) = service.init_request(&request, tx).await.unwrap();
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        hybrid_ref.shift_state(HybridStateInternal::Restarting);
+        hybrid_ref.shift_state(HybridStateInternal::Restarting(
+            TransportRestartReason::Interrupted,
+        ));
         assert!(
-            matches!(hybrid_stream.next().await, Some(HybridState::Restarting)),
+            matches!(
+                hybrid_stream.next().await,
+                Some(HybridState::Restarting(TransportRestartReason::Interrupted))
+            ),
             "Restarting state must be forwarded to the UI stream"
         );
         assert!(
@@ -1661,9 +1667,14 @@ mod tests {
         let (id, token) = service.init_request(&request, tx).await.unwrap();
         let mut usb_stream = service.get_usb_credential().await;
 
-        usb_ref.shift_state(UsbStateInternal::Restarting);
+        usb_ref.shift_state(UsbStateInternal::Restarting(
+            TransportRestartReason::Interrupted,
+        ));
         assert!(
-            matches!(usb_stream.next().await, Some(UsbState::Restarting)),
+            matches!(
+                usb_stream.next().await,
+                Some(UsbState::Restarting(TransportRestartReason::Interrupted))
+            ),
             "Restarting state must be forwarded to the UI stream"
         );
         assert!(

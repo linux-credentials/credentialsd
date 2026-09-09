@@ -9,6 +9,7 @@
 ## Improvements
 
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
+- ui: Display restart reason in case of premature failure
 
 # 0.4.0 [2026-11-05]
 
