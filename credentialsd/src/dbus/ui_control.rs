@@ -18,14 +18,14 @@ use zbus::{
 use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
     BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
-    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
-    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
-    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
-    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+    BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent, ClientPinEnteredOptions, Credential,
+    CredentialSelectedOptions, Device, DiscoveryRequestedOptions, NotifyHybridConnectedOptions,
+    NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
+    NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
+    NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
+    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent,
+    WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -146,6 +146,30 @@ trait UiControlService {
         &self,
         session_handle: ObjectPath<'_>,
         _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_hybrid_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        reason: u8,
+        _options: NotifyHybridRestartingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_usb_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        reason: u8,
+        _options: NotifyUsbRestartingOptions,
+    ) -> fdo::Result<()>;
+
+    #[zbus(no_reply)]
+    async fn notify_nfc_restarting(
+        &self,
+        session_handle: ObjectPath<'_>,
+        reason: u8,
+        _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()>;
 
     #[zbus(no_reply)]
@@ -299,6 +323,33 @@ impl Ceremony {
                     )
                     .await
             }
+            BackgroundEvent::HybridRestarting { reason } => {
+                self.proxy
+                    .notify_hybrid_restarting(
+                        self.session_handle.as_ref(),
+                        u8::from(reason),
+                        NotifyHybridRestartingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::UsbRestarting { reason } => {
+                self.proxy
+                    .notify_usb_restarting(
+                        self.session_handle.as_ref(),
+                        u8::from(reason),
+                        NotifyUsbRestartingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::NfcRestarting { reason } => {
+                self.proxy
+                    .notify_nfc_restarting(
+                        self.session_handle.as_ref(),
+                        u8::from(reason),
+                        NotifyNfcRestartingOptions {},
+                    )
+                    .await
+            }
             BackgroundEvent::ErrorInternal => {
                 let error = BACKGROUND_EVENT_ERROR_INTERNAL;
                 self.proxy
@@ -324,26 +375,8 @@ impl Ceremony {
                     .notify_error_occurred(self.session_handle.as_ref(), error)
                     .await
             }
-            BackgroundEvent::ErrorNoCredentials => {
-                let error = BACKGROUND_EVENT_ERROR_NO_CREDENTIALS;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
             BackgroundEvent::ErrorCredentialExcluded => {
                 let error = BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
-            BackgroundEvent::ErrorPinAttemptsExhausted => {
-                let error = BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
-            BackgroundEvent::ErrorPinNotSet => {
-                let error = BACKGROUND_EVENT_ERROR_PIN_NOT_SET;
                 self.proxy
                     .notify_error_occurred(self.session_handle.as_ref(), error)
                     .await

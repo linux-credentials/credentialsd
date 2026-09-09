@@ -16,7 +16,9 @@ use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, PinNotSetError};
+use credentialsd_common::model::{
+    BackgroundEvent, Credential, PinNotSetError, TransportRestartReason,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -43,7 +45,7 @@ impl InProcessNfcHandler {
         let list_device_fut = libwebauthn::transport::nfc::get_nfc_device();
         let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
             tracing::debug!("NFC idle polling cancelled");
-            return Err(CredentialServiceError::RequestCancelled);
+            return Err(CredentialServiceError::NonTerminatingCancellation);
         };
         match result {
             Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
@@ -171,6 +173,7 @@ impl InProcessNfcHandler {
         cancellation: CancellationToken,
     ) -> Result<(), CredentialServiceError> {
         let mut state = NfcStateInternal::Idle;
+        let mut active = false;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for NFC status");
@@ -206,10 +209,13 @@ impl InProcessNfcHandler {
                         ref response,
                         cred_tx: _,
                     } => Self::process_select_credential(response, &mut cred_rx).await,
-                    // Terminal states - preserve state unchanged, will break loop after sending
-                    NfcStateInternal::Completed(_) | NfcStateInternal::Failed(_) => {
-                        Ok(prev_nfc_state.clone())
-                    }
+                    // Terminal states - preserve state unchanged, will break loop after sending.
+                    // Restarting is a transient signal state only; it is immediately replaced
+                    // by Idle in the non-terminating branch so it should never be the prev
+                    // state, but we cover it here for exhaustiveness.
+                    NfcStateInternal::Completed(_)
+                    | NfcStateInternal::Failed(_)
+                    | NfcStateInternal::Restarting(_) => Ok(prev_nfc_state.clone()),
                 }
             };
 
@@ -222,10 +228,10 @@ impl InProcessNfcHandler {
             };
 
             // Guard: inner future may have raced the cancellation token and returned
-            // RequestCancelled. Break cleanly without emitting a spurious Failed state.
+            // NonTerminatingCancellation. Break cleanly without emitting a spurious Failed state.
             if matches!(
                 next_nfc_state,
-                Err(CredentialServiceError::RequestCancelled)
+                Err(CredentialServiceError::NonTerminatingCancellation)
             ) {
                 tracing::debug!("NFC handler cancelled (inner path), stopping processing");
                 break Ok(());
@@ -243,20 +249,84 @@ impl InProcessNfcHandler {
                     std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
             };
-            if state_changed {
-                tracing::debug!("NFC current state: {state:?}");
-                tx.send(state.clone()).await.map_err(|_| {
-                    CredentialServiceError::Internal(
-                        "NFC state channel receiver closed prematurely".to_string(),
-                    )
-                })?;
+            // Activate when libwebauthn signals it is waiting for user input.
+            // The flag is monotonic within a single ceremony attempt; it is reset
+            // to false when the transport restarts below.
+            match &state {
+                NfcStateInternal::NeedsPin { .. }
+                | NfcStateInternal::PinNotSet { .. }
+                | NfcStateInternal::NeedsUserVerification { .. } => {
+                    active = true;
+                }
+                _ => {}
             }
 
-            // Check for terminal states AFTER sending
             match state {
-                NfcStateInternal::Completed(_) => break Ok(()),
-                NfcStateInternal::Failed(err) => break Err(err),
-                _ => {}
+                NfcStateInternal::Completed(_) => {
+                    tracing::debug!("NFC current state: {state:?}");
+                    tx.send(state.clone()).await.map_err(|_| {
+                        CredentialServiceError::Internal(
+                            "NFC state channel receiver closed prematurely".to_string(),
+                        )
+                    })?;
+                    break Ok(());
+                }
+
+                // Catch terminating errors first. Doesn't matter if the user was already engaged
+                // or not. We have to terminate either way.
+                NfcStateInternal::Failed(ref err) if super::is_ceremony_terminating(err) => {
+                    if state_changed {
+                        tracing::debug!("NFC current state: {state:?}");
+                        tx.send(NfcStateInternal::Failed(err.clone()))
+                            .await
+                            .map_err(|_| {
+                                CredentialServiceError::Internal(
+                                    "NFC state channel receiver closed prematurely".to_string(),
+                                )
+                            })?;
+                    }
+                    break Err(err.clone());
+                }
+
+                // Active non-terminating failure: the user was already engaged, surface
+                // the error via the Restarting signal so the UI navigates back to
+                // start_page.
+                // Reset active here only: the other Failed arms either break
+                // (so active is moot) or reach this arm with active already false.
+                NfcStateInternal::Failed(err) if active => {
+                    let reason = match err {
+                        CredentialServiceError::NoCredentials => {
+                            TransportRestartReason::NoCredentials
+                        }
+                        CredentialServiceError::PinAttemptsExhausted => {
+                            TransportRestartReason::PinAttemptsExhausted
+                        }
+                        _ => TransportRestartReason::Interrupted,
+                    };
+                    tracing::warn!(?err, "NFC authenticator error, restarting transport");
+                    let _ = tx.send(NfcStateInternal::Restarting(reason)).await;
+                    active = false;
+                    state = NfcStateInternal::Idle;
+                }
+
+                // Pre-active non-terminating failure: the device errored before the user
+                // tapped it. Restart silently without any UI notification.
+                NfcStateInternal::Failed(err) => {
+                    tracing::debug!(?err, "NFC pre-active error, restarting silently");
+                    state = NfcStateInternal::Idle;
+                }
+
+                // All other state changes are sent, if they are 'new'
+                _ => {
+                    if state_changed {
+                        tracing::debug!("NFC current state: {state:?}");
+                        tx.send(state.clone()).await.map_err(|_| {
+                            CredentialServiceError::Internal(
+                                "NFC state channel receiver closed prematurely".to_string(),
+                            )
+                        })?;
+                    }
+                }
             }
         }
     }
@@ -359,7 +429,7 @@ async fn handle_events(
                     // because libwebauthn drops _handle_rx in NfcChannel::new(). Cancellation
                     // takes effect at the next inter-APDU .await point when the future is
                     // dropped; NFC exchanges are short so the latency is acceptable.
-                    Err(CredentialServiceError::RequestCancelled)
+                    Err(CredentialServiceError::NonTerminatingCancellation)
                 }
             };
 
@@ -440,6 +510,10 @@ pub(super) enum NfcStateInternal {
 
     /// There was an error while interacting with the authenticator.
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error and the transport
+    /// is restarting. The UI should navigate back to the start page.
+    Restarting(TransportRestartReason),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -482,6 +556,10 @@ pub enum NfcState {
 
     /// Interaction with the authenticator failed.
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error and the transport
+    /// is restarting. The UI should navigate back to the start page.
+    Restarting(TransportRestartReason),
 }
 
 impl From<NfcStateInternal> for NfcState {
@@ -504,6 +582,7 @@ impl From<NfcStateInternal> for NfcState {
                 NfcState::NeedsUserVerification { attempts_left }
             }
             NfcStateInternal::Completed(_) => NfcState::Completed,
+            NfcStateInternal::Restarting(reason) => NfcState::Restarting(reason),
             NfcStateInternal::SelectCredential { response, cred_tx } => {
                 NfcState::SelectingCredential {
                     creds: response
@@ -572,19 +651,18 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            NfcState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             NfcState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
             }
-            NfcState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
-            }
-            NfcState::Failed(CredentialServiceError::RequestCancelled) => {
+            NfcState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            NfcState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
+            NfcState::Failed(CredentialServiceError::Internal(_))
+            | NfcState::Failed(CredentialServiceError::NoCredentials)
+            | NfcState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorInternal
+            }
+            NfcState::Restarting(reason) => BackgroundEvent::NfcRestarting { reason: *reason },
         }
     }
 }
