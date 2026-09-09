@@ -275,6 +275,7 @@ impl InProcessUsbHandler {
         cancellation: CancellationToken,
     ) -> Result<(), CredentialServiceError> {
         let mut state = UsbStateInternal::Idle;
+        let mut active = false;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
@@ -355,35 +356,76 @@ impl InProcessUsbHandler {
                     std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
             };
-            // Suppress forwarding a non-terminating Failed state to the UI directly:
-            // the Restarting state emitted below takes its place with cleaner semantics.
-            let is_non_terminating_failure = matches!(
-                &state,
-                UsbStateInternal::Failed(err) if !super::is_ceremony_terminating(err)
-            );
-            if state_changed && !is_non_terminating_failure {
-                tracing::debug!("USB current state: {state:?}");
-                tx.send(state.clone()).await.map_err(|_| {
-                    CredentialServiceError::Internal(
-                        "USB state channel receiver closed prematurely".to_string(),
-                    )
-                })?;
-            }
-
-            // Check for terminal states AFTER sending
-            match state {
-                UsbStateInternal::Completed(_) => break Ok(()),
-                UsbStateInternal::Failed(ref err) => {
-                    if super::is_ceremony_terminating(err) {
-                        break Err(err.clone());
-                    }
-                    // Non-terminating: notify the UI that a restart is in progress so
-                    // it can navigate back to the start page, then restart polling.
-                    tracing::warn!(?err, "USB authenticator error, restarting transport");
-                    let _ = tx.send(UsbStateInternal::Restarting).await;
-                    state = UsbStateInternal::Idle;
+            // Activate when libwebauthn signals it is waiting for user input.
+            // The flag is monotonic within a single ceremony attempt; it is reset
+            // to false when the transport restarts below.
+            match &state {
+                UsbStateInternal::NeedsPin { .. }
+                | UsbStateInternal::PinNotSet { .. }
+                | UsbStateInternal::NeedsUserVerification { .. }
+                | UsbStateInternal::NeedsUserPresence => {
+                    active = true;
                 }
                 _ => {}
+            }
+
+            match state {
+                UsbStateInternal::Completed(_) => {
+                    tracing::debug!("USB current state: {state:?}");
+                    tx.send(state.clone()).await.map_err(|_| {
+                        CredentialServiceError::Internal(
+                            "USB state channel receiver closed prematurely".to_string(),
+                        )
+                    })?;
+                    break Ok(());
+                }
+
+                // Catch terminating errors first. Doesn't matter if the user was already engaged
+                // or not. We have to terminate either way.
+                UsbStateInternal::Failed(ref err) if super::is_ceremony_terminating(err) => {
+                    if state_changed {
+                        tracing::debug!("USB current state: {state:?}");
+                        tx.send(UsbStateInternal::Failed(err.clone()))
+                            .await
+                            .map_err(|_| {
+                                CredentialServiceError::Internal(
+                                    "USB state channel receiver closed prematurely".to_string(),
+                                )
+                            })?;
+                    }
+                    break Err(err.clone());
+                }
+
+                // Active non-terminating failure: the user was already engaged, surface
+                // the error via the Restarting signal so the UI navigates back to
+                // start_page.
+                // Reset active here only: the other Failed arms either break
+                // (so active is moot) or reach this arm with active already false.
+                UsbStateInternal::Failed(err) if active => {
+                    tracing::warn!(?err, "USB authenticator error, restarting transport");
+                    let _ = tx.send(UsbStateInternal::Restarting).await;
+                    active = false;
+                    state = UsbStateInternal::Idle;
+                }
+
+                // Pre-active non-terminating failure: the device errored before the user
+                // touched it. Restart silently without any UI notification.
+                UsbStateInternal::Failed(err) => {
+                    tracing::debug!(?err, "USB pre-active error, restarting silently");
+                    state = UsbStateInternal::Idle;
+                }
+
+                // All other state changes are sent, if they are 'new'
+                _ => {
+                    if state_changed {
+                        tracing::debug!("USB current state: {state:?}");
+                        tx.send(state.clone()).await.map_err(|_| {
+                            CredentialServiceError::Internal(
+                                "USB state channel receiver closed prematurely".to_string(),
+                            )
+                        })?;
+                    }
+                }
             }
         }
     }
