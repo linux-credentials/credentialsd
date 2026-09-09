@@ -73,6 +73,11 @@ impl HybridHandler for InternalHybridHandler {
             // Each iteration creates a fresh CableQrCodeDevice (the previous one
             // is consumed by channel()), so the old QR secret is discarded.
             loop {
+                // Reset the active flag for each ceremony attempt. It will be set to
+                // true inside run_hybrid_ceremony once the phone establishes a channel
+                // (i.e. the QR has been consumed and the BLE handshake succeeded).
+                let mut active = false;
+
                 let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
                     Ok(device) => device,
                     Err(err) => {
@@ -98,8 +103,14 @@ impl HybridHandler for InternalHybridHandler {
 
                 // Run the ceremony awaited directly (not in a nested spawn) so that
                 // the retry loop is sequential and no orphaned tasks can arise.
-                let response =
-                    run_hybrid_ceremony(&mut device, &request, &tx, cancellation.clone()).await;
+                let response = run_hybrid_ceremony(
+                    &mut device,
+                    &request,
+                    &tx,
+                    cancellation.clone(),
+                    &mut active,
+                )
+                .await;
 
                 match response {
                     Ok(auth_response) => {
@@ -107,8 +118,7 @@ impl HybridHandler for InternalHybridHandler {
                         break;
                     }
                     Err(err) if super::is_ceremony_terminating(&err) => {
-                        // Terminating errors (CredentialExcluded, NonTerminatingCancellation
-                        // from a winning transport, etc.) stop the loop.
+                        // Terminating errors stop the loop.
                         // NonTerminatingCancellation exits silently; others surface as Failed.
                         if !matches!(err, CredentialServiceError::NonTerminatingCancellation) {
                             let _ = tx.send(HybridStateInternal::Failed(err)).await;
@@ -118,11 +128,17 @@ impl HybridHandler for InternalHybridHandler {
                         break;
                     }
                     Err(err) => {
-                        // Non-terminating: notify the UI that a restart is in progress
-                        // so it can navigate back to the start page, then reissue a
-                        // fresh QR on the next iteration.
-                        tracing::warn!(?err, "Hybrid error, reissuing QR");
-                        let _ = tx.send(HybridStateInternal::Restarting).await;
+                        if active {
+                            // Post-active: the phone was engaged — surface the error
+                            // via the Restarting signal so the UI navigates back to
+                            // start_page, then reissue a fresh QR.
+                            tracing::warn!(?err, "Hybrid post-active error, reissuing QR");
+                            let _ = tx.send(HybridStateInternal::Restarting).await;
+                        } else {
+                            // Pre-active: the QR was never consumed or the BLE channel
+                            // failed before the phone responded. Reissue silently.
+                            tracing::debug!(?err, "Hybrid pre-active error, reissuing QR silently");
+                        }
                         continue;
                     }
                 }
@@ -254,6 +270,7 @@ async fn run_hybrid_ceremony(
     request: &CredentialRequest,
     tx: &Sender<HybridStateInternal>,
     cancellation: CancellationToken,
+    active: &mut bool,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     let mut channel = match device.channel(ChannelSettings::default()).await {
         Ok(channel) => channel,
@@ -262,6 +279,11 @@ async fn run_hybrid_ceremony(
             return Err(CredentialServiceError::AuthenticatorError);
         }
     };
+
+    // The BLE channel is open, which means the phone has consumed the QR code
+    // and completed the handshake. Mark this attempt as active so that any
+    // subsequent error is surfaced to the user rather than silenced.
+    *active = true;
 
     let state_sender_clone = tx.clone();
     let ux_updates_rx = channel.get_ux_update_receiver();
