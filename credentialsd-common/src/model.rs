@@ -8,10 +8,48 @@ pub const BACKGROUND_EVENT_ERROR_INTERNAL: u32 = 0x80000001;
 pub const BACKGROUND_EVENT_ERROR_TIMED_OUT: u32 = 0x80000002;
 pub const BACKGROUND_EVENT_ERROR_CANCELLED: u32 = 0x80000003;
 pub const BACKGROUND_EVENT_ERROR_AUTHENTICATOR: u32 = 0x80000004;
-pub const BACKGROUND_EVENT_ERROR_NO_CREDENTIALS: u32 = 0x80000005;
 pub const BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED: u32 = 0x80000006;
-pub const BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED: u32 = 0x80000007;
-pub const BACKGROUND_EVENT_ERROR_PIN_NOT_SET: u32 = 0x80000008;
+
+/// Machine-readable reason for a transport restart. Shared across all transports.
+/// Human-readable strings are built by the UI (gettext).
+///
+/// The `#[repr(u8)]` layout doubles as the D-Bus wire format via `From<Self> for u8`
+/// and `TryFrom<u8> for Self`. Discriminants must remain stable across releases.
+/// Discriminant 0 is deliberately unused so that an all-zeroed message is recognisable
+/// as invalid by `TryFrom`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportRestartReason {
+    /// The ceremony was interrupted before completing — transport error,
+    /// user cancelled on their phone/device, or an unrecoverable authenticator
+    /// error. The user should follow the new prompts to retry.
+    Interrupted = 1,
+    /// No matching credentials were found on the device. The user should try
+    /// a different authenticator.
+    NoCredentials = 2,
+    /// Too many incorrect PIN attempts on this device — it is now locked. The
+    /// user should remove and reinsert the device, or use a different authenticator.
+    PinAttemptsExhausted = 3,
+}
+
+impl From<TransportRestartReason> for u8 {
+    fn from(value: TransportRestartReason) -> Self {
+        value as u8
+    }
+}
+
+impl TryFrom<u8> for TransportRestartReason {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Interrupted),
+            2 => Ok(Self::NoCredentials),
+            3 => Ok(Self::PinAttemptsExhausted),
+            other => Err(other),
+        }
+    }
+}
 
 /// Credential service events intended to inform the UI.
 #[derive(Debug, PartialEq)]
@@ -38,7 +76,9 @@ pub enum BackgroundEvent {
     /// The hybrid ceremony was interrupted by a non-terminating error and a new
     /// QR code is about to be issued. The UI should navigate back to the start
     /// page so the new QR becomes visible.
-    HybridRestarting,
+    HybridRestarting {
+        reason: TransportRestartReason,
+    },
 
     NfcIdle,
     NfcWaiting,
@@ -46,7 +86,9 @@ pub enum BackgroundEvent {
     /// The NFC ceremony was interrupted by a non-terminating error and the
     /// transport is polling for a new device tap. The UI should navigate back
     /// to the start page.
-    NfcRestarting,
+    NfcRestarting {
+        reason: TransportRestartReason,
+    },
 
     UsbIdle,
     UsbWaiting,
@@ -55,16 +97,15 @@ pub enum BackgroundEvent {
     /// The USB ceremony was interrupted by a non-terminating error and the
     /// transport is polling for a device. The UI should navigate back to the
     /// start page.
-    UsbRestarting,
+    UsbRestarting {
+        reason: TransportRestartReason,
+    },
 
     ErrorInternal,
     ErrorTimedOut,
     ErrorCancelled,
     ErrorAuthenticator,
-    ErrorNoCredentials,
     ErrorCredentialExcluded,
-    ErrorPinAttemptsExhausted,
-    ErrorPinNotSet,
 }
 
 /// Emitted when a client enters a PIN for the selected authenticator.

@@ -21,7 +21,9 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, PinNotSetError};
+use credentialsd_common::model::{
+    BackgroundEvent, Credential, PinNotSetError, TransportRestartReason,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -321,7 +323,7 @@ impl InProcessUsbHandler {
                     // state, but we cover it here for exhaustiveness.
                     UsbStateInternal::Completed(_)
                     | UsbStateInternal::Failed(_)
-                    | UsbStateInternal::Restarting => Ok(prev_usb_state.clone()),
+                    | UsbStateInternal::Restarting(_) => Ok(prev_usb_state.clone()),
                 }
             };
 
@@ -402,8 +404,17 @@ impl InProcessUsbHandler {
                 // Reset active here only: the other Failed arms either break
                 // (so active is moot) or reach this arm with active already false.
                 UsbStateInternal::Failed(err) if active => {
+                    let reason = match err {
+                        CredentialServiceError::NoCredentials => {
+                            TransportRestartReason::NoCredentials
+                        }
+                        CredentialServiceError::PinAttemptsExhausted => {
+                            TransportRestartReason::PinAttemptsExhausted
+                        }
+                        _ => TransportRestartReason::Interrupted,
+                    };
                     tracing::warn!(?err, "USB authenticator error, restarting transport");
-                    let _ = tx.send(UsbStateInternal::Restarting).await;
+                    let _ = tx.send(UsbStateInternal::Restarting(reason)).await;
                     active = false;
                     state = UsbStateInternal::Idle;
                 }
@@ -614,7 +625,7 @@ pub(super) enum UsbStateInternal {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -669,7 +680,7 @@ pub enum UsbState {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -727,7 +738,7 @@ impl From<UsbStateInternal> for UsbState {
                 }
             }
             UsbStateInternal::Failed(err) => UsbState::Failed(err),
-            UsbStateInternal::Restarting => UsbState::Restarting,
+            UsbStateInternal::Restarting(reason) => UsbState::Restarting(reason),
         }
     }
 }
@@ -765,20 +776,18 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            UsbState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             UsbState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
-            }
-            UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
             }
             UsbState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            UsbState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
-            UsbState::Restarting => BackgroundEvent::UsbRestarting,
+            UsbState::Failed(CredentialServiceError::Internal(_))
+            | UsbState::Failed(CredentialServiceError::NoCredentials)
+            | UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorInternal
+            }
+            UsbState::Restarting(reason) => BackgroundEvent::UsbRestarting { reason: *reason },
         }
     }
 }

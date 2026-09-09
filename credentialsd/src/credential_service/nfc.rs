@@ -16,7 +16,9 @@ use tokio::sync::mpsc::{self, Receiver, Sender, WeakSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, PinNotSetError};
+use credentialsd_common::model::{
+    BackgroundEvent, Credential, PinNotSetError, TransportRestartReason,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -213,7 +215,7 @@ impl InProcessNfcHandler {
                     // state, but we cover it here for exhaustiveness.
                     NfcStateInternal::Completed(_)
                     | NfcStateInternal::Failed(_)
-                    | NfcStateInternal::Restarting => Ok(prev_nfc_state.clone()),
+                    | NfcStateInternal::Restarting(_) => Ok(prev_nfc_state.clone()),
                 }
             };
 
@@ -292,8 +294,17 @@ impl InProcessNfcHandler {
                 // Reset active here only: the other Failed arms either break
                 // (so active is moot) or reach this arm with active already false.
                 NfcStateInternal::Failed(err) if active => {
+                    let reason = match err {
+                        CredentialServiceError::NoCredentials => {
+                            TransportRestartReason::NoCredentials
+                        }
+                        CredentialServiceError::PinAttemptsExhausted => {
+                            TransportRestartReason::PinAttemptsExhausted
+                        }
+                        _ => TransportRestartReason::Interrupted,
+                    };
                     tracing::warn!(?err, "NFC authenticator error, restarting transport");
-                    let _ = tx.send(NfcStateInternal::Restarting).await;
+                    let _ = tx.send(NfcStateInternal::Restarting(reason)).await;
                     active = false;
                     state = NfcStateInternal::Idle;
                 }
@@ -502,7 +513,7 @@ pub(super) enum NfcStateInternal {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -548,7 +559,7 @@ pub enum NfcState {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 impl From<NfcStateInternal> for NfcState {
@@ -571,7 +582,7 @@ impl From<NfcStateInternal> for NfcState {
                 NfcState::NeedsUserVerification { attempts_left }
             }
             NfcStateInternal::Completed(_) => NfcState::Completed,
-            NfcStateInternal::Restarting => NfcState::Restarting,
+            NfcStateInternal::Restarting(reason) => NfcState::Restarting(reason),
             NfcStateInternal::SelectCredential { response, cred_tx } => {
                 NfcState::SelectingCredential {
                     creds: response
@@ -640,20 +651,18 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            NfcState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             NfcState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
-            }
-            NfcState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
             }
             NfcState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            NfcState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
-            NfcState::Restarting => BackgroundEvent::NfcRestarting,
+            NfcState::Failed(CredentialServiceError::Internal(_))
+            | NfcState::Failed(CredentialServiceError::NoCredentials)
+            | NfcState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorInternal
+            }
+            NfcState::Restarting(reason) => BackgroundEvent::NfcRestarting { reason: *reason },
         }
     }
 }
