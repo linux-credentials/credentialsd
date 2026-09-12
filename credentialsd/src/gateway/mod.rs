@@ -297,6 +297,8 @@ fn check_origin_from_app(
     let is_privileged_client = {
         let trusted_clients = [
             "org.mozilla.firefox",
+            "firefox",
+            "firefox-developer-edition",
             "xyz.iinuwa.credentialsd.DemoCredentialsUi",
         ];
         let mut privileged = trusted_clients.contains(&app_id.as_ref());
