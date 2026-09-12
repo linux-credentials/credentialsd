@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import logging
+import os
+from pathlib import Path
 import re
 import secrets
 import signal
@@ -473,6 +475,24 @@ async def get_passkey(interface, options, origin, top_origin):
     return response_json
 
 
+def discover_app_id():
+    desktop_file_name = os.environ.get("GIO_LAUNCHED_DESKTOP_FILE")
+    if not desktop_file_name:
+        logging.debug("Browser was not launched from a desktop entry.")
+        return None
+
+    browser_pid = os.getppid()
+    launched_pid = os.environ.get("GIO_LAUNCHED_DESKTOP_FILE_PID")
+    if launched_pid != str(browser_pid):
+        logging.debug(
+            f"Ignoring {desktop_file_name} from GIO_LAUNCHED_DESKTOP_FILE environment,"
+            f"it comes from process {launched_pid}, not the browser at {browser_pid}."
+        )
+        return None
+
+    return Path(desktop_file_name).stem
+
+
 async def get_interface():
     global INTERFACE
     if INTERFACE and INTERFACE.bus.connected:
@@ -480,9 +500,11 @@ async def get_interface():
 
     bus = await MessageBus().connect()
     logging.debug("Connected to bus")
-    import os
 
     logging.info(os.getcwd())
+
+    app_id = discover_app_id() or APP_ID
+    logging.info(f"Registering with the portal as {app_id}")
 
     msg = Message(
         "org.freedesktop.portal.Desktop",
@@ -491,7 +513,7 @@ async def get_interface():
         "Register",
         signature="sa{sv}",
         body=[
-            APP_ID,
+            app_id,
             {},
         ],
     )
