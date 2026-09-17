@@ -60,7 +60,7 @@ pub(crate) struct UiContext {
 }
 
 /// These methods are called by the credential service to control the UI.
-#[interface(name = "org.freedesktop.impl.portal.experimental.Credential")]
+#[interface(name = "org.freedesktop.impl.portal.Credential")]
 impl CredentialPortalBackend {
     // D-Bus has long argument signatures.
     #[expect(clippy::too_many_arguments)]

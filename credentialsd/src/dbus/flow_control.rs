@@ -8,7 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use credentialsd_common::{
-    memfd::read_secret,
+    memfd::take_mmap,
     model::{BackgroundEvent, PortalBackendOptions, WindowHandle},
 };
 use futures_lite::{Stream, StreamExt};
@@ -240,7 +240,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
             forward_background_event_stream(flow, stream);
         }
         UserInteractedEventInternal::ClientPinEntered(pin_fd) => {
-            let pin = match read_secret(pin_fd)
+            let pin = match take_mmap(pin_fd)
                 .map_err(|err| format!("Could not read from file descriptor: {err}"))
                 .and_then(|bytes| {
                     String::from_utf8(bytes)
@@ -263,7 +263,7 @@ async fn handle_ui_event<M: ManageDevice + Debug + Send + Sync + 'static>(
             }
         }
         UserInteractedEventInternal::SetDevicePin(pin_fd) => {
-            let pin = match read_secret(pin_fd)
+            let pin = match take_mmap(pin_fd)
                 .map_err(|err| format!("Could not read from file descriptor: {err}"))
                 .and_then(|bytes| {
                     String::from_utf8(bytes)

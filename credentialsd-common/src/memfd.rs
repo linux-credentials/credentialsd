@@ -1,8 +1,8 @@
 use std::{
     io::{self, ErrorKind, Read, Write},
-    mem::{ManuallyDrop, MaybeUninit},
+    mem::MaybeUninit,
     os::{
-        fd::{AsRawFd, FromRawFd, OwnedFd},
+        fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
         raw::c_void,
     },
     ptr::{self, NonNull},
@@ -19,8 +19,8 @@ use zeroize::Zeroize;
 /// need.
 const MIN_PAGE_SIZE: usize = 4096;
 
-/// Read a secret from a memory-mapped file.
-pub fn read_secret(fd: OwnedFd) -> io::Result<Vec<u8>> {
+/// Consume a memory-mapped file by reading and returning its data.
+pub fn take_mmap(fd: OwnedFd) -> io::Result<Vec<u8>> {
     let mut reader = MmapReader::from_fd(fd)?;
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
@@ -40,23 +40,51 @@ pub fn write_secret(mut secret: Vec<u8>) -> io::Result<OwnedFd> {
     }
 
     let memfd_secret = open_memfd_secret(secret.len())?;
-    let mut mem = Mmap::from_fd(memfd_secret)?;
+    {
+        let mut mem = Mmap::from_fd(memfd_secret.as_fd())?;
+        mem.write_all(&secret)?;
+        secret.zeroize();
+        drop(secret);
+    }
+
+    Ok(memfd_secret)
+}
+
+/// Transfers a secret value into a memory-mapped file.
+pub fn fill_mmap_with_secret(fd: BorrowedFd, mut secret: Vec<u8>) -> Result<(), io::Error> {
+    // For now, we're only accepting values that fit within a single page.
+    // This can be raised in the future if needed.
+    if secret.len() > MIN_PAGE_SIZE {
+        return Err(io::Error::new(
+            ErrorKind::FileTooLarge,
+            "value is too large",
+        ));
+    }
+
+    let mut mem = Mmap::from_fd(fd)?;
     mem.write_all(&secret)?;
     secret.zeroize();
     drop(secret);
 
-    Ok(mem.into_fd())
+    Ok(())
 }
 
-struct Mmap {
+struct Mmap<'fd> {
+    /// Pointer to mapped memory.
     inner: NonNull<u8>,
-    fd: OwnedFd,
+
+    /// Current size of the mapped memory.
     size: usize,
+
+    /// Current offset into the mapped memory.
     pos: usize,
+
+    /// File descriptor for the memfd.
+    _fd: BorrowedFd<'fd>,
 }
 
-impl Mmap {
-    fn from_fd(fd: OwnedFd) -> io::Result<Self> {
+impl<'fd> Mmap<'fd> {
+    fn from_fd(fd: BorrowedFd<'fd>) -> io::Result<Self> {
         let size = MIN_PAGE_SIZE;
         let ptr = unsafe {
             let ptr = mmap(
@@ -78,20 +106,14 @@ impl Mmap {
 
         Ok(Self {
             inner: ptr,
-            fd,
+            _fd: fd,
             size,
             pos: 0,
         })
     }
-
-    fn into_fd(self) -> OwnedFd {
-        let mmap = ManuallyDrop::new(self);
-        assert!(unsafe { munmap(mmap.inner.as_ptr().cast(), 4096) != -1 });
-        unsafe { ptr::read(&mmap.fd) }
-    }
 }
 
-impl Write for Mmap {
+impl Write for Mmap<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let remaining = self.size - self.pos;
         if remaining == 0 {
@@ -128,7 +150,7 @@ impl Write for Mmap {
     }
 }
 
-impl Drop for Mmap {
+impl Drop for Mmap<'_> {
     fn drop(&mut self) {
         unsafe {
             assert!(munmap(self.inner.as_ptr().cast(), MIN_PAGE_SIZE) != -1);

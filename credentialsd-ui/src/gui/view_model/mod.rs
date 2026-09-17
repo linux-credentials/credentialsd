@@ -7,7 +7,7 @@ use async_std::{
     channel::{Receiver, Sender},
     sync::Mutex as AsyncMutex,
 };
-use credentialsd_common::memfd::read_secret;
+use credentialsd_common::memfd::take_mmap;
 use credentialsd_common::model::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
@@ -319,7 +319,7 @@ impl ViewModel {
                     self.hybrid_qr_code_data = None;
                 }
                 Event::Background(BackgroundEvent::HybridStarted(qr_code_fd)) => {
-                    let qr_code_bytes = read_secret(qr_code_fd.into()).unwrap();
+                    let qr_code_bytes = take_mmap(qr_code_fd.into()).unwrap();
                     let qr_code = String::from_utf8(qr_code_bytes).unwrap();
                     self.hybrid_qr_code_data = Some(qr_code.clone().into_bytes());
                     self.tx_update

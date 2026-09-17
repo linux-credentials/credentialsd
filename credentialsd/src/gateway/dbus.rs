@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::Display,
-    os::fd::AsRawFd,
+    os::fd::{AsFd, AsRawFd},
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -21,15 +21,18 @@ use zbus::{
     zvariant::{DeserializeDict, Optional, OwnedFd, OwnedObjectPath, SerializeDict, Type, Value},
 };
 
-use credentialsd_common::model::{
-    BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
-    BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
-    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
-    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
-    Credential, Device, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, PinNotSetError, WindowHandle,
+use credentialsd_common::{
+    memfd,
+    model::{
+        BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
+        BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
+        BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
+        BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
+        Credential, Device, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
+        NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
+        NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
+        NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, PinNotSetError, WindowHandle,
+    },
 };
 
 use crate::{
@@ -46,10 +49,7 @@ use crate::{
     webauthn::{AppId, NavigationContext, Origin},
 };
 
-use super::{
-    CreatePublicKeyCredentialResponse, GatewayService, GetPublicKeyCredentialResponse,
-    RequestContext, check_origin_from_app,
-};
+use super::{GatewayService, RequestContext, check_origin_from_app};
 
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
 
@@ -204,9 +204,10 @@ impl CredentialPortalGateway {
     }
 }
 
-#[derive(Debug, Deserialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 #[zvariant(signature = "s")]
 enum CredentialType {
+    // TODO: Make this PascalCase.
     #[serde(rename = "publicKey")]
     PublicKey,
 }
@@ -486,6 +487,7 @@ impl Credentialsd {
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        cred_fd: OwnedFd,
         request_json: String,
         origin: &str,
         top_origin: Optional<&str>,
@@ -547,6 +549,7 @@ impl Credentialsd {
             .unwrap_or_default();
 
         let session = CredentialsdSession::new(
+            cred_fd,
             LibwebauthnCredentialRequest::Make(make_cred_request),
             cancellation_token,
             request_id,
@@ -580,6 +583,7 @@ impl Credentialsd {
         &self,
         #[zbus(header)] header: Header<'_>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        cred_fd: OwnedFd,
         origin: &str,
         top_origin: Optional<&str>,
         options: GetCredentialOptions,
@@ -643,6 +647,7 @@ impl Credentialsd {
             .unwrap_or_default();
 
         let session = CredentialsdSession::new(
+            cred_fd,
             LibwebauthnCredentialRequest::Get(get_cred_request),
             cancellation_token,
             request_id,
@@ -713,6 +718,13 @@ impl From<CredentialServiceError> for CredentialsdError {
     }
 }
 
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+struct CeremonyCompletedOptions {
+    #[zvariant(rename = "type")]
+    pub r#type: CredentialType,
+}
+
 #[derive(Clone)]
 enum LibwebauthnCredentialRequest {
     Make(MakeCredentialRequest),
@@ -720,6 +732,7 @@ enum LibwebauthnCredentialRequest {
 }
 
 struct CredentialsdSession {
+    cred_fd: Arc<Mutex<Option<OwnedFd>>>,
     cred_request: LibwebauthnCredentialRequest,
     request_id: RequestId,
     svc: Arc<AsyncMutex<dyn ManageDevice + Send + Sync + 'static>>,
@@ -734,32 +747,6 @@ struct CredentialsdSession {
     set_pin_tx: Arc<Mutex<Option<Sender<String>>>>,
     cred_selector_tx: Arc<Mutex<Option<Sender<String>>>>,
     hybrid_invocation_data: Arc<Mutex<Option<OwnedFd>>>,
-}
-
-#[derive(Debug, Clone, SerializeDict, Type)]
-#[zvariant(signature = "dict")]
-struct PublicKeyCredentialResponse<'a> {
-    #[zvariant(rename = "type")]
-    r#type: String,
-    public_key: Value<'a>,
-}
-
-impl From<CreatePublicKeyCredentialResponse> for PublicKeyCredentialResponse<'_> {
-    fn from(value: CreatePublicKeyCredentialResponse) -> Self {
-        Self {
-            r#type: "public-key".to_string(),
-            public_key: Value::from(value),
-        }
-    }
-}
-
-impl From<GetPublicKeyCredentialResponse> for PublicKeyCredentialResponse<'_> {
-    fn from(value: GetPublicKeyCredentialResponse) -> Self {
-        Self {
-            r#type: "public-key".to_string(),
-            public_key: Value::from(value),
-        }
-    }
 }
 
 #[interface(name = "xyz.iinuwa.credentialsd.Session")]
@@ -797,6 +784,7 @@ impl CredentialsdSession {
         let request_id = self.request_id;
         let request = self.cred_request.clone();
         let hybrid_invocation_data = self.hybrid_invocation_data.clone();
+        let response_fd = self.cred_fd.clone();
 
         let task = tokio::spawn(async move {
             while let Some(event) = stream.next().await {
@@ -822,10 +810,10 @@ impl CredentialsdSession {
 
                         match msg {
                             Ok(response) => {
-                                let public_key_response = match response {
+                                let public_key_response: String = match response {
                                     CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) => {
                                         if let LibwebauthnCredentialRequest::Make(make_request) = request  {
-                                            create_credential_response_try_from_ctap2(&cred_response, &make_request).map(|c| c.into())
+                                            create_credential_response_try_from_ctap2(&cred_response, &make_request).map(|c| c.registration_response_json)
                                         }
                                         else {
                                             Err("Expected get response, received make response".to_string())
@@ -833,21 +821,48 @@ impl CredentialsdSession {
                                     }
                                     CredentialResponse::GetPublicKeyCredentialResponse(cred_response) => {
                                         if let LibwebauthnCredentialRequest::Get(get_request) = request  {
-                                            get_credential_response_try_from_ctap2(&cred_response, &get_request).map(|c| c.into())
+                                            get_credential_response_try_from_ctap2(&cred_response, &get_request).map(|c| c.authentication_response_json)
                                         }
                                         else {
                                             Err("Expected make response, received get response".to_string())
                                         }
                                     }
-                                }
-                                    .map_err(|err| {
-                                        tracing::error!(%request_id,
-                                            "Failed to parse credential response from authenticator: {err}"
-                                        );
-                                        CredentialsdError::Internal
-                                    }).unwrap();
+                                }.map_err(|err| {
+                                    tracing::error!(%request_id,
+                                        "Failed to parse credential response from authenticator: {err}"
+                                    );
+                                    CredentialsdError::Internal
+                                }).unwrap();
                                 tracing::debug!("Sending ceremony completed response");
-                                if s.ceremony_completed(&public_key_response).await.is_err() {
+                                {
+                                    let Some(cred_fd) =
+                                        response_fd.lock().expect("not poisoned").take()
+                                    else {
+                                        tracing::error!(
+                                            request_id,
+                                            "File descriptor was already taken"
+                                        );
+                                        break;
+                                    };
+
+                                    if let Err(err) = memfd::fill_mmap_with_secret(
+                                        cred_fd.as_fd(),
+                                        public_key_response.into_bytes(),
+                                    ) {
+                                        tracing::error!(
+                                            request_id,
+                                            %err,
+                                            "Failed to fill credential"
+                                        );
+                                        break;
+                                    }
+                                }
+                                if s.ceremony_completed(CeremonyCompletedOptions {
+                                    r#type: CredentialType::PublicKey,
+                                })
+                                .await
+                                .is_err()
+                                {
                                     tracing::error!(
                                         request_id,
                                         "Failed to send ceremony completed event to backend."
@@ -1005,7 +1020,7 @@ impl CredentialsdSession {
     #[zbus(signal)]
     async fn ceremony_completed(
         emitter: &SignalEmitter<'_>,
-        response: &PublicKeyCredentialResponse<'_>,
+        _options: CeremonyCompletedOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
@@ -1014,8 +1029,9 @@ impl CredentialsdSession {
 
 impl CredentialsdSession {
     fn new(
+        cred_fd: OwnedFd,
         cred_request: LibwebauthnCredentialRequest,
-        cancellation_token: CancellationToken,
+        _cancellation_token: CancellationToken,
         request_id: RequestId,
         destination: OwnedUniqueName,
         svc: Arc<AsyncMutex<dyn ManageDevice + Send + Sync + 'static>>,
@@ -1025,6 +1041,7 @@ impl CredentialsdSession {
     ) -> Self {
         // TODO: watch for sender disconnected, sender cancelled, or if we disconnect from bus
         Self {
+            cred_fd: Arc::new(Mutex::new(Some(cred_fd))),
             cred_request,
             request_id,
             svc,
