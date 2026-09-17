@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::{self, ErrorKind, Read, Write},
     mem::MaybeUninit,
     os::{
@@ -12,12 +13,10 @@ use libc::{
     MAP_SHARED, MS_SYNC, O_CLOEXEC, PROT_READ, PROT_WRITE, SYS_memfd_secret, fstat, ftruncate,
     mmap, msync, munmap, off_t, syscall,
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// On most architectures, the minimum page size is 4KB, so we use that as a baseline for creating
-/// memory-mapped files. If the page size is larger, the OS will just map a larger page than we
-/// need.
-const MIN_PAGE_SIZE: usize = 4096;
+/// This should encapsulate the largest responses with PQ public keys, but we can raise it later if we need to.
+const MAX_SECRET_SIZE: usize = 16 * 1024;
 
 /// Consume a memory-mapped file by reading and returning its data.
 pub fn take_mmap(fd: OwnedFd) -> io::Result<Vec<u8>> {
@@ -29,45 +28,66 @@ pub fn take_mmap(fd: OwnedFd) -> io::Result<Vec<u8>> {
 
 /// Write a secret to a memfd_secret and return its file descriptor. The secret will be zeroized
 /// from memory.
-pub fn write_secret(mut secret: Vec<u8>) -> io::Result<OwnedFd> {
-    // For now, we're only accepting values that fit within a single page.
-    // This can be raised in the future if needed.
-    if secret.len() > MIN_PAGE_SIZE {
-        return Err(io::Error::new(
-            ErrorKind::FileTooLarge,
-            "value is too large",
-        ));
-    }
-
-    let memfd_secret = open_memfd_secret(secret.len())?;
+pub fn write_secret(secret: Vec<u8>) -> io::Result<OwnedFd> {
+    let secret = Secret::try_from(secret)?;
+    let memfd_secret = open_memfd_secret(secret.len)?;
     {
         let mut mem = Mmap::from_fd(memfd_secret.as_fd())?;
-        mem.write_all(&secret)?;
-        secret.zeroize();
-        drop(secret);
+        mem.write_all(&secret.data)?;
     }
-
     Ok(memfd_secret)
 }
 
 /// Transfers a secret value into a memory-mapped file.
-pub fn fill_mmap_with_secret(fd: BorrowedFd, mut secret: Vec<u8>) -> Result<(), io::Error> {
-    // For now, we're only accepting values that fit within a single page.
+pub fn fill_mmap_with_secret(fd: BorrowedFd, data: Vec<u8>) -> Result<(), io::Error> {
+    let secret = Secret::try_from(data)?;
+    let mut mem = Mmap::from_fd(fd)?;
+    mem.write_all(&secret.data)?;
+
+    // Don't ftruncate memfd_secret.
+    let fd_link = fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))?;
+    if *fd_link != *"memfd:secretmem" {
+        if unsafe { ftruncate(fd.as_raw_fd(), secret.len) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+fn guard_secret_length(mut secret: Vec<u8>) -> io::Result<(Vec<u8>, off_t)> {
+    // For now, we're only accepting values that fit within a 16K, which should be sufficient.
     // This can be raised in the future if needed.
-    if secret.len() > MIN_PAGE_SIZE {
+    if secret.len() > MAX_SECRET_SIZE {
+        secret.zeroize();
         return Err(io::Error::new(
             ErrorKind::FileTooLarge,
             "value is too large",
         ));
     }
 
-    let mut mem = Mmap::from_fd(fd)?;
-    mem.write_all(&secret)?;
-    secret.zeroize();
-    drop(secret);
+    let Ok(len) = off_t::try_from(secret.len()) else {
+        secret.zeroize();
+        return Err(io::Error::new(ErrorKind::FileTooLarge, "File is too large"));
+    };
 
-    Ok(())
+    Ok((secret, len))
 }
+
+struct Secret {
+    data: Vec<u8>,
+    len: off_t,
+}
+
+impl TryFrom<Vec<u8>> for Secret {
+    type Error = io::Error;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        let (data, len) = guard_secret_length(value)?;
+        Ok(Self { data, len })
+    }
+}
+
+impl ZeroizeOnDrop for Secret {}
 
 struct Mmap<'fd> {
     /// Pointer to mapped memory.
@@ -85,7 +105,7 @@ struct Mmap<'fd> {
 
 impl<'fd> Mmap<'fd> {
     fn from_fd(fd: BorrowedFd<'fd>) -> io::Result<Self> {
-        let size = MIN_PAGE_SIZE;
+        let size = MAX_SECRET_SIZE;
         let ptr = unsafe {
             let ptr = mmap(
                 ptr::null_mut(),
@@ -153,7 +173,7 @@ impl Write for Mmap<'_> {
 impl Drop for Mmap<'_> {
     fn drop(&mut self) {
         unsafe {
-            assert!(munmap(self.inner.as_ptr().cast(), MIN_PAGE_SIZE) != -1);
+            assert!(munmap(self.inner.as_ptr().cast(), MAX_SECRET_SIZE) != -1);
         }
     }
 }
@@ -168,7 +188,7 @@ struct MmapReader {
 impl MmapReader {
     fn from_fd(fd: OwnedFd) -> io::Result<Self> {
         let ptr = unsafe {
-            let size = MIN_PAGE_SIZE;
+            let size = MAX_SECRET_SIZE;
             let flags = PROT_READ;
             let ptr = mmap(ptr::null_mut(), size, flags, MAP_SHARED, fd.as_raw_fd(), 0);
             if ptr == usize::MAX as *mut c_void {
@@ -204,7 +224,7 @@ impl MmapReader {
 impl Drop for MmapReader {
     fn drop(&mut self) {
         unsafe {
-            assert!(munmap(self.inner.as_ptr().cast(), MIN_PAGE_SIZE) != -1);
+            assert!(munmap(self.inner.as_ptr().cast(), MAX_SECRET_SIZE) != -1);
         }
     }
 }
@@ -227,10 +247,7 @@ impl Read for MmapReader {
     }
 }
 
-fn open_memfd_secret(len: usize) -> io::Result<OwnedFd> {
-    let len = off_t::try_from(len)
-        .map_err(|_| io::Error::new(ErrorKind::FileTooLarge, "File is too large"))?;
-
+fn open_memfd_secret(len: off_t) -> io::Result<OwnedFd> {
     // Open memfd_secret
     let fd = {
         let ret = unsafe { syscall(SYS_memfd_secret, O_CLOEXEC) };

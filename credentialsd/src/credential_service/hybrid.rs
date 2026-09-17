@@ -64,6 +64,9 @@ impl HybridHandler for InternalHybridHandler {
                 .map(|s| s.to_lowercase() == "true")
                 .unwrap_or_default()
             {
+                tracing::info!(
+                    "Using experimental PXP BLE transport with fallback to cloud tunnel"
+                );
                 CableTransports::CloudAssistedOrLocal
             } else {
                 CableTransports::CloudAssistedOnly

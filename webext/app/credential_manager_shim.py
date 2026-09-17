@@ -6,8 +6,10 @@ import base64
 import codecs
 from dataclasses import dataclass
 from enum import Enum
+import fcntl
 import json
 import logging
+import mmap
 import os
 from pathlib import Path
 import re
@@ -17,11 +19,13 @@ import struct
 import sys
 from typing import Optional
 
-from dbus_next import Variant
+from dbus_next import Variant, validators
 from dbus_next.aio import MessageBus
 from dbus_next.proxy_object import BaseProxyInterface
 from dbus_next.constants import MessageType
 from dbus_next.message import Message
+
+validators.is_member_name_valid = lambda member: True  # ty: ignore[invalid-assignment]
 
 logging.basicConfig(
     filename="/tmp/credential_manager_shim.log", encoding="utf-8", level=logging.DEBUG
@@ -30,6 +34,7 @@ logging.basicConfig(
 APP_ID = "@APP_ID@"
 DBUS_DOC_FILE = "@DBUS_DOC_FILE@"
 INTERFACE: Optional[BaseProxyInterface] = None
+INTERFACE_VERSION: Optional[str] = None
 
 
 def getMessage():
@@ -258,7 +263,7 @@ class CborParser:
                 value = argument
 
             case MajorType.NegativeInteger:
-                value = -1 - argument
+                value = -1 - argument  # ty: ignore[unsupported-operator]
 
             case MajorType.ByteString:
                 string_len = argument
@@ -419,15 +424,43 @@ async def create_passkey(interface, options, origin, top_origin):
     if top_origin != origin:
         req["top_origin"] = Variant("s", top_origin)
     logging.debug("Sending request to D-Bus API")
-    _rsp = await interface.call_create_credential("", origin, "publicKey", req)
-    result = await request_event.wait()
-    if result["type"].value != "public-key":
-        raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
+    if INTERFACE_VERSION == "X0":
+        _rsp = await interface.call_create_credential("", origin, "publicKey", req)
+        result = await request_event.wait()
+        # TODO: this should be PascalCase: PublicKey
+        if result["type"].value != "public-key":
+            raise Exception(
+                f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
+            )
+        response_json = json.loads(
+            result["public_key"].value["registration_response_json"].value
         )
-    response_json = json.loads(
-        result["public_key"].value["registration_response_json"].value
-    )
+    elif INTERFACE_VERSION == "X1":
+        fd = os.memfd_create(f"response_{request_event.token}", os.MFD_ALLOW_SEALING)
+        try:
+            os.ftruncate(fd, 16 * 1024)
+            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_GROW)
+            _rsp = await interface.call_create_credential(
+                "", fd, origin, "publicKey", req
+            )
+            result = await request_event.wait()
+            # TODO: this should be PascalCase
+            if result["type"].value != "publicKey":
+                raise Exception(
+                    f"Invalid credential type received: expected 'publicKey', received {result['type'].value}"
+                )
+            with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as mm:
+                response_bytes = mm.read(mm.size())
+                logging.debug(
+                    f"Received response (raw): len, {mm.size()} {response_bytes}"
+                )
+                response_json = json.loads(response_bytes[: mm.size()])
+        finally:
+            os.close(fd)
+    else:
+        raise Exception("Unknown portal version")
+    logging.debug(response_json)
+
     attestation = cbor_loads(b64_decode(response_json["response"]["attestationObject"]))
     auth_data_view = attestation["authData"]
     response_json["response"]["authenticatorData"] = b64_encode(auth_data_view)
@@ -444,15 +477,8 @@ async def create_passkey(interface, options, origin, top_origin):
 
 async def get_passkey(interface, options, origin, top_origin):
     logging.debug("Authenticating with passkey")
-    is_same_origin = origin == top_origin
     req_json = json.dumps(options)
     logging.debug(req_json)
-    req = {
-        "type": Variant("s", "publicKey"),
-        "origin": Variant("s", origin),
-        "is_same_origin": Variant("b", is_same_origin),
-        "publicKey": Variant("a{sv}", {"request_json": Variant("s", req_json)}),
-    }
 
     logging.debug("Sending request to D-Bus API")
     request_event = create_portal_request_message_handler(interface.bus)
@@ -462,16 +488,37 @@ async def get_passkey(interface, options, origin, top_origin):
     }
     if top_origin != origin:
         req["top_origin"] = Variant("s", top_origin)
-    _rsp = await interface.call_get_credential("", origin, req)
-    result = await request_event.wait()
-    if result["type"].value != "public-key":
-        raise Exception(
-            f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
-        )
+    if INTERFACE_VERSION == "X0":
+        _rsp = await interface.call_get_credential("", origin, req)
+        result = await request_event.wait()
+        if result["type"].value != "public-key":
+            raise Exception(
+                f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
+            )
 
-    response_json = json.loads(
-        result["public_key"].value["authentication_response_json"].value
-    )
+        response_json = json.loads(
+            result["public_key"].value["authentication_response_json"].value
+        )
+    elif INTERFACE_VERSION == "X1":
+        fd = os.memfd_create(f"response_{request_event.token}", os.MFD_ALLOW_SEALING)
+        try:
+            os.ftruncate(fd, 16 * 1024)
+            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_GROW)
+            _rsp = await interface.call_get_credential("", fd, origin, req)
+            result = await request_event.wait()
+            # TODO: this should be PascalCase
+            if result["type"].value != "publicKey":
+                raise Exception(
+                    f"Invalid credential type received: expected 'publicKey', received {result['type'].value}"
+                )
+            with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as mm:
+                response_bytes = mm.read(mm.size())
+                logging.debug(
+                    f"Received response (raw): len, {mm.size()} {response_bytes}"
+                )
+                response_json = json.loads(response_bytes[: mm.size()])
+        finally:
+            os.close(fd)
     return response_json
 
 
@@ -486,10 +533,11 @@ def discover_app_id():
 
 async def get_interface():
     global INTERFACE
+    global INTERFACE_VERSION
     if INTERFACE and INTERFACE.bus.connected:
         return INTERFACE
 
-    bus = await MessageBus().connect()
+    bus = await MessageBus(negotiate_unix_fd=True).connect()
     logging.debug("Connected to bus")
 
     logging.info(os.getcwd())
@@ -513,17 +561,33 @@ async def get_interface():
     with open(DBUS_DOC_FILE, "r") as f:
         introspection = f.read()
 
-    proxy_object = bus.get_proxy_object(
-        "org.freedesktop.portal.Desktop",
-        "/org/freedesktop/portal/desktop",
-        introspection,
-    )
-    interface = proxy_object.get_interface(
-        "org.freedesktop.portal.experimental.Credential"
-    )
-    INTERFACE = interface
-    logging.debug(f"Connected to interface at {interface.path}")
-    return INTERFACE
+    service_name = "org.freedesktop.portal.Desktop"
+    service_locations = [
+        (
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.experimental.Credential",
+            "X0",
+        ),
+        (
+            "/org/freedesktop/portal/desktop/experimental",
+            "org.freedesktop.portal.Credential.X1",
+            "X1",
+        ),
+    ]
+    for object_path, interface_name, interface_version in service_locations:
+        introspection = await bus.introspect(service_name, object_path)
+        logging.debug([str(i) for i in introspection.interfaces])
+        if any(i.name == interface_name for i in introspection.interfaces):
+            proxy_object = bus.get_proxy_object(
+                service_name, object_path, introspection
+            )
+            interface = proxy_object.get_interface(interface_name)
+            INTERFACE = interface
+            INTERFACE_VERSION = interface_version
+            logging.debug(
+                f"Connected to interface {interface_name} at {interface.path}"
+            )
+            return INTERFACE
 
 
 async def run(interface, cmd, options, origin, top_origin):
