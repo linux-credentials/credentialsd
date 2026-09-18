@@ -52,6 +52,10 @@ time described above.
   for any origin.
 - _unprivileged client_: A client that is allowed to make requests for
   credentials for only a preconfigured set of origins.
+- _user session privileges_: All of the privileges granted to a user by means
+  of its Unix user and groups.
+- _sandboxed application_: An application that runs with restricted access to
+  the user session and filesystem.
 
 ## Scope
 
@@ -59,14 +63,19 @@ Here is the current list of items that are in scope:
 
 - Privileged clients may request credentials via this service[^1] for any origin.
 - The list of privileged clients cannot change without:
-  - `root` privileges, or
+  - user session privileges, or
   - user consent[^2]
 - The list of unprivileged clients cannot change without:
-  - `root` privileges, or
+  - user session privileges, or
   - user consent[^2]
 
+The determination of a client's permissions to this API is not performed by
+credentialsd; that operation is delegated to trusted intermediary services, who
+should uphold the guarantees above.
+
 We implicitly trust the kernel and D-Bus, so any attacks that exploit those are
-out of scope for this project.
+out of scope for this project. When appropriate, we will use hardening techniques
+to raise the bar for some operations from user session privileges to `root` privileges.
 
 Some other attacks that are explicitly out of scope are those that require:
 
