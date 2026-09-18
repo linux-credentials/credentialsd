@@ -8,7 +8,7 @@ use async_std::{
     sync::Mutex as AsyncMutex,
 };
 use credentialsd_common::memfd::read_secret;
-use credentialsd_common::model::{BackgroundEvent, Credential};
+use credentialsd_common::model::{BackgroundEvent, Credential, TransportRestartReason};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
@@ -252,31 +252,7 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
-                Event::Background(BackgroundEvent::ErrorNoCredentials) => {
-                    let error_msg = gettext("No matching credentials found on this authenticator.");
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
-                Event::Background(BackgroundEvent::ErrorPinAttemptsExhausted) => {
-                    let error_msg = gettext(
-                        "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                    );
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
-                Event::Background(BackgroundEvent::ErrorPinNotSet) => {
-                    let error_msg = gettext(
-                        "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
-                    );
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
+
                 Event::Background(BackgroundEvent::ErrorTimedOut) => {
                     let error_msg = gettext("The credential request timed out. Please try again.");
                     self.tx_update
@@ -348,6 +324,18 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                Event::Background(
+                    BackgroundEvent::HybridRestarting { reason }
+                    | BackgroundEvent::UsbRestarting { reason }
+                    | BackgroundEvent::NfcRestarting { reason },
+                ) => {
+                    self.hybrid_qr_code_data = None;
+                    let message = localized_transport_restart_reason(&reason);
+                    self.tx_update
+                        .send(ViewUpdate::TransportRestarting { message })
+                        .await
+                        .unwrap();
+                }
                 Event::Background(BackgroundEvent::ErrorCancelled) => {
                     self.hybrid_qr_code_data = None;
                     break;
@@ -377,6 +365,20 @@ impl Debug for ViewEvent {
             Self::SetNewDevicePin(_) => f.debug_tuple("SetNewDevicePin").field(&"******").finish(),
             Self::UserCancelled => write!(f, "UserCancelled"),
         }
+    }
+}
+
+fn localized_transport_restart_reason(reason: &TransportRestartReason) -> String {
+    match reason {
+        TransportRestartReason::Interrupted => gettext(
+            "The previous attempt was interrupted. Please follow the new prompts to try again.",
+        ),
+        TransportRestartReason::NoCredentials => {
+            gettext("No matching credentials on this authenticator. Please try a different one.")
+        }
+        TransportRestartReason::PinAttemptsExhausted => gettext(
+            "No more PIN attempts allowed. Remove and reinsert your device, or use a different authenticator.",
+        ),
     }
 }
 

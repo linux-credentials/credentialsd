@@ -154,6 +154,17 @@ template $CredentialsUiWindow: ApplicationWindow {
               wrap: true;
             }
           }
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.restart_message;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.restart_message_visible;
+            margin-top: 16;
+            margin-start: 24;
+            margin-end: 24;
+            margin-bottom: 8;
+            wrap: true;
+            styles ["error"]
+          }
         };
       }
 
