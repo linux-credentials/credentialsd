@@ -1,0 +1,251 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: credentialsd-ui\n"
+"Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
+"issues\"\n"
+"POT-Creation-Date: 2026-06-18 07:18-0500\n"
+"PO-Revision-Date: 2026-09-20 07:18-0500\n"
+"Last-Translator: Salif Mehmed <mail@salif.eu>\n"
+"Language-Team: none\n"
+"Language: bg_BG\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:9
+msgid "credentialsd-ui"
+msgstr "credentialsd-ui"
+
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:10
+msgid "A UI for interacting with credentialsd"
+msgstr "Потребителски интерфейс за взаимодействие с credentialsd"
+
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:12
+msgid ""
+"Displays a UI for registering and creating credentials with credentialsd."
+msgstr ""
+"Показва потребителски интерфейс за регистриране и създаване на данни за "
+"удостоверяване чрез credentialsd."
+
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:17
+msgid "Registering a credential"
+msgstr "Регистриране на данни за удостоверяване"
+
+#. developer_name tag deprecated with Appstream 1.0
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:36
+#: credentialsd-ui/data/xyz.iinuwa.credentialsd.CredentialsUi.metainfo.xml.in.in:39
+msgid "Isaiah Inuwa"
+msgstr "Isaiah Inuwa"
+
+#: credentialsd-ui/data/resources/ui/window.blp:48
+msgid "Choose device"
+msgstr "Изберете устройство"
+
+#: credentialsd-ui/data/resources/ui/window.blp:72
+msgid "Use a mobile device"
+msgstr "Използвайте мобилно устройство"
+
+#: credentialsd-ui/data/resources/ui/window.blp:145
+msgid "Use your security key"
+msgstr "Използвайте своя ключ за сигурност"
+
+#: credentialsd-ui/data/resources/ui/window.blp:162
+msgid "Connect a security key"
+msgstr "Свържете ключ за сигурност"
+
+#: credentialsd-ui/data/resources/ui/window.blp:197
+msgid "Enter your device PIN"
+msgstr "Въведете ПИН кода на вашето устройство"
+
+#: credentialsd-ui/data/resources/ui/window.blp:205
+msgid "Scan the QR code to connect your device"
+msgstr "Сканирайте QR кода, за да свържете устройството си"
+
+#: credentialsd-ui/data/resources/ui/window.blp:247
+#: credentialsd-ui/data/resources/ui/window.blp:253
+msgid "Choose credential"
+msgstr "Изберете данни за удостоверяване"
+
+#: credentialsd-ui/data/resources/ui/window.blp:266
+msgid "Complete"
+msgstr "Завършване"
+
+#: credentialsd-ui/data/resources/ui/window.blp:288
+msgid "Done!"
+msgstr "Готово!"
+
+#: credentialsd-ui/data/resources/ui/window.blp:299
+msgid "Something went wrong."
+msgstr "Възникна грешка."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:159
+msgid "Enter your PIN. One attempt remaining."
+msgid_plural "Enter your PIN. %d attempts remaining."
+msgstr[0] "Въведете вашия ПИН. Остава 1 опит."
+msgstr[1] "Въведете вашия ПИН. Остават %d опита."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:165
+msgid "Enter your PIN."
+msgstr "Въведете вашия ПИН."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:174
+msgid "Touch your device again. One attempt remaining."
+msgid_plural "Touch your device again. %d attempts remaining."
+msgstr[0] "Докоснете устройството си отново. Остава 1 опит."
+msgstr[1] "Докоснете устройството си отново. Остават %d опита."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:180
+msgid "Touch your device."
+msgstr "Докоснете устройството си."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:185
+msgid "Touch your device"
+msgstr "Докоснете устройството си"
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:188
+msgid "Scan the QR code with your device to begin authentication."
+msgstr "Сканирайте QR кода с устройството си, за да започнете удостоверяването."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:201
+msgid ""
+"Connecting to your device. Make sure both devices are near each other and "
+"have Bluetooth enabled."
+msgstr ""
+"Свързване с вашето устройство. Уверете се, че двете устройства са близо едно "
+"до друго и имат включен Bluetooth."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:209
+msgid "Device connected. Follow the instructions on your device"
+msgstr "Устройството е свързано. Следвайте инструкциите на него"
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:298
+msgid "Insert your security key."
+msgstr "Поставете вашия ключ за сигурност."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:317
+msgid "Multiple devices found. Please select with which to proceed."
+msgstr "Открити са няколко устройства. Моля, изберете с кое да продължите."
+
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:362
+msgid "Credential Manager"
+msgstr "Управление на данни за удостоверяване"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:57
+msgid "A Bluetooth device"
+msgstr "Bluetooth устройство"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:58
+msgid "This device"
+msgstr "Това устройство"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:59
+msgid "A mobile device"
+msgstr "Мобилно устройство"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:60
+msgid "Linked Device"
+msgstr "Свързано устройство"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:61
+msgid "An security key or card (NFC)"
+msgstr "Ключ за сигурност или карта (NFC)"
+
+#: credentialsd-ui/src/gui/view_model/gtk/device.rs:62
+msgid "A security key (USB)"
+msgstr "Ключ за сигурност (USB)"
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:64
+msgid "unknown application"
+msgstr "неизвестно приложение"
+
+#. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+#: credentialsd-ui/src/gui/view_model/mod.rs:80
+msgid "Create a passkey for %s1"
+msgstr "Създаване на ключ за достъп за %s1"
+
+#. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+#: credentialsd-ui/src/gui/view_model/mod.rs:84
+msgid "Use a passkey for %s1"
+msgstr "Използване на ключ за достъп за %s1"
+
+#. TRANSLATORS: %s1 is the "relying party" (e.g.: domain name) where the request is coming from
+#. TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
+#. TRANSLATORS: %i1 is the process ID of the requesting application
+#. TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
+#: credentialsd-ui/src/gui/view_model/mod.rs:96
+msgid ""
+"<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to create a "
+"credential to register at \"%s1\". Only proceed if you trust this process."
+msgstr ""
+"<b>„%s2“</b> (идентификатор на процес: %i1, изпълним файл: %s3) иска да "
+"създаде данни за удостоверяване за регистрация в „%s1“. Продължете само ако "
+"имате доверие на този процес."
+
+#. TRANSLATORS: %s1 is the "relying party" (think: domain name) where the request is coming from
+#. TRANSLATORS: %s2 is the application name (e.g.: firefox) where the request is coming from, <b></b> must be left untouched to make the name bold
+#. TRANSLATORS: %i1 is the process ID of the requesting application
+#. TRANSLATORS: %s3 is the absolute path (think: /usr/bin/firefox) of the requesting application
+#: credentialsd-ui/src/gui/view_model/mod.rs:103
+msgid ""
+"<b>\"%s2\"</b> (process ID: %i1, binary: %s3) is asking to use a credential "
+"to sign in to \"%s1\". Only proceed if you trust this process."
+msgstr ""
+"<b>„%s2“</b> (идентификатор на процес: %i1, изпълним файл: %s3) иска да "
+"използва данни за удостоверяване за влизане в „%s1“. Продължете само ако "
+"имате доверие на този процес."
+
+#. TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+#: credentialsd-ui/src/gui/view_model/mod.rs:115
+msgid ""
+"Scan the QR code using the camera on the device that has the passkey for %s1"
+msgstr ""
+"Сканирайте QR кода с камерата на устройството, в което е ключът за достъп за %s1"
+
+#. TRANSLATORS: %s1 is the relying party (think: domain name) where the request is coming from
+#: credentialsd-ui/src/gui/view_model/mod.rs:118
+msgid "Insert and activate your security key to use it for %s1"
+msgstr ""
+"Поставете и активирайте вашия ключ за сигурност, за да го използвате за %s1"
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:181
+msgid "Failed to select credential from device."
+msgstr "Неуспешен избор на данни за удостоверяване от устройството."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:237
+msgid "No matching credentials found on this authenticator."
+msgstr "В този удостоверител не са открити съвпадащи данни за удостоверяване."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:245
+msgid ""
+"No more PIN attempts allowed. Try removing your device and plugging it back "
+"in."
+msgstr ""
+"Няма повече разрешени опити за ПИН. Опитайте да извадите устройството и да го "
+"включите отново."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:254
+msgid ""
+"This server requires your device to have additional protection like a PIN, "
+"which is not set. Please set a PIN for this device and try again."
+msgstr ""
+"Този сървър изисква устройството ви да има допълнителна защита, като например "
+"ПИН, какъвто не е зададен. Моля, задайте ПИН за това устройство и опитайте "
+"отново."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:262
+msgid "The credential request timed out. Please try again."
+msgstr ""
+"Времето за заявката за данни за удостоверяване изтече. Моля, опитайте отново."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:272
+msgid ""
+"Something went wrong while retrieving a credential. Please try again later "
+"or use a different authenticator."
+msgstr ""
+"Възникна грешка при извличането на данни за удостоверяване. Моля, опитайте "
+"по-късно или използвайте друг удостоверител."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:281
+msgid "This credential is already registered on this authenticator."
+msgstr "Тези данни за удостоверяване вече са регистрирани в този удостоверител."
