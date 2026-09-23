@@ -405,12 +405,20 @@ impl UiController for UiControlServiceClient {
         // events according to the sender.
         // Therefore, we call `start_service_by_name()` explicitly, then subscribe, then
         // issue the function call.
-        let service_name = WellKnownName::try_from(backend_proxy.as_ref().destination().clone())
-            .expect("UiControl destination is a well-known name");
-        dbus_proxy.start_service_by_name(service_name, 0).await?;
-        let sender = dbus_proxy
-            .get_name_owner(backend_proxy.as_ref().destination().clone())
-            .await?;
+        // Only activate the service if it isn't already running: bus implementations
+        // reject `StartServiceByName` for names without an activation file, even if the
+        // name is owned, which breaks running the UI manually.
+        let destination = backend_proxy.as_ref().destination().clone();
+        let sender = match dbus_proxy.get_name_owner(destination.clone()).await {
+            Ok(sender) => sender,
+            Err(fdo::Error::NameHasNoOwner(_)) => {
+                let service_name = WellKnownName::try_from(destination.clone())
+                    .expect("UiControl destination is a well-known name");
+                dbus_proxy.start_service_by_name(service_name, 0).await?;
+                dbus_proxy.get_name_owner(destination).await?
+            }
+            Err(err) => return Err(err.into()),
+        };
         subscribe_ui_events(
             self.conn.clone(),
             sender,

@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
 - daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
