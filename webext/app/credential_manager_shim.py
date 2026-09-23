@@ -481,15 +481,6 @@ def discover_app_id():
         logging.debug("Browser was not launched from a desktop entry.")
         return None
 
-    browser_pid = os.getppid()
-    launched_pid = os.environ.get("GIO_LAUNCHED_DESKTOP_FILE_PID")
-    if launched_pid != str(browser_pid):
-        logging.debug(
-            f"Ignoring {desktop_file_name} from GIO_LAUNCHED_DESKTOP_FILE environment,"
-            f"it comes from process {launched_pid}, not the browser at {browser_pid}."
-        )
-        return None
-
     return Path(desktop_file_name).stem
 
 
