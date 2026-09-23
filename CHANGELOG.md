@@ -1,5 +1,11 @@
 # [unreleased]
 
+## Improvements
+
+- daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)
+- ui: Add Bulgarian translation (Thank you, @salif!)
+- webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
+
 # 0.3.1 [2026-09-05]
 
 ## Improvements
@@ -44,7 +50,7 @@ run xdg-desktop-portal while we work on upstreaming the changes.
 - daemon: Don't use hybrid when not available
 - daemon: Cancel other transports, if one succeeded/failed
 - daemon: Return InvalidStateError to caller when credential is excluded.
-- ui: Add Georgian translations. (Thank you, @EkaterinePopova!)
+- ui: Add Georgian translations. (Thank you, @EkaterinePapava!)
 - ui: Add a portal backend API to credentialsd-ui.
 - ui: Allow setting client PIN during the flow when required.
 - ui: Send initial list of devices on UI initialization.
