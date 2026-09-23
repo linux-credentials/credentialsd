@@ -405,9 +405,15 @@ impl UiController for UiControlServiceClient {
         // events according to the sender.
         // Therefore, we call `start_service_by_name()` explicitly, then subscribe, then
         // issue the function call.
-        let service_name = WellKnownName::try_from(backend_proxy.as_ref().destination().clone())
-            .expect("UiControl destination is a well-known name");
-        dbus_proxy.start_service_by_name(service_name, 0).await?;
+        // Skip activation if the service is already running: some bus implementations
+        // (e.g. dbus-broker) reject `StartServiceByName` for names without an activation
+        // file, even if the name is owned, which breaks running the UI manually.
+        let destination = backend_proxy.as_ref().destination().clone();
+        if !dbus_proxy.name_has_owner(destination.clone()).await? {
+            let service_name = WellKnownName::try_from(destination)
+                .expect("UiControl destination is a well-known name");
+            dbus_proxy.start_service_by_name(service_name, 0).await?;
+        }
         let sender = dbus_proxy
             .get_name_owner(backend_proxy.as_ref().destination().clone())
             .await?;
