@@ -135,7 +135,8 @@ from `/usr/local`:
 
 ```shell
 mkdir -p ~/.mozilla/native-messaging-hosts/
-ln -s /usr/local/lib64/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.json ~/.mozilla/native-messaging-hosts/
+LIBDIR=/usr/local/lib; [ -d /usr/local/lib64 ] && [ ! -L /usr/local/lib64 ] && LIBDIR=/usr/local/lib64
+ln -s ${LIBDIR}/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.json ~/.mozilla/native-messaging-hosts/
 ```
 
 # For Development
