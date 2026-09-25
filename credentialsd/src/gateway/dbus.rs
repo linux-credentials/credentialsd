@@ -29,9 +29,11 @@ use credentialsd_common::{
         BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
         BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
         Credential, Device, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-        NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-        NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
-        NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, PinNotSetError, WindowHandle,
+        NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
+        NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
+        NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
+        NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
+        PinNotSetError, WindowHandle,
     },
 };
 
@@ -713,7 +715,8 @@ impl From<CredentialServiceError> for CredentialsdError {
             CredentialServiceError::CredentialExcluded => Self::CredentialExcluded,
             CredentialServiceError::PinAttemptsExhausted => Self::PinAttemptsExhausted,
             CredentialServiceError::Internal(_) => Self::Internal,
-            CredentialServiceError::RequestCancelled => Self::RequestCancelled,
+            // TODO: This shouldn't be emitted at this level?
+            CredentialServiceError::NonTerminatingCancellation => Self::RequestCancelled,
         }
     }
 }
@@ -1005,15 +1008,33 @@ impl CredentialsdSession {
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
+    async fn hybrid_restarting(
+        emitter: &SignalEmitter<'_>,
+        _options: NotifyHybridRestartingOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
     async fn nfc_connected(
         emitter: &SignalEmitter<'_>,
         _options: NotifyNfcConnectedOptions,
     ) -> zbus::Result<()>;
 
     #[zbus(signal)]
+    async fn nfc_restarting(
+        emitter: &SignalEmitter<'_>,
+        _options: NotifyNfcRestartingOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
     async fn usb_connected(
         emitter: &SignalEmitter<'_>,
         _options: NotifyUsbConnectedOptions,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn usb_restarting(
+        emitter: &SignalEmitter<'_>,
+        _options: NotifyUsbRestartingOptions,
     ) -> zbus::Result<()>;
 
     // TODO: we need to disambiguate get and create responses
@@ -1142,14 +1163,29 @@ impl CredentialsdSession {
                     .hybrid_connected(NotifyHybridConnectedOptions {})
                     .await
             }
+            BackgroundEvent::HybridRestarting => {
+                signal_emitter
+                    .hybrid_restarting(NotifyHybridRestartingOptions {})
+                    .await
+            }
             BackgroundEvent::NfcConnected => {
                 signal_emitter
                     .nfc_connected(NotifyNfcConnectedOptions {})
                     .await
             }
+            BackgroundEvent::NfcRestarting => {
+                signal_emitter
+                    .nfc_restarting(NotifyNfcRestartingOptions {})
+                    .await
+            }
             BackgroundEvent::UsbConnected => {
                 signal_emitter
                     .usb_connected(NotifyUsbConnectedOptions {})
+                    .await
+            }
+            BackgroundEvent::UsbRestarting => {
+                signal_emitter
+                    .usb_restarting(NotifyUsbRestartingOptions {})
                     .await
             }
             BackgroundEvent::ErrorInternal => {
