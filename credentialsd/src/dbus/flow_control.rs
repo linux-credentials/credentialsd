@@ -132,11 +132,16 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             },
         )
         .await
+        // The error is not `Send`, so it must not be held across the `.await` below.
+        .map_err(|err| err.to_string())
     {
         Ok(rx) => rx,
         Err(err) => {
             tracing::error!("Failed to launch UI for credentials: {err}. Cancelling request.");
-            return Err(CredentialServiceError::Internal(err.to_string()));
+            // Release the request slot, otherwise all subsequent requests
+            // are rejected as "already in progress".
+            svc.lock().await.cancel_request(request_id).await;
+            return Err(CredentialServiceError::Internal(err));
         }
     };
     tokio::spawn(async move {
@@ -353,5 +358,121 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             CredentialServiceError::CredentialExcluded => WebAuthnError::InvalidStateError,
             _ => WebAuthnError::NotAllowedError,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+    use std::pin::Pin;
+
+    use credentialsd_common::model::{Device, Operation};
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::credential_service::RequestId;
+
+    const TEST_REQUEST_ID: RequestId = 42;
+
+    #[derive(Debug, Default)]
+    struct MockDeviceManager {
+        cancelled: Mutex<Vec<RequestId>>,
+    }
+
+    #[async_trait]
+    impl ManageDevice for MockDeviceManager {
+        async fn init_request(
+            &self,
+            _request: &CredentialRequest,
+            _tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
+        ) -> Result<(RequestId, CancellationToken), CredentialServiceError> {
+            Ok((TEST_REQUEST_ID, CancellationToken::new()))
+        }
+
+        async fn cancel_request(&self, request_id: RequestId) {
+            self.cancelled.lock().unwrap().push(request_id);
+        }
+
+        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
+            Ok(Vec::new())
+        }
+
+        async fn start_discovery(
+            &self,
+        ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
+            Box::pin(futures_lite::stream::empty())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingUiController;
+
+    impl UiController for FailingUiController {
+        async fn create_session(
+            &self,
+            _session_handle: OwnedObjectPath,
+            _parent_window: Option<WindowHandle>,
+            _origin: String,
+            _type: Operation,
+            _devices: Vec<Device>,
+            _app_id: String,
+            _app_pid: u32,
+            _options: PortalBackendOptions,
+        ) -> Result<Ceremony, Box<dyn Error>> {
+            Err("UI not available".into())
+        }
+    }
+
+    async fn create_test_request() -> CredentialRequest {
+        use libwebauthn::ops::webauthn::{
+            MakeCredentialRequest, OriginValidation, RequestSettings, idl::origin::RequestOrigin,
+        };
+
+        let request_json = r#"
+            {
+                "rp": {"id": "example.com", "name": "Example Relying Party"},
+                "user": {
+                    "id": "MTIzNDU2NzgxMjM0NTY3ODEyMzQ1Njc4MTIzNDU2Nzg",
+                    "name": "test@example.com",
+                    "displayName": "Test User"
+                },
+                "challenge": "MTIzNDU2NzgxMjM0NTY3ODEyMzQ1Njc4MTIzNDU2Nzg",
+                "pubKeyCredParams": [{"type": "public-key", "alg": -7}]
+            }
+        "#;
+        let request_origin: RequestOrigin =
+            "https://example.com".try_into().expect("Invalid origin");
+        let settings = RequestSettings {
+            origin: OriginValidation::Trust,
+        };
+        let request = MakeCredentialRequest::prepare(&request_origin, request_json, &settings)
+            .await
+            .expect("Failed to parse request JSON");
+        CredentialRequest::CreatePublicKeyCredentialRequest(request)
+    }
+
+    #[tokio::test]
+    async fn test_ui_launch_failure_cancels_request() {
+        let svc = Arc::new(AsyncMutex::new(MockDeviceManager::default()));
+        let app = ClientDetails {
+            app_id: "org.example.App".to_string(),
+            pid: 1,
+        };
+
+        let result = handle(
+            svc.clone(),
+            FailingUiController,
+            create_test_request().await,
+            app,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            *svc.lock().await.cancelled.lock().unwrap(),
+            vec![TEST_REQUEST_ID]
+        );
     }
 }
