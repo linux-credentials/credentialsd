@@ -3,6 +3,7 @@
 ## Improvements
 
 - daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)
+- daemon: Fix all subsequent requests being rejected after the UI failed to launch.
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 
