@@ -226,6 +226,20 @@ impl CredentialsUiWindow {
             }
         ));
 
+        // When any transport restarts after a non-terminating error, navigate back to
+        // start_page. For hybrid this ensures the new QR code (which lives on start_page)
+        // is visible; for USB/NFC it clears stale prompts and lets the user re-plug or
+        // choose a different transport.
+        view_model.connect_transport_restarting_notify(clone!(
+            #[weak]
+            stack,
+            move |vm| {
+                if vm.transport_restarting() {
+                    stack.set_visible_child_name("start_page");
+                }
+            }
+        ));
+
         view_model.connect_completed_notify(clone!(
             #[weak]
             stack,

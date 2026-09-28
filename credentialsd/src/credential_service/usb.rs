@@ -47,7 +47,7 @@ impl InProcessUsbHandler {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
         let Some(result) = cancellation.run_until_cancelled(list_device_fut).await else {
             tracing::debug!("USB idle polling cancelled");
-            return Err(CredentialServiceError::RequestCancelled);
+            return Err(CredentialServiceError::NonTerminatingCancellation);
         };
 
         match result {
@@ -147,7 +147,7 @@ impl InProcessUsbHandler {
                     tracing::info!("Cancelling blinking device {device:?}.");
                     handle.cancel_ongoing_operation().await;
                 }
-                return Err(CredentialServiceError::RequestCancelled);
+                return Err(CredentialServiceError::NonTerminatingCancellation);
             };
 
             let Some(msg) = maybe_msg else {
@@ -314,10 +314,13 @@ impl InProcessUsbHandler {
                         ref response,
                         cred_tx: _,
                     } => Self::process_select_credential(response, &mut cred_rx).await,
-                    // Terminal states - preserve state unchanged, will break loop after sending
-                    UsbStateInternal::Completed(_) | UsbStateInternal::Failed(_) => {
-                        Ok(prev_usb_state.clone())
-                    }
+                    // Terminal states - preserve state unchanged, will break loop after sending.
+                    // Restarting is a transient signal state only; it is immediately replaced
+                    // by Idle in the non-terminating branch so it should never be the prev
+                    // state, but we cover it here for exhaustiveness.
+                    UsbStateInternal::Completed(_)
+                    | UsbStateInternal::Failed(_)
+                    | UsbStateInternal::Restarting => Ok(prev_usb_state.clone()),
                 }
             };
 
@@ -330,12 +333,12 @@ impl InProcessUsbHandler {
             };
 
             // Guard: an inner future may have raced the cancellation token and
-            // returned RequestCancelled as a value rather than the outer branch
-            // firing. Treat it the same way — break cleanly without emitting a
-            // spurious Failed state to the UI.
+            // returned NonTerminatingCancellation as a value rather than the outer
+            // branch firing. Treat it the same way — break cleanly without emitting
+            // a spurious Failed state to the UI.
             if matches!(
                 next_usb_state,
-                Err(CredentialServiceError::RequestCancelled)
+                Err(CredentialServiceError::NonTerminatingCancellation)
             ) {
                 tracing::debug!("USB handler cancelled (inner path), stopping processing");
                 break Ok(());
@@ -352,7 +355,13 @@ impl InProcessUsbHandler {
                     std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
             };
-            if state_changed {
+            // Suppress forwarding a non-terminating Failed state to the UI directly:
+            // the Restarting state emitted below takes its place with cleaner semantics.
+            let is_non_terminating_failure = matches!(
+                &state,
+                UsbStateInternal::Failed(err) if !super::is_ceremony_terminating(err)
+            );
+            if state_changed && !is_non_terminating_failure {
                 tracing::debug!("USB current state: {state:?}");
                 tx.send(state.clone()).await.map_err(|_| {
                     CredentialServiceError::Internal(
@@ -364,7 +373,16 @@ impl InProcessUsbHandler {
             // Check for terminal states AFTER sending
             match state {
                 UsbStateInternal::Completed(_) => break Ok(()),
-                UsbStateInternal::Failed(err) => break Err(err),
+                UsbStateInternal::Failed(ref err) => {
+                    if super::is_ceremony_terminating(err) {
+                        break Err(err.clone());
+                    }
+                    // Non-terminating: notify the UI that a restart is in progress so
+                    // it can navigate back to the start page, then restart polling.
+                    tracing::warn!(?err, "USB authenticator error, restarting transport");
+                    let _ = tx.send(UsbStateInternal::Restarting).await;
+                    state = UsbStateInternal::Idle;
+                }
                 _ => {}
             }
         }
@@ -467,7 +485,7 @@ async fn handle_events(
                 None => {
                     tracing::debug!("USB ceremony cancelled, interrupting authenticator operation");
                     cancel_handle.cancel_ongoing_operation().await;
-                    Err(CredentialServiceError::RequestCancelled)
+                    Err(CredentialServiceError::NonTerminatingCancellation)
                 }
             };
 
@@ -551,6 +569,10 @@ pub(super) enum UsbStateInternal {
 
     /// There was an error while interacting with the authenticator.
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error and the transport
+    /// is restarting. The UI should navigate back to the start page.
+    Restarting,
 }
 
 /// Used to share public state between  credential service and UI.
@@ -602,6 +624,10 @@ pub enum UsbState {
 
     /// Interaction with the authenticator failed.
     Failed(CredentialServiceError),
+
+    /// The ceremony was interrupted by a non-terminating error and the transport
+    /// is restarting. The UI should navigate back to the start page.
+    Restarting,
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -659,6 +685,7 @@ impl From<UsbStateInternal> for UsbState {
                 }
             }
             UsbStateInternal::Failed(err) => UsbState::Failed(err),
+            UsbStateInternal::Restarting => UsbState::Restarting,
         }
     }
 }
@@ -705,10 +732,11 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            UsbState::Failed(CredentialServiceError::RequestCancelled) => {
+            UsbState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
             UsbState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
+            UsbState::Restarting => BackgroundEvent::UsbRestarting,
         }
     }
 }

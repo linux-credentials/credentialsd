@@ -29,9 +29,10 @@ use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
     DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridStartedOptions, NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions,
-    NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, Operation, PinNotSetError,
+    NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
+    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
+    NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
+    NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
     PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
 };
 
@@ -305,6 +306,48 @@ impl CredentialPortalBackend {
     ) -> fdo::Result<()> {
         self.notify_state_changed(object_server, session_handle, BackgroundEvent::UsbConnected)
             .await
+    }
+
+    async fn notify_hybrid_restarting(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyHybridRestartingOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::HybridRestarting,
+        )
+        .await
+    }
+
+    async fn notify_usb_restarting(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyUsbRestartingOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::UsbRestarting,
+        )
+        .await
+    }
+
+    async fn notify_nfc_restarting(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        _options: NotifyNfcRestartingOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::NfcRestarting,
+        )
+        .await
     }
 
     /// Called when the authentication ceremony completes successfully.
