@@ -80,9 +80,6 @@ pub enum CredentialServiceError {
     /// completed first (superseded), or because a code-path cancellation propagated.
     /// This is distinct from user- or client-issued cancellation: the response channel
     /// has already been consumed elsewhere, so `complete_request` must NOT be called.
-    ///
-    /// A future `TerminatingCancellation` variant will be added for user-initiated
-    /// cancellation from the trusted UI, which *is* ceremony-terminating.
     NonTerminatingCancellation,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
