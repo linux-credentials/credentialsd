@@ -88,6 +88,12 @@ mod imp {
         pub transport_restarting: RefCell<bool>,
 
         #[property(get, set)]
+        pub restart_message: RefCell<String>,
+
+        #[property(get, set)]
+        pub restart_message_visible: RefCell<bool>,
+
+        #[property(get, set)]
         pub start_setting_new_pin_visible: RefCell<bool>,
 
         #[property(get, set)]
@@ -243,12 +249,14 @@ impl ViewModel {
                                     ));
                                     view_model.set_qr_spinner_visible(false);
                                 }
-                                ViewUpdate::TransportRestarting => {
+                                ViewUpdate::TransportRestarting { message } => {
                                     // Signal the window to navigate back to start_page.
                                     // The transport will emit a fresh Init/Connected state
                                     // next, which will update the prompt and show the new
                                     // QR code or device-waiting UI from start_page.
                                     view_model.set_qr_spinner_visible(false);
+                                    view_model.set_restart_message(message);
+                                    view_model.set_restart_message_visible(true);
                                     view_model.set_transport_restarting(true);
                                 }
                                 ViewUpdate::Completed => {

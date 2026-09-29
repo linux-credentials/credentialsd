@@ -621,6 +621,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentialsd_common::model::TransportRestartReason;
     use std::time::Duration;
 
     // Mock handlers for testing
@@ -1590,9 +1591,14 @@ mod tests {
         let (id, token) = service.init_request(&request, tx).await.unwrap();
         let mut hybrid_stream = service.get_hybrid_credential().await;
 
-        hybrid_ref.shift_state(HybridStateInternal::Restarting);
+        hybrid_ref.shift_state(HybridStateInternal::Restarting(
+            TransportRestartReason::Interrupted,
+        ));
         assert!(
-            matches!(hybrid_stream.next().await, Some(HybridState::Restarting)),
+            matches!(
+                hybrid_stream.next().await,
+                Some(HybridState::Restarting(TransportRestartReason::Interrupted))
+            ),
             "Restarting state must be forwarded to the UI stream"
         );
         assert!(
@@ -1616,15 +1622,100 @@ mod tests {
         let (id, token) = service.init_request(&request, tx).await.unwrap();
         let mut usb_stream = service.get_usb_credential().await;
 
-        usb_ref.shift_state(UsbStateInternal::Restarting);
+        usb_ref.shift_state(UsbStateInternal::Restarting(
+            TransportRestartReason::Interrupted,
+        ));
         assert!(
-            matches!(usb_stream.next().await, Some(UsbState::Restarting)),
+            matches!(
+                usb_stream.next().await,
+                Some(UsbState::Restarting(TransportRestartReason::Interrupted))
+            ),
             "Restarting state must be forwarded to the UI stream"
         );
         assert!(
             !token.is_cancelled(),
             "ceremony must stay alive on Restarting"
         );
+
+        service.cancel_request(id).await;
+    }
+
+    /// A non-terminating USB failure after a user-input state (post-active)
+    /// must surface to the UI.
+    #[tokio::test]
+    async fn test_usb_post_active_error_surfaces() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        // Activate: user-input required
+        usb_ref.shift_state(UsbStateInternal::NeedsUserPresence);
+        assert!(matches!(
+            usb_stream.next().await,
+            Some(UsbState::NeedsUserPresence)
+        ));
+
+        // Non-terminating error after activation — must surface
+        usb_ref.shift_state(UsbStateInternal::Failed(
+            CredentialServiceError::AuthenticatorError,
+        ));
+        assert!(
+            matches!(
+                usb_stream.next().await,
+                Some(UsbState::Failed(CredentialServiceError::AuthenticatorError))
+            ),
+            "post-active Failed must be forwarded to UI"
+        );
+        assert!(!token.is_cancelled());
+
+        service.cancel_request(id).await;
+    }
+
+    /// A non-terminating hybrid failure after Connecting (post-active, phone has
+    /// consumed the QR) must surface to the UI.
+    #[tokio::test]
+    async fn test_hybrid_post_active_error_surfaces() {
+        let hybrid_handler = CancellationTrackingHandler::<HybridStateInternal>::new();
+        let hybrid_ref = hybrid_handler.get_handler_ref();
+
+        let service = CredentialService::new(hybrid_handler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut hybrid_stream = service.get_hybrid_credential().await;
+
+        hybrid_ref.shift_state(HybridStateInternal::Init("qr".to_string()));
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Init(_))
+        ));
+
+        // Connecting = phone consumed the QR = active
+        hybrid_ref.shift_state(HybridStateInternal::Connecting);
+        assert!(matches!(
+            hybrid_stream.next().await,
+            Some(HybridState::Connecting)
+        ));
+
+        // Post-active failure must surface
+        hybrid_ref.shift_state(HybridStateInternal::Failed(
+            CredentialServiceError::AuthenticatorError,
+        ));
+        assert!(
+            matches!(
+                hybrid_stream.next().await,
+                Some(HybridState::Failed(
+                    CredentialServiceError::AuthenticatorError
+                ))
+            ),
+            "post-active Failed must be forwarded to UI"
+        );
+        assert!(!token.is_cancelled());
 
         service.cancel_request(id).await;
     }

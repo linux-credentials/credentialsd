@@ -96,8 +96,11 @@ pub enum ViewUpdate {
     HybridConnected,
 
     /// A transport ceremony was interrupted by a non-terminating error and
-    /// is restarting. The UI should navigate back to the start page.
-    TransportRestarting,
+    /// is restarting. The UI should navigate back to the start page and display
+    /// the provided localized message.
+    TransportRestarting {
+        message: String,
+    },
 
     Completed,
     Cancelled,
