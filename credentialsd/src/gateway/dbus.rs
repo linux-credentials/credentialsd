@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt::Display, os::fd::AsRawFd, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    os::fd::{AsFd, OwnedFd},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::sync::Mutex as AsyncMutex;
@@ -336,22 +341,32 @@ async fn validate_app_details(
     let Some(unique_name) = header.sender() else {
         return Err(Error::SecurityError);
     };
-
-    let Some(pid) = query_peer_pid_via_fdinfo(connection, unique_name).await else {
+    let claimed_app_id = if !claimed_app_id.is_empty() {
+        claimed_app_id
+    } else {
+        tracing::warn!("App ID not specified on request. Rejecting request.");
         return Err(Error::SecurityError);
     };
 
-    if claimed_app_id.is_empty() || !super::should_trust_app_id(pid).await {
-        tracing::warn!(
-            ?claimed_app_id,
-            "App ID could not be verified. Rejecting request."
-        );
-        return Err(Error::SecurityError);
-    }
-    // Now we can trust these app detail parameters.
-    let Ok(app_id) = claimed_app_id.parse::<AppId>() else {
-        tracing::warn!("Invalid app ID passed: {claimed_app_id}");
-        return Err(Error::SecurityError);
+    let app_id = {
+        let Some(pidfd) = query_peer_pidfd(connection, unique_name).await else {
+            return Err(Error::SecurityError);
+        };
+
+        if !super::should_trust_app_id(connection, pidfd.as_fd()).await {
+            tracing::warn!(
+                ?claimed_app_id,
+                "App ID could not be verified. Rejecting request."
+            );
+            return Err(Error::SecurityError);
+        }
+
+        // Now we can trust these app detail parameters.
+        let Ok(app_id) = claimed_app_id.parse::<AppId>() else {
+            tracing::warn!("Invalid app ID passed: {claimed_app_id}");
+            return Err(Error::SecurityError);
+        };
+        app_id
     };
 
     // Verify that the origin is valid for the given app ID.
@@ -371,15 +386,17 @@ async fn validate_app_details(
 
     Ok(RequestContext {
         app_id,
-        pid,
+        // TODO: we're no longer using the PID in the UI, but we need to update
+        // the spec before removing it completely. For now, send invalid PID.
+        pid: 0,
         request_kind,
     })
 }
 
-async fn query_peer_pid_via_fdinfo(
+async fn query_peer_pidfd(
     connection: &Connection,
     sender_unique_name: &UniqueName<'_>,
-) -> Option<u32> {
+) -> Option<OwnedFd> {
     let dbus_proxy = match zbus::fdo::DBusProxy::new(connection).await {
         Ok(p) => p,
         Err(e) => {
@@ -399,41 +416,16 @@ async fn query_peer_pid_via_fdinfo(
         }
     };
 
-    let pidfd = match peer_credentials.process_fd() {
-        Some(p) => p.as_raw_fd(),
-        None => {
-            tracing::error!("Failed to get process fd from peer credentials");
-            return None;
-        }
+    let Some(pidfd) = peer_credentials.process_fd() else {
+        tracing::error!("Failed to get process fd from peer credentials");
+        return None;
     };
 
-    let fdinfo_str = match std::fs::read_to_string(format!("/proc/self/fdinfo/{pidfd}")) {
-        Ok(fdinfo) => fdinfo,
-        Err(e) => {
-            tracing::error!("Failed to read fdinfo from procfs: {e}");
-            return None;
-        }
-    };
-
-    // Find the line that starts with "Pid:"
-    let pid_line = match fdinfo_str.lines().find(|line| line.starts_with("Pid:")) {
-        Some(line) => line,
-        None => {
-            tracing::error!("Failed to read PID from fdinfo");
-            return None;
-        }
-    };
-
-    let pid_str = pid_line[4..].trim();
-
-    // std::process::id() also returns u32
-    let pid: u32 = match pid_str.parse() {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::error!("Failed to parse PID from fdinfo entry: {e}");
-            return None;
-        }
-    };
-
-    Some(pid)
+    pidfd
+        .as_fd()
+        .try_clone_to_owned()
+        .inspect_err(
+            |err| tracing::error!(%err, "Failed to duplicate peer process file descriptor"),
+        )
+        .ok()
 }
