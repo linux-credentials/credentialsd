@@ -120,14 +120,14 @@ impl HybridHandler for InternalHybridHandler {
                         let _ = tx.send(HybridStateInternal::Completed(auth_response)).await;
                         break;
                     }
+                    // Must come before is_ceremony_terminating(), which returns false for
+                    // cancellation (poll_next must not complete_request() twice).
+                    Err(CredentialServiceError::NonTerminatingCancellation) => {
+                        tracing::debug!("Hybrid handler cancelled, exiting silently");
+                        break;
+                    }
                     Err(err) if super::is_ceremony_terminating(&err) => {
-                        // Terminating errors stop the loop.
-                        // NonTerminatingCancellation exits silently; others surface as Failed.
-                        if !matches!(err, CredentialServiceError::NonTerminatingCancellation) {
-                            let _ = tx.send(HybridStateInternal::Failed(err)).await;
-                        } else {
-                            tracing::debug!("Hybrid handler cancelled, exiting silently");
-                        }
+                        let _ = tx.send(HybridStateInternal::Failed(err)).await;
                         break;
                     }
                     Err(err) => {
@@ -149,6 +149,9 @@ impl HybridHandler for InternalHybridHandler {
                         } else {
                             // Pre-active: the QR was never consumed or the BLE channel
                             // failed before the phone responded. Reissue silently.
+                            // ponytail: no retry limit or delay, so a channel() that fails
+                            // fast spins here. Bound it once the UI has a non-fatal
+                            // "transport unavailable" path.
                             tracing::debug!(?err, "Hybrid pre-active error, reissuing QR silently");
                         }
                         continue;
@@ -282,7 +285,14 @@ async fn run_hybrid_ceremony(
     cancellation: CancellationToken,
     active: &mut bool,
 ) -> Result<CredentialResponse, CredentialServiceError> {
-    let mut channel = match device.channel(ChannelSettings::default()).await {
+    let Some(result) = cancellation
+        .run_until_cancelled(device.channel(ChannelSettings::default()))
+        .await
+    else {
+        tracing::debug!("Hybrid handler cancelled while waiting for phone");
+        return Err(CredentialServiceError::NonTerminatingCancellation);
+    };
+    let mut channel = match result {
         Ok(channel) => channel,
         Err(e) => {
             tracing::error!("Failed to open hybrid channel: {:?}", e);

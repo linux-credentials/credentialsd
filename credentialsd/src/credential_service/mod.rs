@@ -569,8 +569,6 @@ pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
         // cancelled by *another* path — the winning transports `complete_request()`,
         // or `cancel_request()` sending its own response. The response channel is
         // already consumed, so this arm must NOT invoke `complete_request()` again.
-        // A future `TerminatingCancellation` variant will handle user-initiated
-        // cancellation from the trusted UI, which is ceremony-terminating.
         CredentialServiceError::NonTerminatingCancellation => false,
 
         // Per-authenticator errors: keep the ceremony alive. The user may succeed
