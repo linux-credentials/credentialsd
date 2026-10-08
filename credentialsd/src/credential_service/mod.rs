@@ -1550,7 +1550,10 @@ mod tests {
         usb_ref.shift_state(UsbStateInternal::Failed(
             CredentialServiceError::UnrecoverableTransportError,
         ));
-        let update = usb_stream.next().await.expect("Failed state to be forwarded");
+        let update = usb_stream
+            .next()
+            .await
+            .expect("Failed state to be forwarded");
         assert!(
             !token.is_cancelled(),
             "ceremony must stay alive when one transport gives up"

@@ -19,8 +19,8 @@ use tracing::debug;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use application::CredentialsUi;
 
-use super::{Transport, TransportRestartReason};
 use super::{Credential, Device};
+use super::{Transport, TransportRestartReason};
 use super::{ViewEvent, ViewUpdate};
 
 use self::credential::CredentialObject;
