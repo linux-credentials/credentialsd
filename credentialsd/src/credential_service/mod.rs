@@ -23,7 +23,7 @@ use nfc::{NfcEvent, NfcHandler, NfcState, NfcStateInternal};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use credentialsd_common::model::{BackgroundEvent, Device, Transport};
+use credentialsd_common::model::{BackgroundEvent, Transport};
 use zbus::zvariant::{self, Value};
 
 use crate::{
@@ -40,6 +40,11 @@ pub use usb::UsbState;
 
 /// Identifier for a request to be used for cancellation.
 pub type RequestId = u32;
+
+/// Consecutive failures a transport tolerates before the user has interacted with
+/// it (phone connected, or a PIN/UV/presence prompt). At this limit the transport
+/// gives up with `UnrecoverableTransportError`. User interaction resets the count.
+pub(super) const MAX_PRE_ACTIVE_FAILURES: usize = 5;
 
 /// Helper function to sleep with cancellation support.
 async fn cancellable_sleep(
@@ -81,6 +86,10 @@ pub enum CredentialServiceError {
     /// This is distinct from user- or client-issued cancellation: the response channel
     /// has already been consumed elsewhere, so `complete_request` must NOT be called.
     NonTerminatingCancellation,
+    /// The transport failed `MAX_PRE_ACTIVE_FAILURES` times in a row before the user
+    /// interacted with it, and gave up for the rest of this request. The ceremony
+    /// continues on the remaining transports.
+    UnrecoverableTransportError,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -96,6 +105,7 @@ impl Display for CredentialServiceError {
             Self::CredentialExcluded => f.write_str("CredentialExcluded"),
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
             Self::NonTerminatingCancellation => f.write_str("NonTerminatingCancellation"),
+            Self::UnrecoverableTransportError => f.write_str("UnrecoverableTransportError"),
             Self::Internal(s) => write!(f, "InternalError: {s}"),
         }
     }
@@ -112,6 +122,7 @@ impl TryFrom<&Value<'_>> for CredentialServiceError {
             "CredentialExcluded" => Self::CredentialExcluded,
             "PinAttemptsExhausted" => Self::PinAttemptsExhausted,
             "NonTerminatingCancellation" => Self::NonTerminatingCancellation,
+            "UnrecoverableTransportError" => Self::UnrecoverableTransportError,
             s => Self::Internal(String::from(s)),
         };
         Ok(err)
@@ -124,6 +135,9 @@ struct RequestContext {
     response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     request_id: RequestId,
     cancellation: CancellationToken,
+    /// Transports found by `detect_transports` for this request. The same list
+    /// goes to the UI and is what `start_discovery` starts.
+    transports: Vec<Transport>,
 }
 
 impl RequestContext {
@@ -145,7 +159,9 @@ pub trait ManageDevice {
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Result<(RequestId, CancellationToken), CredentialServiceError>;
     async fn cancel_request(&self, request_id: RequestId);
-    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()>;
+    /// Detects the transports usable for the current request and remembers them,
+    /// so `start_discovery` starts exactly what was reported to the UI.
+    async fn detect_transports(&self) -> Vec<Transport>;
     async fn start_discovery(
         &self,
     ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>;
@@ -157,7 +173,7 @@ pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
     hybrid_handler: Mutex<H>,
-    _nfc_handler: Mutex<N>,
+    nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
 }
 
@@ -169,7 +185,7 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
             ctx: Arc::new(Mutex::new(None)),
 
             hybrid_handler: Mutex::new(hybrid_handler),
-            _nfc_handler: Mutex::new(nfc_handler),
+            nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
         }
     }
@@ -234,7 +250,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
-    async fn _get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
         let guard = self.ctx.lock().unwrap();
         if let Some(RequestContext {
             ref request,
@@ -243,7 +259,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }) = *guard
         {
             let stream = self
-                ._nfc_handler
+                .nfc_handler
                 .lock()
                 .unwrap()
                 .start(request, cancellation.clone());
@@ -287,6 +303,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 response_channel: tx,
                 request_id,
                 cancellation: cancellation.clone(),
+                transports: Vec::new(),
             };
             _ = cred_request.insert(ctx);
             Ok((request_id, cancellation))
@@ -311,34 +328,27 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         }
     }
 
-    async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-        // We create the list new for each call, in case someone plugs in
-        // an NFC-reader in the middle of an auth-flow
-        let mut devices = vec![Device {
-            id: String::from("0"),
-            transport: Transport::Usb,
-        }];
-        if libwebauthn::transport::cable::is_available().await {
-            devices.push(Device {
-                id: String::from("1"),
-                transport: Transport::HybridQr,
-            });
+    async fn detect_transports(&self) -> Vec<Transport> {
+        let transports = supported_transports(&available_transports().await);
+        if let Some(ctx) = self.ctx.lock().unwrap().as_mut() {
+            ctx.transports = transports.clone();
         }
-        if libwebauthn::transport::nfc::is_nfc_available() {
-            devices.push(Device {
-                id: String::from("2"),
-                transport: Transport::Nfc,
-            });
-        }
-        Ok(devices)
+        transports
     }
 
     async fn start_discovery(
         &self,
     ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
-        let available_transports = available_transports().await;
+        // Start exactly what detect_transports() reported to the UI.
+        let transports = self
+            .ctx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|ctx| ctx.transports.clone())
+            .unwrap_or_default();
         let mut selected_transports = Vec::new();
-        if available_transports.contains(&libwebauthn::Transport::Usb) {
+        if transports.contains(&Transport::Usb) {
             let usb = self
                 .get_usb_credential()
                 .await
@@ -346,15 +356,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 .boxed();
             selected_transports.push(usb);
         }
-        /*
-        TODO: Some cards that support NFC but not CCID (SoloKey Solo 2 NFC)
-        cause a framing error immediately after establishing a libwebauthn
-        Channel, which causes the whole ceremony to abort without the user
-        intending to. We need to determine some way of working around buggy
-        security keys, while at the same time supporting actual NFC cards and CCID.
-        Maybe we can defer sending "Connected" to the UI until a user presence
-        or verification message is sent.
-        if available_transports.contains(&libwebauthn::Transport::Nfc) {
+        if transports.contains(&Transport::Nfc) {
             let nfc = self
                 .get_nfc_credential()
                 .await
@@ -362,8 +364,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 .boxed();
             selected_transports.push(nfc);
         }
-        */
-        if available_transports.contains(&libwebauthn::Transport::Hybrid) {
+        if transports.contains(&Transport::HybridQr) {
             let hybrid = self
                 .get_hybrid_credential()
                 .await
@@ -467,7 +468,6 @@ where
     }
 }
 
-#[expect(unused)]
 struct NfcStateStream<H> {
     inner: H,
     ctx: Arc<Mutex<Option<RequestContext>>>,
@@ -578,9 +578,34 @@ pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
         CredentialServiceError::NoCredentials => false,
         CredentialServiceError::PinAttemptsExhausted => false,
 
+        // The transport gave up for this request; the others keep running.
+        CredentialServiceError::UnrecoverableTransportError => false,
+
         // Transient internal errors: do not kill the ceremony.
         CredentialServiceError::Internal(_) => false,
     }
+}
+
+/// Maps the transports libwebauthn found to the ones this service runs.
+fn supported_transports(found: &[libwebauthn::Transport]) -> Vec<Transport> {
+    found
+        .iter()
+        .filter_map(|transport| match transport {
+            libwebauthn::Transport::Usb => Some(Transport::Usb),
+            libwebauthn::Transport::Hybrid => Some(Transport::HybridQr),
+            // There is no BLE handler.
+            libwebauthn::Transport::Ble => None,
+            // TODO: Some cards that support NFC but not CCID (SoloKey Solo 2 NFC)
+            // cause a framing error immediately after establishing a libwebauthn
+            // Channel, which causes the whole ceremony to abort without the user
+            // intending to. We need to determine some way of working around buggy
+            // security keys, while at the same time supporting actual NFC cards and CCID.
+            // Maybe we can defer sending "Connected" to the UI until a user presence
+            // or verification message is sent.
+            // This is the only switch: map to `Some(Transport::Nfc)` to enable NFC.
+            libwebauthn::Transport::Nfc => None,
+        })
+        .collect()
 }
 
 fn complete_request(
@@ -1499,6 +1524,57 @@ mod tests {
         assert!(!is_ceremony_terminating(
             &CredentialServiceError::NonTerminatingCancellation
         ));
+    }
+
+    #[test]
+    fn test_classifier_unrecoverable_transport_error() {
+        // The transport gave up; the remaining transports keep the ceremony going.
+        assert!(!is_ceremony_terminating(
+            &CredentialServiceError::UnrecoverableTransportError
+        ));
+    }
+
+    /// A transport that gave up is forwarded without ending the ceremony, and
+    /// reaches the UI as `UsbRestarting { TransportUnavailable }`.
+    #[tokio::test]
+    async fn test_unrecoverable_transport_error_signals_transport_unavailable() {
+        let usb_handler = CancellationTrackingHandler::<UsbStateInternal>::new();
+        let usb_ref = usb_handler.get_handler_ref();
+
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, usb_handler);
+        let request = create_test_request().await;
+        let (tx, _rx) = oneshot::channel();
+        let (id, token) = service.init_request(&request, tx).await.unwrap();
+        let mut usb_stream = service.get_usb_credential().await;
+
+        usb_ref.shift_state(UsbStateInternal::Failed(
+            CredentialServiceError::UnrecoverableTransportError,
+        ));
+        let update = usb_stream.next().await.expect("Failed state to be forwarded");
+        assert!(
+            !token.is_cancelled(),
+            "ceremony must stay alive when one transport gives up"
+        );
+        assert_eq!(
+            BackgroundEvent::from(&update),
+            BackgroundEvent::UsbRestarting {
+                reason: TransportRestartReason::TransportUnavailable
+            }
+        );
+
+        service.cancel_request(id).await;
+    }
+
+    #[test]
+    fn test_supported_transports() {
+        use libwebauthn::Transport as Found;
+
+        let found = [Found::Usb, Found::Ble, Found::Hybrid, Found::Nfc];
+        // BLE has no handler and NFC discovery is disabled.
+        assert_eq!(
+            supported_transports(&found),
+            vec![Transport::Usb, Transport::HybridQr]
+        );
     }
 
     /// After a non-terminating USB failure, the mock stream remains live and

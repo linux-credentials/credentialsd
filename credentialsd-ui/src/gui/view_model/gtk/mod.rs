@@ -19,7 +19,7 @@ use tracing::debug;
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use application::CredentialsUi;
 
-use super::Transport;
+use super::{Transport, TransportRestartReason};
 use super::{Credential, Device};
 use super::{ViewEvent, ViewUpdate};
 
@@ -48,6 +48,10 @@ mod imp {
 
         #[property(get, set)]
         pub hybrid_transport_available: RefCell<bool>,
+
+        /// USB or NFC; both live in the "Use your security key" section.
+        #[property(get, set)]
+        pub security_key_transport_available: RefCell<bool>,
 
         #[property(get, set)]
         pub credentials: RefCell<gtk::ListBox>,
@@ -161,8 +165,8 @@ impl ViewModel {
                                     view_model.set_scan_qr_prompt(qr_prompt);
                                     view_model.set_activate_usb_prompt(usb_prompt);
                                 }
-                                ViewUpdate::SetDevices(devices) => {
-                                    view_model.update_devices(&devices)
+                                ViewUpdate::SetTransports(transports) => {
+                                    view_model.update_transports(&transports)
                                 }
                                 ViewUpdate::SetCredentials(credentials) => {
                                     view_model.update_credentials(&credentials)
@@ -285,15 +289,22 @@ impl ViewModel {
         ));
     }
 
-    fn update_devices(&self, devices: &[Device]) {
-        let hybrid_available = devices.iter().any(|dev| {
-            dev.transport == Transport::HybridLinked || dev.transport == Transport::HybridQr
-        });
+    fn update_transports(&self, transports: &[Transport]) {
+        let hybrid_available = transports.contains(&Transport::HybridQr)
+            || transports.contains(&Transport::HybridLinked);
+        let security_key_available =
+            transports.contains(&Transport::Usb) || transports.contains(&Transport::Nfc);
+        // A section that was shown is going away: its transport gave up mid-request.
+        if (self.hybrid_transport_available() && !hybrid_available)
+            || (self.security_key_transport_available() && !security_key_available)
+        {
+            self.set_restart_message(super::localized_transport_restart_reason(
+                &TransportRestartReason::TransportUnavailable,
+            ));
+            self.set_restart_message_visible(true);
+        }
         self.set_hybrid_transport_available(hybrid_available);
-        // TODO: This is called when a new credential source is available to show it in the UI.
-        // However, I believe in the current paradigm, we will know all available
-        // credential sources at the beginning of the request, so we won't need
-        // to update these during the request. We may be able to reomve this method altogether.
+        self.set_security_key_transport_available(security_key_available);
     }
 
     fn update_credentials(&self, credentials: &[Credential]) {

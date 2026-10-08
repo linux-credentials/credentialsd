@@ -31,8 +31,8 @@ pub(crate) struct ViewModel {
     app_name: String,
     app_path_or_id: String,
 
-    // This includes devices like platform authenticator, USB, hybrid
-    devices: Vec<Device>,
+    // Transports offered to the user, e.g. USB and hybrid
+    transports: Vec<Transport>,
     selected_device: Option<Device>,
 
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -52,7 +52,7 @@ impl ViewModel {
         } = request.requesting_app;
 
         let app_name: Option<String> = app_name.into();
-        let devices = request.initial_devices;
+        let transports = request.initial_transports;
         Self {
             flow_controller,
             rx_event,
@@ -63,7 +63,7 @@ impl ViewModel {
             app_path_or_id: path,
             title: String::default(),
             subtitle: String::default(),
-            devices,
+            transports,
             selected_device: None,
             hybrid_qr_code_data: None,
         }
@@ -121,12 +121,25 @@ impl ViewModel {
             .unwrap();
     }
 
-    async fn update_devices(&mut self, devices: Vec<Device>) {
-        self.devices = devices;
+    async fn send_transports(&self) {
         self.tx_update
-            .send(ViewUpdate::SetDevices(self.devices.to_owned()))
+            .send(ViewUpdate::SetTransports(self.transports.to_owned()))
             .await
             .unwrap();
+    }
+
+    /// Stops offering transports that gave up for this request.
+    async fn drop_transports(&mut self, gone: &[Transport]) {
+        self.transports.retain(|transport| !gone.contains(transport));
+        self.send_transports().await;
+        if self.transports.is_empty() {
+            self.tx_update
+                .send(ViewUpdate::Failed(gettext(
+                    "None of the available methods are working right now. Please try again later.",
+                )))
+                .await
+                .unwrap();
+        }
     }
 
     pub(crate) async fn start_discovery(&self) {
@@ -146,7 +159,7 @@ impl ViewModel {
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
-                    self.update_devices(self.devices.clone()).await;
+                    self.send_transports().await;
                     self.start_discovery().await;
                 }
                 Event::View(ViewEvent::PinEntered(pin)) => {
@@ -324,6 +337,25 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                // A transport gave up for this request: stop offering it. No
+                // TransportRestarting here, as that would pull the user off the page
+                // of a transport that still works.
+                Event::Background(BackgroundEvent::HybridRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::HybridQr, Transport::HybridLinked])
+                        .await;
+                }
+                Event::Background(BackgroundEvent::UsbRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::Usb]).await;
+                }
+                Event::Background(BackgroundEvent::NfcRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::Nfc]).await;
+                }
                 Event::Background(
                     BackgroundEvent::HybridRestarting { reason }
                     | BackgroundEvent::UsbRestarting { reason }
@@ -379,6 +411,9 @@ fn localized_transport_restart_reason(reason: &TransportRestartReason) -> String
         TransportRestartReason::PinAttemptsExhausted => gettext(
             "No more PIN attempts allowed. Remove and reinsert your device, or use a different authenticator.",
         ),
+        TransportRestartReason::TransportUnavailable => {
+            gettext("This method isn't working right now. Please choose another one.")
+        }
     }
 }
 

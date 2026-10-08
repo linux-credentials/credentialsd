@@ -307,6 +307,18 @@ msgstr ""
 "Keine weiteren PIN-Eingaben erlaubt. Versuchen Sie ihr Gerät aus- und wieder "
 "einzustecken, oder verwenden Sie ein anderes Gerät."
 
+#: credentialsd-ui/src/gui/view_model/mod.rs:138
+msgid ""
+"None of the available methods are working right now. Please try again later."
+msgstr ""
+"Keine der verfügbaren Methoden funktioniert gerade. Bitte versuchen Sie es "
+"später noch einmal."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:415
+msgid "This method isn't working right now. Please choose another one."
+msgstr ""
+"Diese Methode funktioniert gerade nicht. Bitte wählen Sie eine andere."
+
 #~ msgid "Devices"
 #~ msgstr "Geräte"
 
