@@ -48,6 +48,7 @@ impl InProcessNfcHandler {
         match result {
             Ok(Some(nfc_device)) => Ok(NfcStateInternal::Connected(nfc_device)),
             Ok(None) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 let state = NfcStateInternal::Waiting;
                 Ok(state)
             }
