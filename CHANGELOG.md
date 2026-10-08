@@ -1,5 +1,9 @@
 # [unreleased]
 
+## Breaking Changes
+
+- ui: `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
+
 ## Improvements
 
 - daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
@@ -9,6 +13,9 @@
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
+- ui: Display restart reason in case of premature failure
+- daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
+- daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
 
 # 0.3.1 [2026-09-05]
 

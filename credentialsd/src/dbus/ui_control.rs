@@ -18,15 +18,14 @@ use zbus::{
 use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_AUTHENTICATOR, BACKGROUND_EVENT_ERROR_CANCELLED,
     BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED, BACKGROUND_EVENT_ERROR_INTERNAL,
-    BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
-    BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
-    ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
-    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
-    NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
-    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+    BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent, ClientPinEnteredOptions, Credential,
+    CredentialSelectedOptions, DiscoveryRequestedOptions, NotifyHybridConnectedOptions,
+    NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
+    NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
+    NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
+    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, Transport,
+    UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -39,7 +38,7 @@ pub trait UiController {
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
-        devices: Vec<Device>,
+        transports: Vec<Transport>,
         app_id: String,
         app_pid: u32,
         options: PortalBackendOptions,
@@ -61,7 +60,7 @@ trait UiControlService {
         parent_window: Optional<WindowHandle>,
         origin: String,
         r#type: Operation,
-        devices: Vec<Device>,
+        transports: Vec<Transport>,
         app_id: String,
         app_pid: u32,
         options: PortalBackendOptions,
@@ -153,6 +152,7 @@ trait UiControlService {
     async fn notify_hybrid_restarting(
         &self,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyHybridRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -160,6 +160,7 @@ trait UiControlService {
     async fn notify_usb_restarting(
         &self,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyUsbRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -167,6 +168,7 @@ trait UiControlService {
     async fn notify_nfc_restarting(
         &self,
         session_handle: ObjectPath<'_>,
+        reason: u8,
         _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -321,26 +323,29 @@ impl Ceremony {
                     )
                     .await
             }
-            BackgroundEvent::HybridRestarting => {
+            BackgroundEvent::HybridRestarting { reason } => {
                 self.proxy
                     .notify_hybrid_restarting(
                         self.session_handle.as_ref(),
+                        u8::from(reason),
                         NotifyHybridRestartingOptions {},
                     )
                     .await
             }
-            BackgroundEvent::UsbRestarting => {
+            BackgroundEvent::UsbRestarting { reason } => {
                 self.proxy
                     .notify_usb_restarting(
                         self.session_handle.as_ref(),
+                        u8::from(reason),
                         NotifyUsbRestartingOptions {},
                     )
                     .await
             }
-            BackgroundEvent::NfcRestarting => {
+            BackgroundEvent::NfcRestarting { reason } => {
                 self.proxy
                     .notify_nfc_restarting(
                         self.session_handle.as_ref(),
+                        u8::from(reason),
                         NotifyNfcRestartingOptions {},
                     )
                     .await
@@ -370,26 +375,8 @@ impl Ceremony {
                     .notify_error_occurred(self.session_handle.as_ref(), error)
                     .await
             }
-            BackgroundEvent::ErrorNoCredentials => {
-                let error = BACKGROUND_EVENT_ERROR_NO_CREDENTIALS;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
             BackgroundEvent::ErrorCredentialExcluded => {
                 let error = BACKGROUND_EVENT_ERROR_CREDENTIAL_EXCLUDED;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
-            BackgroundEvent::ErrorPinAttemptsExhausted => {
-                let error = BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED;
-                self.proxy
-                    .notify_error_occurred(self.session_handle.as_ref(), error)
-                    .await
-            }
-            BackgroundEvent::ErrorPinNotSet => {
-                let error = BACKGROUND_EVENT_ERROR_PIN_NOT_SET;
                 self.proxy
                     .notify_error_occurred(self.session_handle.as_ref(), error)
                     .await
@@ -438,7 +425,7 @@ impl UiController for UiControlServiceClient {
         parent_window: Option<WindowHandle>,
         origin: String,
         r#type: Operation,
-        devices: Vec<Device>,
+        transports: Vec<Transport>,
         app_id: String,
         app_pid: u32,
         options: PortalBackendOptions,
@@ -479,7 +466,7 @@ impl UiController for UiControlServiceClient {
                 parent_window.into(),
                 origin,
                 r#type,
-                devices,
+                transports,
                 app_id,
                 app_pid,
                 options,

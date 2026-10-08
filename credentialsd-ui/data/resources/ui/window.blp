@@ -127,6 +127,7 @@ template $CredentialsUiWindow: ApplicationWindow {
           Box {
             orientation: vertical;
             halign: start;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.security_key_transport_available;
 
             styles [
               "cred-source-header",
@@ -153,6 +154,17 @@ template $CredentialsUiWindow: ApplicationWindow {
               label: bind template.view-model as <$CredentialManagerViewModel>.activate_usb_prompt;
               wrap: true;
             }
+          }
+
+          Label {
+            label: bind template.view-model as <$CredentialManagerViewModel>.restart_message;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.restart_message_visible;
+            margin-top: 16;
+            margin-start: 24;
+            margin-end: 24;
+            margin-bottom: 8;
+            wrap: true;
+            styles ["error"]
           }
         };
       }
