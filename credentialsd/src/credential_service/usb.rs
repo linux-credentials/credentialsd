@@ -42,8 +42,6 @@ pub struct InProcessUsbHandler {}
 
 impl InProcessUsbHandler {
     async fn process_idle_waiting(
-        failures: &mut usize,
-        prev_usb_state: &UsbStateInternal,
         cancellation: &CancellationToken,
     ) -> Result<UsbStateInternal, CredentialServiceError> {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
@@ -62,20 +60,12 @@ impl InProcessUsbHandler {
                 }
             }
             Err(err) => {
-                *failures += 1;
-                if *failures == 5 {
-                    Err(CredentialServiceError::Internal(format!(
-                        "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
-                        err
-                    )))
-                } else {
-                    tracing::warn!(
-                        "Failed to list USB authenticators: {:?}. Throttling USB state updates",
-                        err
-                    );
-                    super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
-                    Ok(prev_usb_state.clone())
-                }
+                // Throttle, then let the main loop count this as a pre-active failure.
+                tracing::warn!("Failed to list USB authenticators: {:?}", err);
+                super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
+                Err(CredentialServiceError::Internal(format!(
+                    "Failed to list USB authenticators: {err:?}"
+                )))
             }
         }
     }
@@ -86,7 +76,7 @@ impl InProcessUsbHandler {
     ) -> Result<UsbStateInternal, CredentialServiceError> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
-            tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
+            tokio::sync::mpsc::channel::<Result<Option<usize>, String>>(expected_answers);
         let mut channel_map = HashMap::new();
         let (setup_tx, mut setup_rx) =
             tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(expected_answers);
@@ -120,8 +110,7 @@ impl InProcessUsbHandler {
                         err
                     )),
                 }
-                .inspect_err(|err| tracing::warn!(err))
-                .unwrap_or_default(); // In case of error, we also send `None`
+                .inspect_err(|err| tracing::warn!(err));
                 if let Err(err) = tx.send(res).await {
                     tracing::error!("Failed to send notification of wink response: {:?}", err,);
                 }
@@ -136,6 +125,9 @@ impl InProcessUsbHandler {
         tracing::info!("Waiting for user interaction");
         drop(blinking_tx);
         let mut state = UsbStateInternal::Idle;
+        // Whether any device got as far as waiting for a touch. If none did, every
+        // device failed to open or blink, which counts as a pre-active failure.
+        let mut any_device_responded = false;
 
         loop {
             let maybe_msg_fut = blinking_rx.recv();
@@ -157,7 +149,7 @@ impl InProcessUsbHandler {
                 break;
             };
             match msg {
-                Some(idx) => {
+                Ok(Some(idx)) => {
                     let (device, _handle) = channel_map.remove(&idx).unwrap();
                     tracing::info!("User selected device {device:?}.");
                     for (_key, (device, handle)) in channel_map.into_iter() {
@@ -167,10 +159,19 @@ impl InProcessUsbHandler {
                     state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
                     break;
                 }
-                None => {
+                // Not selected (e.g. no touch before the blink timed out).
+                Ok(None) => {
+                    any_device_responded = true;
+                    continue;
+                }
+                // Already logged by the device task.
+                Err(_) => {
                     continue;
                 }
             }
+        }
+        if matches!(state, UsbStateInternal::Idle) && !any_device_responded {
+            return Err(CredentialServiceError::AuthenticatorError);
         }
         Ok(state)
     }
@@ -281,7 +282,8 @@ impl InProcessUsbHandler {
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
-        let mut failures = 0;
+        // Consecutive failures before the user interacted; reset when `active` turns on.
+        let mut pre_active_failures = 0;
         // act on current USB USB state, send state changes to the stream, and
         // loop until a credential or error is returned.
         loop {
@@ -290,8 +292,7 @@ impl InProcessUsbHandler {
             let select_next_usb_state_fut = async {
                 match prev_usb_state {
                     UsbStateInternal::Idle | UsbStateInternal::Waiting => {
-                        Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation)
-                            .await
+                        Self::process_idle_waiting(&cancellation).await
                     }
                     UsbStateInternal::SelectingDevice(ref hid_devices) => {
                         Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await
@@ -367,6 +368,7 @@ impl InProcessUsbHandler {
                 | UsbStateInternal::NeedsUserVerification { .. }
                 | UsbStateInternal::NeedsUserPresence => {
                     active = true;
+                    pre_active_failures = 0;
                 }
                 _ => {}
             }
@@ -420,8 +422,25 @@ impl InProcessUsbHandler {
                 }
 
                 // Pre-active non-terminating failure: the device errored before the user
-                // touched it. Restart silently without any UI notification.
+                // touched it. Restart silently without any UI notification, but give up
+                // after MAX_PRE_ACTIVE_FAILURES in a row.
                 UsbStateInternal::Failed(err) => {
+                    pre_active_failures += 1;
+                    if pre_active_failures >= super::MAX_PRE_ACTIVE_FAILURES {
+                        tracing::warn!(
+                            ?err,
+                            "USB failed {pre_active_failures} times before user interaction, giving up"
+                        );
+                        let err = CredentialServiceError::UnrecoverableTransportError;
+                        tx.send(UsbStateInternal::Failed(err.clone()))
+                            .await
+                            .map_err(|_| {
+                                CredentialServiceError::Internal(
+                                    "USB state channel receiver closed prematurely".to_string(),
+                                )
+                            })?;
+                        break Err(err);
+                    }
                     tracing::debug!(?err, "USB pre-active error, restarting silently");
                     state = UsbStateInternal::Idle;
                 }
@@ -786,6 +805,12 @@ impl From<&UsbState> for BackgroundEvent {
             | UsbState::Failed(CredentialServiceError::NoCredentials)
             | UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
                 BackgroundEvent::ErrorInternal
+            }
+            // USB stopped for this request; the UI stops offering it.
+            UsbState::Failed(CredentialServiceError::UnrecoverableTransportError) => {
+                BackgroundEvent::UsbRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }
             }
             UsbState::Restarting(reason) => BackgroundEvent::UsbRestarting { reason: *reason },
         }

@@ -127,6 +127,7 @@ template $CredentialsUiWindow: ApplicationWindow {
           Box {
             orientation: vertical;
             halign: start;
+            visible: bind template.view-model as <$CredentialManagerViewModel>.security_key_transport_available;
 
             styles [
               "cred-source-header",

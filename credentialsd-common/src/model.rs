@@ -34,7 +34,8 @@ pub enum BackgroundEvent {
     HybridConnected,
     /// The hybrid ceremony was interrupted by a non-terminating error and a new
     /// QR code is about to be issued. The UI should navigate back to the start
-    /// page so the new QR becomes visible.
+    /// page so the new QR becomes visible. With `TransportUnavailable`, hybrid
+    /// stopped instead and the UI should stop offering it.
     HybridRestarting {
         reason: TransportRestartReason,
     },
@@ -44,7 +45,8 @@ pub enum BackgroundEvent {
     NfcConnected,
     /// The NFC ceremony was interrupted by a non-terminating error and the
     /// transport is polling for a new device tap. The UI should navigate back
-    /// to the start page.
+    /// to the start page. With `TransportUnavailable`, NFC stopped instead and
+    /// the UI should stop offering it.
     NfcRestarting {
         reason: TransportRestartReason,
     },
@@ -55,7 +57,8 @@ pub enum BackgroundEvent {
     UsbConnected,
     /// The USB ceremony was interrupted by a non-terminating error and the
     /// transport is polling for a device. The UI should navigate back to the
-    /// start page.
+    /// start page. With `TransportUnavailable`, USB stopped instead and the UI
+    /// should stop offering it.
     UsbRestarting {
         reason: TransportRestartReason,
     },
@@ -268,6 +271,10 @@ pub enum TransportRestartReason {
     /// Too many incorrect PIN attempts on this device — it is now locked. The
     /// user should remove and reinsert the device, or use a different authenticator.
     PinAttemptsExhausted,
+    /// The transport failed repeatedly before the user interacted with it and
+    /// stopped for the rest of this request; it will not restart. The UI should
+    /// stop offering it. The other transports keep running.
+    TransportUnavailable,
     /// The ceremony was interrupted before completing — transport error,
     /// user cancelled on their phone/device, or an unrecoverable authenticator
     /// error. The user should follow the new prompts to retry.
