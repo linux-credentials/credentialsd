@@ -7,6 +7,8 @@ mod util;
 use std::{
     collections::HashMap,
     fmt::Display,
+    marker::PhantomData,
+    os::fd::{AsRawFd, BorrowedFd},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -229,20 +231,25 @@ fn validate_request(context: &RequestContext) -> Result<NavigationContext, WebAu
     Ok(request_environment)
 }
 
-async fn should_trust_app_id(pid: u32) -> bool {
+async fn should_trust_app_id(connection: &Connection, pidfd: BorrowedFd<'_>) -> bool {
+    // Verify by systemd unit name
+    if let Ok(true) = check_by_systemd_unit_name(connection, pidfd).await {
+        return true;
+    }
+
     // Verify if we should trust the peer based on the file name. We verify that
     // we're in the same mount namespace before using the exe path.
-
+    let Some(pid) = read_pid_from_pidfd(pidfd).await else {
+        return false;
+    };
     // TODO: If the portal is running in a separate mount namespace for security
     // reasons, then this check will fail with a false negative.
-    // In the future, we should retrieve this information from another trusted
-    // source, e.g. check if the PID is in a cgroup managed by systemd and
-    // corresponds to the org.freedesktop.portal.Desktop D-Bus service unit.
     let Ok(my_mnt_ns) = tokio::fs::read_link("/proc/self/ns/mnt").await else {
         tracing::debug!("Could not read peer mount namespace");
         return false;
     };
-    let Ok(peer_mnt_ns) = tokio::fs::read_link(format!("/proc/{pid}/ns/mnt")).await else {
+    let Ok(peer_mnt_ns) = tokio::fs::read_link(format!("/proc/{}/ns/mnt", *pid.value())).await
+    else {
         tracing::debug!("Could not determine our mount namespace");
         return false;
     };
@@ -256,12 +263,12 @@ async fn should_trust_app_id(pid: u32) -> bool {
         return false;
     }
 
-    let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{pid}/exe")).await else {
+    let Ok(exe_path) = tokio::fs::read_link(format!("/proc/{}/exe", *pid.value())).await else {
         tracing::warn!("Cannot read executable name from procfs");
         return false;
     };
 
-    tracing::debug!(?exe_path, %pid, "Found executable path:");
+    tracing::debug!(?exe_path, pidfd = %pidfd.as_raw_fd(), "Found executable path:");
 
     let mut trusted_callers: Vec<PathBuf> = vec![
         PathBuf::from("/usr/lib/xdg-desktop-portal"),
@@ -287,6 +294,64 @@ async fn should_trust_app_id(pid: u32) -> bool {
     } else {
         true
     }
+}
+
+async fn check_by_systemd_unit_name(
+    connection: &Connection,
+    pidfd: BorrowedFd<'_>,
+) -> zbus::Result<bool> {
+    let systemd_manager = crate::systemd::Manager::create(connection).await?;
+
+    systemd_manager
+        .match_unit_name_by_pidfd(pidfd, "xdg-desktop-portal.service")
+        .await
+}
+
+struct Pid<'a> {
+    raw_pid: u32,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl Pid<'_> {
+    fn value(&self) -> &u32 {
+        &self.raw_pid
+    }
+}
+
+async fn read_pid_from_pidfd<'a>(pidfd: BorrowedFd<'a>) -> Option<Pid<'a>> {
+    let pidfd_raw = pidfd.as_raw_fd();
+    let fdinfo_str = match std::fs::read_to_string(format!("/proc/self/fdinfo/{pidfd_raw}")) {
+        Ok(fdinfo) => fdinfo,
+        Err(e) => {
+            tracing::error!("Failed to read fdinfo from procfs: {e}");
+            return None;
+        }
+    };
+
+    // Find the line that starts with "Pid:"
+    let pid_line = match fdinfo_str.lines().find(|line| line.starts_with("Pid:")) {
+        Some(line) => line,
+        None => {
+            tracing::error!("Failed to read PID from fdinfo");
+            return None;
+        }
+    };
+
+    let pid_str = pid_line[4..].trim();
+
+    // std::process::id() also returns u32
+    let raw_pid: u32 = match pid_str.parse() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to parse PID from fdinfo entry: {e}");
+            return None;
+        }
+    };
+
+    Some(Pid {
+        raw_pid,
+        _marker: PhantomData {},
+    })
 }
 
 fn check_origin_from_app(

@@ -6,6 +6,7 @@
 - daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)
 - daemon: Fix all subsequent requests being rejected after the UI failed to launch.
 - daemon: Don't busy loop polling for NFC devices when NFC is enabled.
+- daemon: Use systemd unit name to determine whether a caller is trusted.
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)

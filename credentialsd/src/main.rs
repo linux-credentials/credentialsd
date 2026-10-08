@@ -2,6 +2,7 @@ mod credential_service;
 mod dbus;
 mod gateway;
 mod model;
+pub mod systemd;
 mod webauthn;
 
 use std::error::Error;
