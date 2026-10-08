@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Report-Msgid-Bugs-To: \"https://github.com/linux-credentials/credentialsd/"
 "issues\"\n"
-"POT-Creation-Date: 2026-09-09 15:53+0200\n"
+"POT-Creation-Date: 2026-10-08 15:34+0200\n"
 "PO-Revision-Date: 2025-10-10 14:45+0200\n"
 "Last-Translator: Martin Sirringhaus <martin.sirringhaus@suse.com>\n"
 "Language: en_US\n"
@@ -44,96 +44,96 @@ msgstr "Choose device"
 msgid "Use a mobile device"
 msgstr "A mobile device"
 
-#: credentialsd-ui/data/resources/ui/window.blp:145
+#: credentialsd-ui/data/resources/ui/window.blp:146
 #, fuzzy
 msgid "Use your security key"
 msgstr "Insert your security key."
 
-#: credentialsd-ui/data/resources/ui/window.blp:173
+#: credentialsd-ui/data/resources/ui/window.blp:174
 msgid "Connect a security key"
 msgstr "Connect a security key"
 
-#: credentialsd-ui/data/resources/ui/window.blp:208
+#: credentialsd-ui/data/resources/ui/window.blp:209
 #, fuzzy
 msgid "Enter your device PIN"
 msgstr "Enter your PIN."
 
-#: credentialsd-ui/data/resources/ui/window.blp:217
+#: credentialsd-ui/data/resources/ui/window.blp:218
 msgid "Scan the QR code to connect your device"
 msgstr "Scan the QR code to connect your device"
 
-#: credentialsd-ui/data/resources/ui/window.blp:259
-#: credentialsd-ui/data/resources/ui/window.blp:265
+#: credentialsd-ui/data/resources/ui/window.blp:260
+#: credentialsd-ui/data/resources/ui/window.blp:266
 msgid "Choose credential"
 msgstr "Choose credential"
 
-#: credentialsd-ui/data/resources/ui/window.blp:278
+#: credentialsd-ui/data/resources/ui/window.blp:279
 msgid "Set a PIN"
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:301
+#: credentialsd-ui/data/resources/ui/window.blp:302
 msgid "Please choose a new PIN for your device."
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:314
+#: credentialsd-ui/data/resources/ui/window.blp:315
 msgid "New PIN"
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:321
+#: credentialsd-ui/data/resources/ui/window.blp:322
 msgid "Confirm PIN"
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:333
-#: credentialsd-ui/data/resources/ui/window.blp:404
+#: credentialsd-ui/data/resources/ui/window.blp:334
+#: credentialsd-ui/data/resources/ui/window.blp:405
 msgid "Close"
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:338
+#: credentialsd-ui/data/resources/ui/window.blp:339
 msgid "Continue"
 msgstr ""
 
-#: credentialsd-ui/data/resources/ui/window.blp:353
+#: credentialsd-ui/data/resources/ui/window.blp:354
 msgid "Complete"
 msgstr "Complete"
 
-#: credentialsd-ui/data/resources/ui/window.blp:375
+#: credentialsd-ui/data/resources/ui/window.blp:376
 msgid "Done!"
 msgstr "Done!"
 
-#: credentialsd-ui/data/resources/ui/window.blp:386
+#: credentialsd-ui/data/resources/ui/window.blp:387
 msgid "Something went wrong."
 msgstr "Something went wrong."
 
-#: credentialsd-ui/data/resources/ui/window.blp:409
+#: credentialsd-ui/data/resources/ui/window.blp:410
 #, fuzzy
 msgid "Set PIN on device"
 msgstr "A mobile device"
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:177
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:181
 msgid "Enter your PIN. One attempt remaining."
 msgid_plural "Enter your PIN. %d attempts remaining."
 msgstr[0] "Enter your PIN. One attempt remaining."
 msgstr[1] "Enter your PIN. %d attempts remaining."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:183
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:187
 msgid "Enter your PIN."
 msgstr "Enter your PIN."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:192
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:196
 msgid "Touch your device again. One attempt remaining."
 msgid_plural "Touch your device again. %d attempts remaining."
 msgstr[0] "Touch your device again. One attempt remaining."
 msgstr[1] "Touch your device again. %d attempts remaining."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:198
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:202
 msgid "Touch your device."
 msgstr "Touch your device."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:203
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:207
 msgid "Touch your device"
 msgstr "Touch your device"
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:210
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:214
 msgid ""
 "This server requires your device to have additional protection like a PIN, "
 "which is not set. Please set a PIN for this device and try again."
@@ -141,27 +141,27 @@ msgstr ""
 "This server requires your device to have additional protection like a PIN, "
 "which is not set. Please set a PIN for this device and try again."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:214
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:218
 msgid ""
 "The entered PIN violates the PIN-policy of this device (likely too short). "
 "Please try again."
 msgstr ""
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:217
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:221
 msgid ""
 "The entered PIN violates the PIN-policy of this device (PIN too long). "
 "Please try again."
 msgstr ""
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:220
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:224
 msgid "A PIN change is required by your device to continue."
 msgstr ""
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:227
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:231
 msgid "Scan the QR code with your device to begin authentication."
 msgstr "Scan the QR code with your device to begin authentication."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:240
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:244
 msgid ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
@@ -169,19 +169,19 @@ msgstr ""
 "Connecting to your device. Make sure both devices are near each other and "
 "have Bluetooth enabled."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:248
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:252
 msgid "Device connected. Follow the instructions on your device"
 msgstr "Device connected. Follow the instructions on your device"
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:347
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:358
 msgid "Insert your security key."
 msgstr "Insert your security key."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:366
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:377
 msgid "Multiple devices found. Please select with which to proceed."
 msgstr "Multiple devices found. Please select with which to proceed."
 
-#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:415
+#: credentialsd-ui/src/gui/view_model/gtk/mod.rs:426
 msgid "Credential Manager"
 msgstr "Credential Manager"
 
@@ -259,53 +259,53 @@ msgstr ""
 msgid "Insert and activate your security key to use it for %s1"
 msgstr "Insert your security key."
 
-#: credentialsd-ui/src/gui/view_model/mod.rs:193
-msgid "Failed to select credential from device."
-msgstr "Failed to select credential from device."
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:257
-msgid "The credential request timed out. Please try again."
-msgstr ""
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:267
-msgid ""
-"Something went wrong while retrieving a credential. Please try again later "
-"or use a different authenticator."
-msgstr ""
-"Something went wrong while retrieving a credential. Please try again later "
-"or use a different authenticator."
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:276
-msgid "This credential is already registered on this authenticator."
-msgstr "This credential is already registered on this authenticator."
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:374
-msgid ""
-"The previous attempt was interrupted. Please follow the new prompts to try "
-"again."
-msgstr ""
-"The previous attempt was interrupted. Please follow the new prompts to try "
-"again."
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:377
-msgid ""
-"No matching credentials on this authenticator. Please try a different one."
-msgstr ""
-"No matching credentials on this authenticator. Please try a different one."
-
-#: credentialsd-ui/src/gui/view_model/mod.rs:380
-msgid ""
-"No more PIN attempts allowed. Remove and reinsert your device, or use a "
-"different authenticator."
-msgstr ""
-"No more PIN attempts allowed. Remove and reinsert your device, or use a "
-"different authenticator."
-
 #: credentialsd-ui/src/gui/view_model/mod.rs:138
 msgid ""
 "None of the available methods are working right now. Please try again later."
 msgstr ""
 "None of the available methods are working right now. Please try again later."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:206
+msgid "Failed to select credential from device."
+msgstr "Failed to select credential from device."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:270
+msgid "The credential request timed out. Please try again."
+msgstr ""
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:280
+msgid ""
+"Something went wrong while retrieving a credential. Please try again later "
+"or use a different authenticator."
+msgstr ""
+"Something went wrong while retrieving a credential. Please try again later "
+"or use a different authenticator."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:289
+msgid "This credential is already registered on this authenticator."
+msgstr "This credential is already registered on this authenticator."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:406
+msgid ""
+"The previous attempt was interrupted. Please follow the new prompts to try "
+"again."
+msgstr ""
+"The previous attempt was interrupted. Please follow the new prompts to try "
+"again."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:409
+msgid ""
+"No matching credentials on this authenticator. Please try a different one."
+msgstr ""
+"No matching credentials on this authenticator. Please try a different one."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:412
+msgid ""
+"No more PIN attempts allowed. Remove and reinsert your device, or use a "
+"different authenticator."
+msgstr ""
+"No more PIN attempts allowed. Remove and reinsert your device, or use a "
+"different authenticator."
 
 #: credentialsd-ui/src/gui/view_model/mod.rs:415
 msgid "This method isn't working right now. Please choose another one."
