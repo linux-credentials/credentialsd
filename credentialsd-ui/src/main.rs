@@ -7,7 +7,7 @@ mod gui;
 use std::error::Error;
 
 use credentialsd_common::model::WindowHandle;
-use credentialsd_common::model::{Device, Operation};
+use credentialsd_common::model::{Operation, Transport};
 
 use crate::dbus::CredentialPortalBackend;
 
@@ -68,8 +68,8 @@ pub struct ViewRequest {
     /// Details about the application requesting credentials.
     pub requesting_app: RequestingApplication,
 
-    /// Initial list of device interfaces that may provide credentials.
-    pub initial_devices: Vec<Device>,
+    /// Initial list of transports that may provide credentials.
+    pub initial_transports: Vec<Transport>,
 
     /// Client window handle.
     pub window_handle: Option<WindowHandle>,

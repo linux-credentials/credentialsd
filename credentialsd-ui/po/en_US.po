@@ -301,6 +301,16 @@ msgstr ""
 "No more PIN attempts allowed. Remove and reinsert your device, or use a "
 "different authenticator."
 
+#: credentialsd-ui/src/gui/view_model/mod.rs:138
+msgid ""
+"None of the available methods are working right now. Please try again later."
+msgstr ""
+"None of the available methods are working right now. Please try again later."
+
+#: credentialsd-ui/src/gui/view_model/mod.rs:415
+msgid "This method isn't working right now. Please choose another one."
+msgstr "This method isn't working right now. Please choose another one."
+
 #~ msgid "Devices"
 #~ msgstr "Devices"
 

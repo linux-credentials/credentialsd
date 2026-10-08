@@ -99,12 +99,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     let origin = msg.origin().to_string();
 
     let top_origin = msg.top_origin().map(|o| o.to_string());
-    let initial_devices = svc
-        .lock()
-        .await
-        .get_available_public_key_devices()
-        .await
-        .unwrap_or_default();
+    let transports = svc.lock().await.detect_transports().await;
 
     let ClientDetails {
         app_id,
@@ -122,7 +117,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             window_handle,
             origin,
             operation,
-            initial_devices,
+            transports,
             app_id,
             app_pid,
             PortalBackendOptions {
@@ -366,7 +361,7 @@ mod tests {
     use std::error::Error;
     use std::pin::Pin;
 
-    use credentialsd_common::model::{Device, Operation};
+    use credentialsd_common::model::{Operation, Transport};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -393,8 +388,8 @@ mod tests {
             self.cancelled.lock().unwrap().push(request_id);
         }
 
-        async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
-            Ok(Vec::new())
+        async fn detect_transports(&self) -> Vec<Transport> {
+            Vec::new()
         }
 
         async fn start_discovery(
@@ -414,7 +409,7 @@ mod tests {
             _parent_window: Option<WindowHandle>,
             _origin: String,
             _type: Operation,
-            _devices: Vec<Device>,
+            _transports: Vec<Transport>,
             _app_id: String,
             _app_pid: u32,
             _options: PortalBackendOptions,
