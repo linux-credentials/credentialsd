@@ -130,7 +130,8 @@ impl ViewModel {
 
     /// Stops offering transports that gave up for this request.
     async fn drop_transports(&mut self, gone: &[Transport]) {
-        self.transports.retain(|transport| !gone.contains(transport));
+        self.transports
+            .retain(|transport| !gone.contains(transport));
         self.send_transports().await;
         if self.transports.is_empty() {
             self.tx_update
