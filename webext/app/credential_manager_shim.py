@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
 
-from asyncio import Future
+from dbus_next.errors import DBusError
+from dbus_next.constants import MessageType
 import asyncio
-import base64
-import codecs
-from dataclasses import dataclass
-from enum import Enum
-import fcntl
 import json
 import logging
-import mmap
 import os
 from pathlib import Path
-import re
-import secrets
 import signal
 import struct
 import sys
 from typing import Optional
 
-from dbus_next import Variant, validators
+from dbus_next import validators
 from dbus_next.aio import MessageBus
 from dbus_next.proxy_object import BaseProxyInterface
-from dbus_next.constants import MessageType
 from dbus_next.message import Message
+
+from __init__ import CredentialProtocol
+from xdg_portal_v1 import XdgPortalV1
+from xdg_portal_v2 import XdgPortalV2
+from credentialsd_manager import CredentialsdV1
+
+
+def dbus_error_from_message(msg: Message):
+    assert msg.message_type == MessageType.ERROR
+    return DBusError(msg.error_name, msg.body[0] if msg.body else None, reply=msg)
+
+
+DBusError._from_message = dbus_error_from_message  # ty: ignore
 
 validators.is_member_name_valid = lambda member: True  # ty: ignore[invalid-assignment]
 
@@ -32,7 +37,6 @@ logging.basicConfig(
 )
 
 APP_ID = "@APP_ID@"
-DBUS_DOC_FILE = "@DBUS_DOC_FILE@"
 INTERFACE: Optional[BaseProxyInterface] = None
 INTERFACE_VERSION: Optional[str] = None
 
@@ -60,58 +64,6 @@ def getMessage():
         raise e
 
 
-class PortalError(Exception):
-    def from_string(s: str):
-        m = re.match(r"xyz.iinuwa.credentialsd.(\w+): (?:no description|(.*))", s)
-        if m:
-            (name, message) = m.groups()
-            match name:
-                case "AbortError":
-                    return AbortError
-                case "ConstraintError":
-                    return ConstraintError
-                case "InvalidStateError":
-                    return InvalidStateError
-                case "NotSupportedError":
-                    return NotSupportedError
-                case "SecurityError":
-                    return SecurityError
-                case "NotAllowedError":
-                    return NotAllowedError
-                case "TypeError":
-                    return TypeError
-                case _:
-                    return PortalError()
-
-
-class AbortError(PortalError):
-    pass
-
-
-class ConstraintError(PortalError):
-    pass
-
-
-class InvalidStateError(PortalError):
-    pass
-
-
-class NotSupportedError(PortalError):
-    pass
-
-
-class SecurityError(PortalError):
-    pass
-
-
-class NotAllowedError(PortalError):
-    pass
-
-
-class TypeError(PortalError):
-    pass
-
-
 # Encode a message for transmission,
 # given its content.
 def encodeMessage(messageContent):
@@ -128,400 +80,6 @@ def sendMessage(encodedMessage):
     logging.debug(f"sent message: {encodedMessage}")
 
 
-def b64_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def b64_decode(s) -> bytes:
-    padding = "=" * (len(s) % 4)
-    return base64.urlsafe_b64decode(s + padding)
-
-
-class PortalRequest[T]:
-    def __init__(self, token: str, fut: Future):
-        self.token: str = token
-        self._fut: Future = fut
-
-    async def wait(self) -> T:
-        return await self._fut
-
-
-def create_portal_request_message_handler(bus: MessageBus) -> PortalRequest:
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
-    if not bus.connected or bus.unique_name is None:
-        raise Exception("Bus is not connected")
-    unique_name = bus.unique_name[1:].replace(".", "_")
-    token = secrets.token_hex(16)
-    object_path = f"/org/freedesktop/portal/desktop/request/{unique_name}/{token}"
-
-    def message_handler(msg: Message):
-        if future.done():
-            return False
-
-        message_matches = (
-            msg.path == object_path
-            and msg.message_type == MessageType.SIGNAL
-            and msg.destination == bus.unique_name
-            and msg.interface == "org.freedesktop.portal.Request"
-            and msg.member == "Response"
-        )
-        if not message_matches:
-            return False
-
-        [code, value] = msg.body
-        if code == 0:
-            future.set_result(value)
-        elif code == 1:
-            logging.error("Request cancelled")
-            future.set_exception(AbortError())
-            raise
-        elif code == 2 and "error" in value:
-            logging.error(value["error"].value)
-            future.set_exception(PortalError.from_string(value["error"].value))
-        else:
-            logging.error("Portal returned an unknown error")
-            future.set_exception(PortalError())
-        return True
-
-    def when_done(_fut):
-        bus.remove_message_handler(message_handler)
-
-    future.add_done_callback(when_done)
-    bus.add_message_handler(message_handler)
-    logging.debug(f"Listening for {object_path}")
-    return PortalRequest(token, future)
-
-
-class MajorType(Enum):
-    PositiveInteger = (0,)
-    NegativeInteger = (1,)
-    ByteString = (2,)
-    TextString = (3,)
-    Array = (4,)
-    Map = (5,)
-    Tag = (6,)
-    SimpleOrFloat = (7,)
-
-
-class CborParser:
-    def __init__(self, cbor):
-        self.data = memoryview(cbor).toreadonly()
-        self.pos = 0
-
-    def parse(self):
-        value = self._read_value(self.data)
-        return value
-
-    def _read_value(self, buf):
-        if len(buf) == 0:
-            return None
-        additional_info = buf[0] & 0b000_11111
-        if additional_info < 24:
-            argument = additional_info
-            argument_len = 0
-        elif additional_info == 24:
-            argument_len = 1
-            argument = struct.unpack(">B", buf[1 : 1 + argument_len])[0]
-        elif additional_info == 25:
-            argument_len = 2
-            argument = struct.unpack(">H", buf[1 : 1 + argument_len])[0]
-        elif additional_info == 26:
-            argument_len = 4
-            argument = struct.unpack(">I", buf[1 : 1 + argument_len])[0]
-        elif additional_info == 27:
-            argument_len = 8
-            argument = struct.unpack(">Q", buf[1 : 1 + argument_len])[0]
-        elif additional_info == 31:
-            # Indefinite length for types 2-5
-            argument: Optional[int] = None
-            argument_len = 0
-        match buf[0] >> 5:
-            case 0:
-                major_type = MajorType.PositiveInteger
-            case 1:
-                major_type = MajorType.NegativeInteger
-            case 2:
-                major_type = MajorType.ByteString
-            case 3:
-                major_type = MajorType.TextString
-            case 4:
-                major_type = MajorType.Array
-            case 5:
-                major_type = MajorType.Map
-            case 6:
-                major_type = MajorType.Tag
-            case 7:
-                major_type = MajorType.SimpleOrFloat
-        # advance beyond type info
-        self.pos += 1
-        self.pos += argument_len
-
-        bytes_consumed = 0
-        match major_type:
-            case MajorType.PositiveInteger:
-                value = argument
-
-            case MajorType.NegativeInteger:
-                value = -1 - argument  # ty: ignore[unsupported-operator]
-
-            case MajorType.ByteString:
-                string_len = argument
-                if string_len is None:
-                    string_len = 0
-                    # indefinite length
-                    value = ""
-                    while self.data[self.pos] != 0xFF:
-                        val = self._read_value(self.data[self.pos :])[0]
-                        value += val
-                    string_len = 1
-                else:
-                    value = self.data[self.pos : self.pos + string_len]
-                bytes_consumed = string_len
-
-            case MajorType.TextString:
-                string_len = argument
-                if string_len is None:
-                    # indefinite length
-                    value = ""
-                    while self.data[self.pos] != 0xFF:
-                        val = self._read_value(self.data[self.pos :])
-                        value += val
-                    bytes_consumed = 1
-                else:
-                    value = codecs.utf_8_decode(
-                        self.data[self.pos : self.pos + string_len]
-                    )[0]
-                    bytes_consumed = string_len
-
-            case MajorType.Map:
-                value = {}
-                if argument is None:
-                    argument = 0
-                    value = {}
-                    while self.data[self.pos] != 0xFF:
-                        inner_key = self._read_value(self.data[self.pos :])
-                        inner_value = self._read_value(self.data[self.pos :])
-                        value[inner_key] = inner_value
-                    bytes_consumed = 1
-                else:
-                    for _ in range(argument):
-                        inner_key = self._read_value(self.data[self.pos :])
-                        inner_value = self._read_value(self.data[self.pos :])
-                        value[inner_key] = inner_value
-
-            case MajorType.Array:
-                value = []
-                if argument is None:
-                    argument = 0
-                    value = []
-                    while self.data[self.pos] != 0xFF:
-                        inner_value = self._read_value(self.data[self.pos :])
-                        value.append(inner_value)
-                    bytes_consumed = 1
-                else:
-                    for _ in range(argument):
-                        inner_value = self._read_value(self.data[self.pos :])
-                        value.append(inner_value)
-
-            case MajorType.Tag:
-                raise Exception("Tag support not implemented")
-
-            case MajorType.SimpleOrFloat:
-                if argument == 20:
-                    value = False
-                elif argument == 21:
-                    value = True
-                elif argument == 22:
-                    value = None
-                elif argument == 23:
-                    value = None
-                else:
-                    raise Exception("Float parsing not implemented")
-
-        self.pos += bytes_consumed
-        return value
-
-
-def cbor_loads(data):
-    parser = CborParser(data)
-    return parser.parse()
-
-
-def _parse_authenticator_data(auth_data):
-    client_rp_id_hash = auth_data[:32]
-
-    # Verify that the User Present bit of the flags in authData is set.
-    flags = set()
-    flag_byte = auth_data[32]
-    bits = ["UP", "RFU1", "UV", "RFU2", "RFU2", "RFU2", "AT", "ED"]
-    for i in range(8):
-        if flag_byte & 0x01 == 1:
-            flags.add(bits[i])
-        flag_byte = flag_byte >> 1
-
-    sign_count = struct.unpack(">I", auth_data[33:37])[0]
-
-    if "AT" in flags:
-        aaguid = auth_data[37 : 37 + 16]
-        cred_id_length = struct.unpack(">H", auth_data[53:55])[0]
-        cred_id = auth_data[55 : 55 + cred_id_length]
-        parser = CborParser(auth_data[55 + cred_id_length :])
-        _ = parser.parse()
-        cose_key_bytes = parser.data[: parser.pos]
-        cose_key_bytes_len = len(cose_key_bytes)
-        assert len(cose_key_bytes) == parser.pos
-        attested_cred_data_len = 55 + cred_id_length + cose_key_bytes_len
-
-    else:
-        attested_cred_data_len = 0
-        aaguid = None
-        cred_id = None
-        cose_key_bytes = None
-
-    if "ED" in flags:
-        extensions = cbor_loads(auth_data[37 + attested_cred_data_len :])
-    else:
-        extensions = None
-    return AuthenticatorData(
-        rp_id_hash=client_rp_id_hash,
-        flags=flags,
-        sign_count=sign_count,
-        aaguid=aaguid,
-        cred_id=cred_id,
-        pub_key_bytes=cose_key_bytes,
-        extensions=extensions,
-    )
-
-
-@dataclass
-class AuthenticatorData:
-    rp_id_hash: bytes
-    flags: set
-    sign_count: int
-    aaguid: Optional[bytes]
-    cred_id: Optional[bytes]
-    pub_key_bytes: Optional[bytes]
-    extensions: Optional[dict]
-
-    def get_pub_key(self):
-        if self.pub_key_bytes:
-            return cbor_loads(self.pub_key_bytes)
-
-    def has_flag(self, flag):
-        return flag in self.flags
-
-
-async def create_passkey(interface, options, origin, top_origin):
-    logging.debug("Creating passkey")
-    req_json = json.dumps(options)
-    logging.debug(req_json)
-    request_event = create_portal_request_message_handler(interface.bus)
-    req = {
-        "handle_token": Variant("s", request_event.token),
-        "public_key": Variant("s", req_json),
-    }
-    if top_origin != origin:
-        req["top_origin"] = Variant("s", top_origin)
-    logging.debug("Sending request to D-Bus API")
-    if INTERFACE_VERSION == "X0":
-        _rsp = await interface.call_create_credential("", origin, "publicKey", req)
-        result = await request_event.wait()
-        # TODO: this should be PascalCase: PublicKey
-        if result["type"].value != "public-key":
-            raise Exception(
-                f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
-            )
-        response_json = json.loads(
-            result["public_key"].value["registration_response_json"].value
-        )
-    elif INTERFACE_VERSION == "X1":
-        fd = os.memfd_create(f"response_{request_event.token}", os.MFD_ALLOW_SEALING)
-        try:
-            os.ftruncate(fd, 16 * 1024)
-            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_GROW)
-            _rsp = await interface.call_create_credential(
-                "", fd, origin, "publicKey", req
-            )
-            result = await request_event.wait()
-            # TODO: this should be PascalCase
-            if result["type"].value != "publicKey":
-                raise Exception(
-                    f"Invalid credential type received: expected 'publicKey', received {result['type'].value}"
-                )
-            with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as mm:
-                response_bytes = mm.read(mm.size())
-                logging.debug(
-                    f"Received response (raw): len, {mm.size()} {response_bytes}"
-                )
-                response_json = json.loads(response_bytes[: mm.size()])
-        finally:
-            os.close(fd)
-    else:
-        raise Exception("Unknown portal version")
-    logging.debug(response_json)
-
-    attestation = cbor_loads(b64_decode(response_json["response"]["attestationObject"]))
-    auth_data_view = attestation["authData"]
-    response_json["response"]["authenticatorData"] = b64_encode(auth_data_view)
-    auth_data = _parse_authenticator_data(auth_data_view)
-    if auth_data.pub_key_bytes:
-        # TODO: format this as SubjectPublicKeyInfo -_-
-        response_json["response"]["publicKey"] = b64_encode(auth_data.pub_key_bytes)
-        COSE_ALG = 3
-        response_json["response"]["publicKeyAlgorithm"] = auth_data.get_pub_key()[
-            COSE_ALG
-        ]
-    return response_json
-
-
-async def get_passkey(interface, options, origin, top_origin):
-    logging.debug("Authenticating with passkey")
-    req_json = json.dumps(options)
-    logging.debug(req_json)
-
-    logging.debug("Sending request to D-Bus API")
-    request_event = create_portal_request_message_handler(interface.bus)
-    req = {
-        "handle_token": Variant("s", request_event.token),
-        "public_key": Variant("s", req_json),
-    }
-    if top_origin != origin:
-        req["top_origin"] = Variant("s", top_origin)
-    if INTERFACE_VERSION == "X0":
-        _rsp = await interface.call_get_credential("", origin, req)
-        result = await request_event.wait()
-        if result["type"].value != "public-key":
-            raise Exception(
-                f"Invalid credential type received: expected 'public-key', received {result['type'].value}"
-            )
-
-        response_json = json.loads(
-            result["public_key"].value["authentication_response_json"].value
-        )
-    elif INTERFACE_VERSION == "X1":
-        fd = os.memfd_create(f"response_{request_event.token}", os.MFD_ALLOW_SEALING)
-        try:
-            os.ftruncate(fd, 16 * 1024)
-            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, fcntl.F_SEAL_GROW)
-            _rsp = await interface.call_get_credential("", fd, origin, req)
-            result = await request_event.wait()
-            # TODO: this should be PascalCase
-            if result["type"].value != "publicKey":
-                raise Exception(
-                    f"Invalid credential type received: expected 'publicKey', received {result['type'].value}"
-                )
-            with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as mm:
-                response_bytes = mm.read(mm.size())
-                logging.debug(
-                    f"Received response (raw): len, {mm.size()} {response_bytes}"
-                )
-                response_json = json.loads(response_bytes[: mm.size()])
-        finally:
-            os.close(fd)
-    return response_json
-
-
 def discover_app_id():
     desktop_file_name = os.environ.get("GIO_LAUNCHED_DESKTOP_FILE")
     if not desktop_file_name:
@@ -531,12 +89,7 @@ def discover_app_id():
     return Path(desktop_file_name).stem
 
 
-async def get_interface():
-    global INTERFACE
-    global INTERFACE_VERSION
-    if INTERFACE and INTERFACE.bus.connected:
-        return INTERFACE
-
+async def get_service() -> CredentialProtocol:
     bus = await MessageBus(negotiate_unix_fd=True).connect()
     logging.debug("Connected to bus")
 
@@ -558,23 +111,28 @@ async def get_interface():
     )
     await bus.call(msg)
 
-    with open(DBUS_DOC_FILE, "r") as f:
-        introspection = f.read()
-
-    service_name = "org.freedesktop.portal.Desktop"
     service_locations = [
         (
+            "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop",
             "org.freedesktop.portal.experimental.Credential",
-            "X0",
+            XdgPortalV1,
         ),
         (
+            "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop/experimental",
             "org.freedesktop.portal.Credential.X1",
-            "X1",
+            XdgPortalV2,
+        ),
+        (
+            "xyz.iinuwa.credentialsd.Credentials",
+            "/xyz/iinuwa/credentialsd/Manager",
+            "xyz.iinuwa.credentialsd.Manager",
+            CredentialsdV1,
         ),
     ]
-    for object_path, interface_name, interface_version in service_locations:
+    for service_name, object_path, interface_name, clazz in service_locations:
+        logging.debug(f"trying {interface_name} on {service_name} at {object_path}")
         introspection = await bus.introspect(service_name, object_path)
         logging.debug([str(i) for i in introspection.interfaces])
         if any(i.name == interface_name for i in introspection.interfaces):
@@ -582,21 +140,21 @@ async def get_interface():
                 service_name, object_path, introspection
             )
             interface = proxy_object.get_interface(interface_name)
-            INTERFACE = interface
-            INTERFACE_VERSION = interface_version
+            service = clazz(interface, app_id)  # ty: ignore[invalid-argument-type]
             logging.debug(
                 f"Connected to interface {interface_name} at {interface.path}"
             )
-            return INTERFACE
+            return service
+    raise Exception("No service found to satisfy request")
 
 
-async def run(interface, cmd, options, origin, top_origin):
+async def run(service: CredentialProtocol, cmd, options, origin, top_origin):
     logging.debug("Executing command")
 
     if cmd == "create":
         if "publicKey" in options:
-            return await create_passkey(
-                interface, options["publicKey"], origin, top_origin
+            return await service.create_credential(
+                options["publicKey"], origin, top_origin
             )
         else:
             raise Exception(
@@ -604,42 +162,15 @@ async def run(interface, cmd, options, origin, top_origin):
             )
     elif cmd == "get":
         if "publicKey" in options:
-            return await get_passkey(
-                interface, options["publicKey"], origin, top_origin
+            return await service.get_credential(
+                options["publicKey"], origin, top_origin
             )
         else:
             raise Exception(
                 f"Could not get unknown credential type: {options.keys()[0]}"
             )
     elif cmd == "getClientCapabilities":
-        conditional_create = await interface.get_conditional_create()
-        conditional_get = await interface.get_conditional_get()
-        hybrid_transport = await interface.get_hybrid_transport()
-        passkey_platform_authenticator = (
-            await interface.get_passkey_platform_authenticator()
-        )
-        user_verifying_platform_authenticator = (
-            await interface.get_user_verifying_platform_authenticator()
-        )
-        related_origins = await interface.get_related_origins()
-        signal_all_accepted_credentials = (
-            await interface.get_signal_all_accepted_credentials()
-        )
-        signal_current_user_details = await interface.get_signal_current_user_details()
-        signal_unknown_credential = await interface.get_signal_unknown_credential()
-
-        response = {
-            "conditional_create": conditional_create,
-            "conditional_get": conditional_get,
-            "hybrid_transport": hybrid_transport,
-            "passkey_platform_authenticator": passkey_platform_authenticator,
-            "user_verifying_platform_authenticator": user_verifying_platform_authenticator,
-            "related_origins": related_origins,
-            "signal_all_accepted_credentials": signal_all_accepted_credentials,
-            "signal_current_user_details": signal_current_user_details,
-            "signal_unknown_credential": signal_unknown_credential,
-        }
-        return response
+        return await service.get_client_capabilities()
     else:
         raise Exception(f"unknown cmd: {cmd}")
 
@@ -654,13 +185,13 @@ async def main():
     receivedMessage = getMessage()
     request_id = receivedMessage["requestId"]
     try:
-        interface = await get_interface()
+        service = await get_service()
         cmd = receivedMessage["cmd"]
         options = receivedMessage.get("options", None)
         origin = receivedMessage["origin"]
         top_origin = receivedMessage["topOrigin"]
         credentialsd_task = asyncio.create_task(
-            run(interface, cmd, options, origin, top_origin)
+            run(service, cmd, options, origin, top_origin)
         )
         timeout = options.get("timeout", 5 * 60 * 1000) // 1000
         done, pending = await asyncio.wait(
@@ -678,7 +209,6 @@ async def main():
         else:
             logging.info("timed out")
             raise TimeoutError("Timed out")
-        interface.bus.disconnect()
 
     except Exception as e:
         logging.error("Failed to send message", exc_info=e)
@@ -694,5 +224,6 @@ async def main():
     logging.info("quitting credential_manager_shim")
 
 
-signal.signal(signal.SIGTERM, lambda _, __: quit.set())
-asyncio.run(main())
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda _, __: quit.set())
+    asyncio.run(main())
