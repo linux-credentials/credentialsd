@@ -39,7 +39,8 @@ gui_sources = files(
 custom_target(
   'demo-gui',
   input: [gui_sources],
-  build_by_default: false,
+  # build if explicitly enabled, otherwise, the target must be selected
+  build_by_default: demo_client_feat.enabled(),
   output: '.',
   depends: [demo_resources],
   command: ['cp', '@INPUT@', '@OUTPUT@'],
