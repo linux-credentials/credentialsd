@@ -10,7 +10,7 @@
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
-- build: Make demo client optional
+- build: Make credentialsd-ui and demo client optional
 
 # 0.3.1 [2026-09-05]
 

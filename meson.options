@@ -32,3 +32,10 @@ option(
   value: 'auto',
   description: 'Whether to build the demo client'
 )
+
+option(
+  'feature_gui',
+  type: 'feature',
+  value: 'enabled',
+  description: 'Whether to build the credentialsd-ui GUI'
+)

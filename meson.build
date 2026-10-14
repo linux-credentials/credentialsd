@@ -30,24 +30,35 @@ meson.add_dist_script(
 )
 # Features
 demo_client_feat = get_option('feature_demo_client')
+gui_feat = get_option('feature_gui')
 
 # Dependencies
 dbus_dep = dependency('dbus-1', version: '>= 1.6', required: true)
 
 # Programs
 cargo = find_program('cargo', required: true)
-glib_compile_resources = find_program('glib-compile-resources', required: true)
-blueprint_compiler = find_program('blueprint-compiler', version: '>= 0.20.4', required: true or demo_client_feat)
+
+if gui_feat.allowed() or demo_client_feat.allowed()
+  glib_compile_resources = find_program('glib-compile-resources', required: true)
+endif
+
+if gui_feat.allowed() or demo_client_feat.allowed()
+  blueprint_compiler = find_program('blueprint-compiler', version: '>= 0.20.4', required: true)
+endif
 
 # Libs and executables
 subdir('credentialsd-common')
 subdir('credentialsd')
-subdir('credentialsd-ui')
+if gui_feat.allowed()
+  subdir('credentialsd-ui')
+endif
 
 # Data files
 subdir('doc')
 subdir('dbus')
-subdir('portal')
+if gui_feat.allowed()
+  subdir('portal')
+endif
 subdir('systemd')
 subdir('webext')
 
