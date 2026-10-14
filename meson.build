@@ -10,6 +10,7 @@ version = meson.project_version()
 
 prefix = get_option('prefix')
 bindir = prefix / get_option('bindir')
+datadir = prefix / get_option('datadir')
 libdir = prefix / get_option('libdir')
 localedir = prefix / get_option('localedir')
 
@@ -27,6 +28,13 @@ meson.add_dist_script(
   + version,
   meson.project_source_root(),
 )
+# Dependencies
+dbus_dep = dependency('dbus-1', version: '>= 1.6', required: true)
+
+# Programs
+cargo = find_program('cargo', required: true)
+glib_compile_resources = find_program('glib-compile-resources', required: true)
+blueprint_compiler = find_program('blueprint-compiler', version: '>= 0.20.4')
 
 # Libs and executables
 subdir('credentialsd-common')
@@ -41,10 +49,3 @@ subdir('systemd')
 subdir('webext')
 
 subdir('demo_client')
-
-# Don't run blueprint-compiler tests
-
-# add_test_setup('skip_subproject_tests',
-#   is_default: true,
-#   exclude_suites: ['blueprint-compiler']
-# )

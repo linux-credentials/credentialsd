@@ -2,7 +2,6 @@
 # Not efficient, since the UI and daemon projects will build it separately, but leaving it this way for now.
 
 common_lib_name = 'credentialsd-common'
-cargo = find_program('cargo', required: true)
 
 cargo_options = [
   '--manifest-path', meson.project_source_root() / meson.current_source_dir() / 'Cargo.toml',
