@@ -13,6 +13,11 @@ cargo = find_program('cargo', required: true)
 
 version = meson.project_version()
 
+nfc_dep = dependency('libnfc', version: '>=1.8.0', required: true)
+pcsclite_dep = dependency('libpcsclite', version: '>=2.0.3', required: true)
+ssl_dep = dependency('ssl', 'openssl', version: '>= 3.0', required: true)
+udev_dep = dependency('udev', version: '>= 249', required: true)
+
 if get_option('profile') == 'development'
   profile = 'Devel'
   vcs_tag = run_command('git', 'rev-parse', '--short', 'HEAD', check: false).stdout().strip()
