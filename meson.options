@@ -39,3 +39,10 @@ option(
   value: 'enabled',
   description: 'Whether to build the credentialsd-ui GUI'
 )
+
+option(
+  'feature_web_extension',
+  type: 'feature',
+  value: 'enabled',
+  description: 'Whether to build the web extension'
+)

@@ -31,6 +31,7 @@ meson.add_dist_script(
 # Features
 demo_client_feat = get_option('feature_demo_client')
 gui_feat = get_option('feature_gui')
+webext_feat = get_option('feature_web_extension')
 
 # Dependencies
 dbus_dep = dependency('dbus-1', version: '>= 1.6', required: true)
@@ -60,7 +61,9 @@ if gui_feat.allowed()
   subdir('portal')
 endif
 subdir('systemd')
-subdir('webext')
+if webext_feat.allowed()
+  subdir('webext')
+endif
 
 if demo_client_feat.allowed()
   subdir('demo_client')
