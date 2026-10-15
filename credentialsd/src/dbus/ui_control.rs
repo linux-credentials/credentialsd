@@ -467,11 +467,21 @@ impl UiController for UiControlServiceClient {
         };
         subscribe_ui_events(
             self.conn.clone(),
-            sender,
+            sender.clone(),
             session_handle.clone(),
-            from_ui_tx,
+            from_ui_tx.clone(),
         )
         .await?;
+
+        // We want to know when this specific peer disconnects
+        let peer = zbus::proxy::Builder::<zbus::Proxy>::new(&self.conn)
+            .destination(sender)?
+            .path(backend_proxy.as_ref().path())?
+            .interface(backend_proxy.as_ref().interface())?
+            .build()
+            .await?;
+        let owner_changes = peer.receive_owner_changed().await?;
+        watch_ui_exit(owner_changes, session_handle.clone(), from_ui_tx);
 
         backend_proxy
             .create_session(
@@ -492,6 +502,28 @@ impl UiController for UiControlServiceClient {
             session_handle,
         })
     }
+}
+
+fn watch_ui_exit(
+    owner_changes: proxy::OwnerChangedStream<'static>,
+    session_handle: OwnedObjectPath,
+    tx: mpsc::Sender<UserInteractedEvent>,
+) {
+    tokio::spawn(async move {
+        let mut owner_changes = Box::pin(owner_changes);
+        while let Some(owner) = tokio::select! {
+            // Nothing is listening for ceremony events any more
+            _ = tx.closed() => None,
+            owner = owner_changes.next() => owner,
+        } {
+            // A well-known name yields `None` once it is released.
+            if owner.is_none() {
+                tracing::debug!(session_handle = %session_handle, "UI left the bus, cancelling request");
+                _ = tx.send(UserInteractedEvent::RequestCancelled).await;
+                return;
+            }
+        }
+    });
 }
 
 async fn subscribe_ui_events(
