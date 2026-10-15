@@ -29,15 +29,20 @@ meson.add_dist_script(
   meson.project_source_root(),
 )
 # Features
+daemon_feat = get_option('feature_daemon')
 demo_client_feat = get_option('feature_demo_client')
 gui_feat = get_option('feature_gui')
 webext_feat = get_option('feature_web_extension')
 
 # Dependencies
-dbus_dep = dependency('dbus-1', version: '>= 1.6', required: true)
+if daemon_feat.allowed() or gui_feat.allowed()
+  dbus_dep = dependency('dbus-1', version: '>= 1.6', required: true)
+endif
 
 # Programs
-cargo = find_program('cargo', required: true)
+if daemon_feat.allowed() or gui_feat.allowed()
+  cargo = find_program('cargo', required: true)
+endif
 
 if gui_feat.allowed() or demo_client_feat.allowed()
   glib_compile_resources = find_program('glib-compile-resources', required: true)
@@ -48,19 +53,35 @@ if gui_feat.allowed() or demo_client_feat.allowed()
 endif
 
 # Libs and executables
-subdir('credentialsd-common')
-subdir('credentialsd')
+if daemon_feat.allowed() or gui_feat.allowed()
+  subdir('credentialsd-common')
+endif
+
+if daemon_feat.allowed()
+  subdir('credentialsd')
+endif
+
 if gui_feat.allowed()
   subdir('credentialsd-ui')
 endif
 
 # Data files
-subdir('doc')
-subdir('dbus')
+if daemon_feat.allowed()
+  subdir('doc')
+endif
+
+if daemon_feat.allowed() or gui_feat.allowed()
+  subdir('dbus')
+endif
+
 if gui_feat.allowed()
   subdir('portal')
 endif
-subdir('systemd')
+
+if daemon_feat.allowed() or gui_feat.allowed()
+  subdir('systemd')
+endif
+
 if webext_feat.allowed()
   subdir('webext')
 endif

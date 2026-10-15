@@ -27,6 +27,13 @@ option(
 
 # Features
 option(
+  'feature_daemon',
+  type: 'feature',
+  value: 'auto',
+  description: 'Whether to build the credentialsd daemon'
+)
+
+option(
   'feature_demo_client',
   type: 'feature',
   value: 'auto',
