@@ -22,7 +22,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use super::CredentialServiceError;
-use credentialsd_common::{memfd::write_secret, model::BackgroundEvent};
+use credentialsd_common::{
+    memfd::write_secret,
+    model::{BackgroundEvent, TransportRestartReason},
+};
 
 use crate::model::{CredentialRequest, CredentialResponse};
 
@@ -72,18 +75,23 @@ impl HybridHandler for InternalHybridHandler {
             // Outer retry loop: re-issues QR on non-terminating failures.
             // Each iteration creates a fresh CableQrCodeDevice (the previous one
             // is consumed by channel()), so the old QR secret is discarded.
+            // Consecutive failures before the phone connected; reset once it does.
+            let mut pre_active_failures = 0;
             loop {
+                // Reset the active flag for each ceremony attempt. run_hybrid_ceremony
+                // sets it if libwebauthn reported the phone's BLE advert
+                // (`CableUpdate::Connecting`), i.e. the QR code was scanned.
+                let mut active = false;
+
                 let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
                     Ok(device) => device,
                     Err(err) => {
                         tracing::error!("Failed to create caBLE QR code device: {:?}", err);
                         // Device creation failure cannot be retried meaningfully —
-                        // break to avoid a tight error loop.
+                        // give up on hybrid for this request; other transports go on.
                         let _ = tx
                             .send(HybridStateInternal::Failed(
-                                CredentialServiceError::Internal(format!(
-                                    "Failed to create caBLE device: {err:?}"
-                                )),
+                                CredentialServiceError::UnrecoverableTransportError,
                             ))
                             .await;
                         break;
@@ -98,31 +106,66 @@ impl HybridHandler for InternalHybridHandler {
 
                 // Run the ceremony awaited directly (not in a nested spawn) so that
                 // the retry loop is sequential and no orphaned tasks can arise.
-                let response =
-                    run_hybrid_ceremony(&mut device, &request, &tx, cancellation.clone()).await;
+                let response = run_hybrid_ceremony(
+                    &mut device,
+                    &request,
+                    &tx,
+                    cancellation.clone(),
+                    &mut active,
+                )
+                .await;
 
                 match response {
                     Ok(auth_response) => {
                         let _ = tx.send(HybridStateInternal::Completed(auth_response)).await;
                         break;
                     }
+                    // Must come before is_ceremony_terminating(), which returns false for
+                    // cancellation (poll_next must not complete_request() twice).
+                    Err(CredentialServiceError::NonTerminatingCancellation) => {
+                        tracing::debug!("Hybrid handler cancelled, exiting silently");
+                        break;
+                    }
                     Err(err) if super::is_ceremony_terminating(&err) => {
-                        // Terminating errors (CredentialExcluded, NonTerminatingCancellation
-                        // from a winning transport, etc.) stop the loop.
-                        // NonTerminatingCancellation exits silently; others surface as Failed.
-                        if !matches!(err, CredentialServiceError::NonTerminatingCancellation) {
-                            let _ = tx.send(HybridStateInternal::Failed(err)).await;
-                        } else {
-                            tracing::debug!("Hybrid handler cancelled, exiting silently");
-                        }
+                        let _ = tx.send(HybridStateInternal::Failed(err)).await;
                         break;
                     }
                     Err(err) => {
-                        // Non-terminating: notify the UI that a restart is in progress
-                        // so it can navigate back to the start page, then reissue a
-                        // fresh QR on the next iteration.
-                        tracing::warn!(?err, "Hybrid error, reissuing QR");
-                        let _ = tx.send(HybridStateInternal::Restarting).await;
+                        if active {
+                            // Post-active: the phone was engaged — surface the error
+                            // via the Restarting signal so the UI navigates back to
+                            // start_page, then reissue a fresh QR.
+                            let reason = match err {
+                                CredentialServiceError::NoCredentials => {
+                                    TransportRestartReason::NoCredentials
+                                }
+                                CredentialServiceError::PinAttemptsExhausted => {
+                                    TransportRestartReason::PinAttemptsExhausted
+                                }
+                                _ => TransportRestartReason::Interrupted,
+                            };
+                            tracing::warn!(?err, "Hybrid post-active error, reissuing QR");
+                            let _ = tx.send(HybridStateInternal::Restarting(reason)).await;
+                            pre_active_failures = 0;
+                        } else {
+                            // Pre-active: the attempt failed before the phone's BLE advert
+                            // arrived (e.g. the advert scan itself failed). Reissue
+                            // silently, but give up after MAX_PRE_ACTIVE_FAILURES in a row.
+                            pre_active_failures += 1;
+                            if pre_active_failures >= super::MAX_PRE_ACTIVE_FAILURES {
+                                tracing::warn!(
+                                    ?err,
+                                    "Hybrid failed {pre_active_failures} times before the phone connected, giving up"
+                                );
+                                let _ = tx
+                                    .send(HybridStateInternal::Failed(
+                                        CredentialServiceError::UnrecoverableTransportError,
+                                    ))
+                                    .await;
+                                break;
+                            }
+                            tracing::debug!(?err, "Hybrid pre-active error, reissuing QR silently");
+                        }
                         continue;
                     }
                 }
@@ -156,7 +199,7 @@ pub(super) enum HybridStateInternal {
 
     /// The ceremony was interrupted by a non-terminating error. A fresh QR code
     /// is about to be issued on the next iteration.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 // this is here to prevent making HybridStateInternal public to the whole crate.
@@ -186,7 +229,7 @@ pub enum HybridState {
 
     /// The ceremony was interrupted by a non-terminating error and a new QR
     /// code is being issued. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 impl From<HybridStateInternal> for HybridState {
@@ -197,7 +240,7 @@ impl From<HybridStateInternal> for HybridState {
             HybridStateInternal::Connected => HybridState::Connected,
             HybridStateInternal::Completed(_) => HybridState::Completed,
             HybridStateInternal::Failed(err) => HybridState::Failed(err),
-            HybridStateInternal::Restarting => HybridState::Restarting,
+            HybridStateInternal::Restarting(reason) => HybridState::Restarting(reason),
         }
     }
 }
@@ -219,25 +262,29 @@ impl From<&HybridState> for BackgroundEvent {
             HybridState::Connecting => BackgroundEvent::HybridConnecting,
             HybridState::Connected => BackgroundEvent::HybridConnected,
             HybridState::Completed => BackgroundEvent::CeremonyCompleted,
-            HybridState::Restarting => BackgroundEvent::HybridRestarting,
+            HybridState::Restarting(reason) => {
+                BackgroundEvent::HybridRestarting { reason: *reason }
+            }
             HybridState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            HybridState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             HybridState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
-            }
-            HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
             }
             // This should currently never be reached, but we'll likely use it in future refactoring
             HybridState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            HybridState::Failed(CredentialServiceError::Internal(_)) => {
+            HybridState::Failed(CredentialServiceError::Internal(_))
+            | HybridState::Failed(CredentialServiceError::NoCredentials)
+            | HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
                 BackgroundEvent::ErrorInternal
+            }
+            // Hybrid stopped for this request; the UI stops offering it.
+            HybridState::Failed(CredentialServiceError::UnrecoverableTransportError) => {
+                BackgroundEvent::HybridRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }
             }
         }
     }
@@ -254,14 +301,27 @@ async fn run_hybrid_ceremony(
     request: &CredentialRequest,
     tx: &Sender<HybridStateInternal>,
     cancellation: CancellationToken,
+    active: &mut bool,
 ) -> Result<CredentialResponse, CredentialServiceError> {
-    let mut channel = match device.channel(ChannelSettings::default()).await {
+    let Some(result) = cancellation
+        .run_until_cancelled(device.channel(ChannelSettings::default()))
+        .await
+    else {
+        tracing::debug!("Hybrid handler cancelled while opening channel");
+        return Err(CredentialServiceError::NonTerminatingCancellation);
+    };
+    let mut channel = match result {
         Ok(channel) => channel,
         Err(e) => {
             tracing::error!("Failed to open hybrid channel: {:?}", e);
             return Err(CredentialServiceError::AuthenticatorError);
         }
     };
+
+    // `channel()` returns right away: the proximity check (waiting for the phone's
+    // BLE advert), tunnel connection and handshake run in the background. This
+    // receiver is drained after the attempt to learn whether the phone engaged.
+    let mut progress_rx = channel.get_ux_update_receiver();
 
     let state_sender_clone = tx.clone();
     let ux_updates_rx = channel.get_ux_update_receiver();
@@ -328,7 +388,7 @@ async fn run_hybrid_ceremony(
     };
 
     tracing::debug!("Polling hybrid channel for updates.");
-    match cancellation
+    let result = match cancellation
         .run_until_cancelled(wait_for_response_fut)
         .await
     {
@@ -337,7 +397,25 @@ async fn run_hybrid_ceremony(
             tracing::debug!("Hybrid handler cancelled, stopping processing");
             Err(CredentialServiceError::NonTerminatingCancellation)
         }
+    };
+    *active = phone_engaged(&mut progress_rx);
+    result
+}
+
+/// Whether the phone got past the QR scan in this attempt. libwebauthn reports
+/// `Connecting` once it has received the phone's BLE advert, which only happens
+/// after the QR code was scanned. Every update sent before the attempt ended is
+/// already queued in `rx` when this is called.
+fn phone_engaged(rx: &mut broadcast::Receiver<CableUxUpdate>) -> bool {
+    while let Ok(update) = rx.try_recv() {
+        match update {
+            // Before (or without) the phone's BLE advert, e.g. the advert scan failed.
+            CableUxUpdate::CableUpdate(CableUpdate::ProximityCheck | CableUpdate::Error(_)) => {}
+            // Everything else only happens once the phone's advert arrived.
+            _ => return true,
+        }
     }
+    false
 }
 
 async fn handle_hybrid_updates(
@@ -360,10 +438,10 @@ async fn handle_hybrid_updates(
                 CableUpdate::Authenticating => Some(HybridStateInternal::Connecting),
                 CableUpdate::Connected => Some(HybridStateInternal::Connected),
                 CableUpdate::Error(transport_error) => {
+                    // Not forwarded: the failed attempt also ends the webauthn call
+                    // with an error, which the retry loop handles (restart or give up).
                     error!(?transport_error, "Hybrid transport error");
-                    Some(HybridStateInternal::Failed(
-                        CredentialServiceError::AuthenticatorError,
-                    ))
+                    None
                 }
             },
         };
@@ -372,5 +450,34 @@ async fn handle_hybrid_updates(
         {
             error!({ ?err, ?state }, "Failed to send hybrid update");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use libwebauthn::transport::cable::error::CableError;
+
+    use super::*;
+
+    fn cable(update: CableUpdate) -> CableUxUpdate {
+        CableUxUpdate::CableUpdate(update)
+    }
+
+    #[test]
+    fn test_phone_engaged() {
+        let (tx, mut rx) = broadcast::channel(16);
+        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
+        assert!(!phone_engaged(&mut rx), "QR shown, never scanned");
+
+        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
+        tx.send(cable(CableUpdate::Error(CableError::ConnectionFailed)))
+            .unwrap();
+        assert!(!phone_engaged(&mut rx), "advert scan failed before a scan");
+
+        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
+        tx.send(cable(CableUpdate::Connecting)).unwrap();
+        tx.send(cable(CableUpdate::Error(CableError::ConnectionFailed)))
+            .unwrap();
+        assert!(phone_engaged(&mut rx), "failed after the phone's advert");
     }
 }
