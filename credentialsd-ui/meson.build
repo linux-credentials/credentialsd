@@ -6,28 +6,19 @@ gui_build_dir = meson.current_build_dir()
 gui_source_dir = meson.current_source_dir()
 base_id = 'xyz.iinuwa.credentialsd.CredentialsUi'
 
-dependency('dbus-1', version: '>= 1.6')
-dependency('glib-2.0', version: '>= 2.66')
-dependency('gio-2.0', version: '>= 2.66')
-dependency('gtk4', version: '>= 4.6.2')
+glib_dep = dependency('glib-2.0', version: '>= 2.66', required: true)
+gio_dep = dependency('gio-2.0', version: '>= 2.66', required: true)
+gtk_dep = dependency('gtk4', version: '>= 4.6.2', required: true)
 
-glib_compile_resources = find_program('glib-compile-resources', required: true)
-glib_compile_schemas = find_program('glib-compile-schemas', required: true)
 # Usually provided by gettext package
 msgfmt = find_program('msgfmt', required: false)
 xmllint = find_program('xmllint', required: false)
+glib_compile_schemas = find_program('glib-compile-schemas', required: true)
 
 appstreamcli = find_program('appstreamcli', required: false)
 
-cargo = find_program('cargo', required: true)
-
 version = meson.project_version()
 
-prefix = get_option('prefix')
-bindir = prefix / get_option('bindir')
-localedir = prefix / get_option('localedir')
-
-datadir = prefix / get_option('datadir')
 pkgdatadir = datadir / gui_executable_name
 iconsdir = datadir / 'icons'
 

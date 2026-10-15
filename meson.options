@@ -1,3 +1,5 @@
+# Compile options
+
 option(
   'profile',
   type: 'combo',
@@ -21,4 +23,33 @@ option(
   type: 'boolean',
   value: false,
   description: 'Whether to perform an offline build with Cargo. Defaults to false to download crates from registries.',
+)
+
+# Features
+option(
+  'feature_daemon',
+  type: 'feature',
+  value: 'auto',
+  description: 'Whether to build the credentialsd daemon'
+)
+
+option(
+  'feature_demo_client',
+  type: 'feature',
+  value: 'auto',
+  description: 'Whether to build the demo client'
+)
+
+option(
+  'feature_gui',
+  type: 'feature',
+  value: 'enabled',
+  description: 'Whether to build the credentialsd-ui GUI'
+)
+
+option(
+  'feature_web_extension',
+  type: 'feature',
+  value: 'enabled',
+  description: 'Whether to build the web extension'
 )
