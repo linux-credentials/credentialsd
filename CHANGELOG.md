@@ -3,6 +3,7 @@
 ## Improvements
 
 - daemon: Cancel ceremony if UI disappears (Thank you, @michaelbeaumont!)
+- daemon: Allow clients to cancel requests through the `request_handle` option.
 - daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
 - daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)
 - daemon: Fix all subsequent requests being rejected after the UI failed to launch.

@@ -14,6 +14,7 @@ use std::{
 
 use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 use zbus::{
     Connection,
     zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
@@ -83,6 +84,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
+        cancellation: CancellationToken,
     ) -> Result<CreateCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -115,6 +117,7 @@ impl GatewayService {
                     cred_request,
                     parent_window,
                     activation_token,
+                    cancellation,
                 )
                 .await?;
 
@@ -148,6 +151,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
+        cancellation: CancellationToken,
     ) -> Result<GetCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -177,6 +181,7 @@ impl GatewayService {
                     cred_request,
                     parent_window,
                     activation_token,
+                    cancellation,
                 )
                 .await?;
 
