@@ -17,6 +17,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::oneshot;
 use tokio::sync::{Mutex as AsyncMutex, mpsc::Sender};
 use tokio::task::AbortHandle;
+use tokio_util::sync::CancellationToken;
 use zbus::connection::Connection;
 use zbus::names::OwnedWellKnownName;
 use zbus::zvariant::OwnedObjectPath;
@@ -28,7 +29,9 @@ use crate::{
     model::{CredentialRequest, CredentialResponse},
 };
 use crate::{
-    credential_service::{CredentialServiceError, DeviceStateUpdate, ManageDevice, nfc::NfcState},
+    credential_service::{
+        CredentialServiceError, DeviceStateUpdate, ManageDevice, RequestId, nfc::NfcState,
+    },
     model::ClientDetails,
 };
 use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
@@ -36,9 +39,14 @@ use crate::{dbus::ui_control::Ceremony, gateway::WebAuthnError};
 pub struct UiRequestContext {
     request: CredentialRequest,
     app: ClientDetails,
+
+    /// Cancelled when the client closes the request before it completes.
+    client_cancellation: CancellationToken,
+
     /// Client window handle
     window_handle: Option<WindowHandle>,
     activation_token: Option<String>,
+
     /// UI backend chosen by the portal frontend, or `None` for the default.
     ui_backend: Option<OwnedWellKnownName>,
     response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
@@ -59,6 +67,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
             let UiRequestContext {
                 request,
                 app,
+                client_cancellation,
                 window_handle,
                 activation_token,
                 ui_backend,
@@ -74,6 +83,7 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
                 app,
                 window_handle,
                 activation_token,
+                client_cancellation,
             )
             .await;
 
@@ -94,7 +104,13 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     requesting_app: ClientDetails,
     window_handle: Option<WindowHandle>,
     activation_token: Option<String>,
+    client_cancellation: CancellationToken,
 ) -> Result<CredentialResponse, CredentialServiceError> {
+    if client_cancellation.is_cancelled() {
+        return Err(CredentialServiceError::Internal(
+            "Request cancelled by client before it started.".to_string(),
+        ));
+    }
     let (request_tx, request_rx) = oneshot::channel();
     let (request_id, cancellation_token) = svc.lock().await.init_request(&msg, request_tx).await?;
     let operation = msg.operation();
@@ -143,6 +159,26 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             return Err(CredentialServiceError::Internal(err));
         }
     };
+    {
+        let svc = svc.clone();
+        let flow = flow.clone();
+        let request_cancellation = cancellation_token.clone();
+        tokio::spawn(async move {
+            if cancel_on_client_request(
+                &svc,
+                request_id,
+                &request_cancellation,
+                &client_cancellation,
+            )
+            .await
+            {
+                // Dismiss the UI.
+                _ = flow
+                    .send_state_update(BackgroundEvent::ErrorCancelled)
+                    .await;
+            }
+        });
+    }
     tokio::spawn(async move {
         let client_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
         let set_pin_tx: Arc<Mutex<Option<Sender<String>>>> = Arc::new(Mutex::new(None));
@@ -296,6 +332,25 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
         .expect("Credential service not to drop request channel before responding.")
 }
 
+/// Waits until either the request ends or the client cancels it. In the
+/// latter case, the request is cancelled and `true` is returned.
+async fn cancel_on_client_request<M: ManageDevice>(
+    svc: &AsyncMutex<M>,
+    request_id: RequestId,
+    request_cancellation: &CancellationToken,
+    client_cancellation: &CancellationToken,
+) -> bool {
+    tokio::select! {
+        biased;
+        _ = request_cancellation.cancelled() => false,
+        _ = client_cancellation.cancelled() => {
+            tracing::debug!(%request_id, "Client closed the request, cancelling");
+            svc.lock().await.cancel_request(request_id).await;
+            true
+        }
+    }
+}
+
 fn forward_background_event_stream(
     flow: Ceremony,
     mut stream: impl Stream<Item = BackgroundEvent> + Send + Unpin + 'static,
@@ -320,6 +375,7 @@ pub trait CredentialRequestController {
         &self,
         requesting_app: ClientDetails,
         request: CredentialRequest,
+        cancellation: CancellationToken,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
         ui_backend: Option<OwnedWellKnownName>,
@@ -336,6 +392,7 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         &self,
         app: ClientDetails,
         request: CredentialRequest,
+        client_cancellation: CancellationToken,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
         ui_backend: Option<OwnedWellKnownName>,
@@ -345,6 +402,7 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             .send(UiRequestContext {
                 request,
                 app,
+                client_cancellation,
                 window_handle,
                 activation_token,
                 ui_backend,
@@ -372,7 +430,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::credential_service::RequestId;
 
     const TEST_REQUEST_ID: RequestId = 42;
 
@@ -468,6 +525,7 @@ mod tests {
             app,
             None,
             None,
+            CancellationToken::new(),
         )
         .await;
 
@@ -476,5 +534,73 @@ mod tests {
             *svc.lock().await.cancelled.lock().unwrap(),
             vec![TEST_REQUEST_ID]
         );
+    }
+
+    #[tokio::test]
+    async fn test_client_cancellation_cancels_request() {
+        let svc = AsyncMutex::new(MockDeviceManager::default());
+        let request_cancellation = CancellationToken::new();
+        let client_cancellation = CancellationToken::new();
+        client_cancellation.cancel();
+
+        let cancelled = cancel_on_client_request(
+            &svc,
+            TEST_REQUEST_ID,
+            &request_cancellation,
+            &client_cancellation,
+        )
+        .await;
+
+        assert!(cancelled);
+        assert_eq!(
+            *svc.lock().await.cancelled.lock().unwrap(),
+            vec![TEST_REQUEST_ID]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finished_request_is_not_cancelled_by_client() {
+        let svc = AsyncMutex::new(MockDeviceManager::default());
+        let request_cancellation = CancellationToken::new();
+        let client_cancellation = CancellationToken::new();
+        request_cancellation.cancel();
+        client_cancellation.cancel();
+
+        let cancelled = cancel_on_client_request(
+            &svc,
+            TEST_REQUEST_ID,
+            &request_cancellation,
+            &client_cancellation,
+        )
+        .await;
+
+        assert!(!cancelled);
+        assert!(svc.lock().await.cancelled.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cancelled_client_request_does_not_start() {
+        let svc = Arc::new(AsyncMutex::new(MockDeviceManager::default()));
+        let app = ClientDetails {
+            app_id: "org.example.App".to_string(),
+            pid: 1,
+        };
+        let client_cancellation = CancellationToken::new();
+        client_cancellation.cancel();
+
+        let result = handle(
+            svc.clone(),
+            FailingUiController,
+            create_test_request().await,
+            app,
+            None,
+            None,
+            client_cancellation,
+        )
+        .await;
+
+        assert!(result.is_err());
+        // The request was never initialized, so there is nothing to cancel.
+        assert!(svc.lock().await.cancelled.lock().unwrap().is_empty());
     }
 }
