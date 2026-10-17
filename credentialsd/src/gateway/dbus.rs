@@ -7,11 +7,12 @@ use std::{
 
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 use zbus::{
-    Connection, DBusError, interface,
+    Connection, DBusError, fdo, interface,
     message::Header,
-    names::{BusName, UniqueName},
-    zvariant::{DeserializeDict, Optional, Type, Value},
+    names::{BusName, OwnedUniqueName, UniqueName},
+    zvariant::{DeserializeDict, Optional, OwnedObjectPath, Type, Value},
 };
 
 use credentialsd_common::model::WindowHandle;
@@ -28,6 +29,9 @@ use crate::{
 use super::{GatewayService, RequestContext, check_origin_from_app};
 
 pub const PORTAL_SERVICE_PATH: &str = "/org/freedesktop/portal/desktop";
+
+/// Prefix of the request object paths created by xdg-desktop-portal.
+const PORTAL_REQUEST_PATH_PREFIX: &str = "/org/freedesktop/portal/desktop/request/";
 
 pub(super) async fn start_dbus_gateway(
     svc: Arc<AsyncMutex<GatewayService>>,
@@ -78,6 +82,7 @@ impl CredentialPortalGateway {
             activation_token,
             top_origin,
             public_key,
+            request_handle,
         } = options;
 
         let request_json = match (&cred_type, public_key) {
@@ -113,15 +118,29 @@ impl CredentialPortalGateway {
             public_key: Some(CreatePublicKeyCredentialRequest { request_json }),
         };
 
-        let response = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_create_credential(request, context, parent_window.into(), activation_token)
-            .await
-            .map_err(Error::from);
-
-        response.into()
+        run_ceremony(
+            connection,
+            header.sender(),
+            request_handle,
+            |cancellation| async move {
+                let Some(svc) = cancellation
+                    .run_until_cancelled(self.gateway_service.lock())
+                    .await
+                else {
+                    return Err(Error::AbortError);
+                };
+                svc.handle_create_credential(
+                    request,
+                    context,
+                    parent_window.into(),
+                    activation_token,
+                    cancellation,
+                )
+                .await
+                .map_err(Error::from)
+            },
+        )
+        .await
     }
 
     #[zbus(out_args("response", "results"))]
@@ -138,6 +157,7 @@ impl CredentialPortalGateway {
             activation_token,
             top_origin,
             public_key,
+            request_handle,
         } = options;
         let app_validation_result = validate_app_details(
             connection,
@@ -169,14 +189,116 @@ impl CredentialPortalGateway {
             public_key: Some(GetPublicKeyCredentialRequest { request_json }),
         };
 
-        let response = self
-            .gateway_service
-            .lock()
-            .await
-            .handle_get_credential(request, context, parent_window.into(), activation_token)
-            .await
-            .map_err(Error::from);
-        response.into()
+        run_ceremony(
+            connection,
+            header.sender(),
+            request_handle,
+            |cancellation| async move {
+                let Some(svc) = cancellation
+                    .run_until_cancelled(self.gateway_service.lock())
+                    .await
+                else {
+                    return Err(Error::AbortError);
+                };
+                svc.handle_get_credential(
+                    request,
+                    context,
+                    parent_window.into(),
+                    activation_token,
+                    cancellation,
+                )
+                .await
+                .map_err(Error::from)
+            },
+        )
+        .await
+    }
+}
+
+/// Runs a ceremony that the client can cancel.
+///
+/// If `request_handle` is set, an `org.freedesktop.impl.portal.Request` object
+/// is exported at that path for the duration of the ceremony. Calling `Close()`
+/// on it cancels the token passed to `ceremony`, and the ceremony is reported
+/// as cancelled.
+async fn run_ceremony<T, F, Fut>(
+    connection: &Connection,
+    sender: Option<&UniqueName<'_>>,
+    request_handle: Option<OwnedObjectPath>,
+    ceremony: F,
+) -> PortalResult<T, Error>
+where
+    F: FnOnce(CancellationToken) -> Fut,
+    Fut: Future<Output = Result<T, Error>>,
+{
+    let cancellation = CancellationToken::new();
+    let Some(request_handle) = request_handle else {
+        return ceremony(cancellation).await.into();
+    };
+
+    let Some(sender) = sender else {
+        return Err(Error::SecurityError).into();
+    };
+    if !request_handle
+        .as_str()
+        .starts_with(PORTAL_REQUEST_PATH_PREFIX)
+    {
+        tracing::warn!(%request_handle, "Invalid request handle passed. Rejecting request.");
+        return Err(Error::TypeError).into();
+    }
+    let request = PortalRequest {
+        caller: sender.to_owned().into(),
+        cancellation: cancellation.clone(),
+    };
+    match connection
+        .object_server()
+        .at(request_handle.as_ref(), request)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(%request_handle, "Request handle already in use. Rejecting request.");
+            return Err(Error::TypeError).into();
+        }
+        Err(err) => return Err(Error::ZBus(err)).into(),
+    }
+
+    let result = ceremony(cancellation.clone()).await;
+
+    if let Err(err) = connection
+        .object_server()
+        .remove::<PortalRequest, _>(request_handle.as_ref())
+        .await
+    {
+        tracing::warn!(%request_handle, %err, "Failed to remove request handle");
+    }
+
+    if result.is_err() && cancellation.is_cancelled() {
+        tracing::debug!(%request_handle, "Request cancelled by client");
+        PortalResult::cancelled()
+    } else {
+        result.into()
+    }
+}
+
+/// Request object that lets the caller cancel an in-flight ceremony.
+struct PortalRequest {
+    /// Unique bus name of the caller that started the ceremony.
+    caller: OwnedUniqueName,
+    cancellation: CancellationToken,
+}
+
+#[interface(name = "org.freedesktop.impl.portal.Request")]
+impl PortalRequest {
+    async fn close(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+        if header.sender() != Some(&self.caller) {
+            tracing::warn!(sender = ?header.sender(), "Rejecting request to close request from untrusted caller");
+            return Err(fdo::Error::AccessDenied(
+                "Only the caller that started the request may close it".to_string(),
+            ));
+        }
+        self.cancellation.cancel();
+        Ok(())
     }
 }
 
@@ -209,6 +331,10 @@ struct CreateCredentialPortalOptions {
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
     public_key: Option<String>,
+
+    /// Path at which to export an `org.freedesktop.impl.portal.Request`
+    /// object that the caller can use to cancel the request.
+    request_handle: Option<OwnedObjectPath>,
 }
 
 #[derive(Debug, DeserializeDict, Type)]
@@ -225,6 +351,10 @@ struct GetCredentialPortalOptions {
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
     public_key: Option<String>,
+
+    /// Path at which to export an `org.freedesktop.impl.portal.Request`
+    /// object that the caller can use to cancel the request.
+    request_handle: Option<OwnedObjectPath>,
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -288,14 +418,21 @@ impl From<WebAuthnError> for Error {
 #[derive(Serialize)]
 enum PortalResponse {
     Success = 0,
-    // Cancelled = 1,
+    Cancelled = 1,
     Other = 2,
 }
 
 #[derive(Type)]
 #[zvariant(signature = "ua{sv}")]
 struct PortalResult<T, E> {
-    inner: Result<T, E>,
+    /// `None` if the request was cancelled.
+    inner: Option<Result<T, E>>,
+}
+
+impl<T, E> PortalResult<T, E> {
+    fn cancelled() -> Self {
+        PortalResult { inner: None }
+    }
 }
 
 impl<T, E> Serialize for PortalResult<T, E>
@@ -309,14 +446,18 @@ where
     {
         let mut map = serializer.serialize_tuple(2)?;
         match &self.inner {
-            Err(err) => {
+            None => {
+                map.serialize_element(&(PortalResponse::Cancelled as u32))?;
+                map.serialize_element(&HashMap::<&str, Value<'_>>::new())?;
+            }
+            Some(Err(err)) => {
                 map.serialize_element(&(PortalResponse::Other as u32))?;
                 map.serialize_element(&HashMap::<&str, Value<'_>>::from([(
                     "error",
                     Value::Str(err.to_string().into()),
                 )]))?;
             }
-            Ok(response) => {
+            Some(Ok(response)) => {
                 map.serialize_element(&(PortalResponse::Success as u32))?;
                 map.serialize_element(&response)?;
             }
@@ -327,7 +468,7 @@ where
 
 impl<T, E> From<Result<T, E>> for PortalResult<T, E> {
     fn from(value: Result<T, E>) -> Self {
-        PortalResult { inner: value }
+        PortalResult { inner: Some(value) }
     }
 }
 
@@ -428,4 +569,235 @@ async fn query_peer_pidfd(
             |err| tracing::error!(%err, "Failed to duplicate peer process file descriptor"),
         )
         .ok()
+}
+
+#[cfg(test)]
+mod test {
+    use std::{collections::HashMap, rc::Rc};
+
+    use gio::{TestDBus, TestDBusFlags};
+    use tokio::sync::oneshot;
+    use zbus::zvariant::{LE, ObjectPath, OwnedValue, Value, serialized::Context, to_bytes};
+
+    use super::*;
+
+    const REQUEST_HANDLE: &str = "/org/freedesktop/portal/desktop/request/1_42/t";
+
+    type TestResponse = HashMap<&'static str, Value<'static>>;
+
+    fn encode<T: Serialize + Type>(
+        value: &T,
+    ) -> zbus::zvariant::serialized::Data<'static, 'static> {
+        to_bytes(Context::new_dbus(LE, 0), value).unwrap()
+    }
+
+    fn options(request_handle: Option<&str>) -> HashMap<&'static str, Value<'static>> {
+        let mut options = HashMap::from([
+            ("top_origin", Value::from("https://example.com")),
+            ("public_key", Value::from("{}")),
+        ]);
+        if let Some(handle) = request_handle {
+            let path = ObjectPath::try_from(handle.to_string()).unwrap();
+            options.insert("request_handle", Value::from(path));
+        }
+        options
+    }
+
+    fn decode_portal_result(
+        result: PortalResult<HashMap<&str, Value<'_>>, Error>,
+    ) -> (u32, HashMap<String, OwnedValue>) {
+        encode(&result).deserialize().unwrap().0
+    }
+
+    #[test]
+    fn test_create_options_without_request_handle() {
+        let (options, _): (CreateCredentialPortalOptions, _) =
+            encode(&options(None)).deserialize().unwrap();
+        assert_eq!(options.public_key.as_deref(), Some("{}"));
+        assert!(options.request_handle.is_none());
+    }
+
+    #[test]
+    fn test_create_options_with_request_handle() {
+        let (options, _): (CreateCredentialPortalOptions, _) =
+            encode(&options(Some(REQUEST_HANDLE)))
+                .deserialize()
+                .unwrap();
+        assert_eq!(options.request_handle.unwrap().as_str(), REQUEST_HANDLE);
+    }
+
+    #[test]
+    fn test_get_options_without_request_handle() {
+        let (options, _): (GetCredentialPortalOptions, _) =
+            encode(&options(None)).deserialize().unwrap();
+        assert_eq!(options.top_origin.as_deref(), Some("https://example.com"));
+        assert!(options.request_handle.is_none());
+    }
+
+    #[test]
+    fn test_get_options_with_request_handle() {
+        let (options, _): (GetCredentialPortalOptions, _) = encode(&options(Some(REQUEST_HANDLE)))
+            .deserialize()
+            .unwrap();
+        assert_eq!(options.request_handle.unwrap().as_str(), REQUEST_HANDLE);
+    }
+
+    #[test]
+    fn test_portal_result_response_codes() {
+        let (code, results) = decode_portal_result(Ok(HashMap::new()).into());
+        assert_eq!(code, PortalResponse::Success as u32);
+        assert!(results.is_empty());
+
+        let (code, results) = decode_portal_result(PortalResult::cancelled());
+        assert_eq!(code, PortalResponse::Cancelled as u32);
+        assert!(results.is_empty());
+
+        let (code, results) = decode_portal_result(Err(Error::NotAllowedError).into());
+        assert_eq!(code, PortalResponse::Other as u32);
+        assert!(results.contains_key("error"));
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_without_request_handle_is_not_cancellable() {
+        let result = run_ceremony(
+            &connect_test_bus(None).await.0,
+            None,
+            None,
+            |cancellation| async move {
+                assert!(!cancellation.is_cancelled());
+                Ok(TestResponse::new())
+            },
+        )
+        .await;
+        assert_eq!(
+            decode_portal_result(result).0,
+            PortalResponse::Success as u32
+        );
+    }
+
+    #[tokio::test]
+    async fn test_invalid_request_handle_is_rejected() {
+        let (connection, _bus) = connect_test_bus(None).await;
+        let handle = OwnedObjectPath::try_from(PORTAL_SERVICE_PATH).unwrap();
+        let result = run_ceremony(
+            &connection,
+            connection.unique_name().map(|n| n.inner()),
+            Some(handle),
+            |_| async { Ok(TestResponse::new()) },
+        )
+        .await;
+        assert!(matches!(result.inner, Some(Err(Error::TypeError))));
+    }
+
+    #[tokio::test]
+    async fn test_close_cancels_ceremony() {
+        let (gateway, bus) = connect_test_bus(None).await;
+        let (caller, _) = connect_test_bus(Some(&bus)).await;
+        let (other, _) = connect_test_bus(Some(&bus)).await;
+        let handle = OwnedObjectPath::try_from(REQUEST_HANDLE).unwrap();
+        let (started_tx, started_rx) = oneshot::channel();
+
+        let ceremony = run_ceremony(
+            &gateway,
+            caller.unique_name().map(|n| n.inner()),
+            Some(handle.clone()),
+            |cancellation| async move {
+                started_tx.send(()).unwrap();
+                // Like the credential service, fail once the request is cancelled.
+                cancellation.cancelled().await;
+                Err::<TestResponse, _>(Error::NotAllowedError)
+            },
+        );
+        let client = async {
+            started_rx.await.unwrap();
+            let err = close_request(&other, &gateway, &handle).await.unwrap_err();
+            assert!(matches!(err, fdo::Error::AccessDenied(_)), "{err:?}");
+            close_request(&caller, &gateway, &handle).await.unwrap();
+        };
+        let (result, ()) = tokio::join!(ceremony, client);
+
+        let (code, _) = decode_portal_result(result);
+        assert_eq!(code, PortalResponse::Cancelled as u32);
+        // The request object is removed when the ceremony ends.
+        assert!(close_request(&caller, &gateway, &handle).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_handle_removed_after_success() {
+        let (gateway, bus) = connect_test_bus(None).await;
+        let (caller, _) = connect_test_bus(Some(&bus)).await;
+        let handle = OwnedObjectPath::try_from(REQUEST_HANDLE).unwrap();
+
+        let result = run_ceremony(
+            &gateway,
+            caller.unique_name().map(|n| n.inner()),
+            Some(handle.clone()),
+            |_| async { Ok(TestResponse::new()) },
+        )
+        .await;
+
+        assert_eq!(
+            decode_portal_result(result).0,
+            PortalResponse::Success as u32
+        );
+        assert!(close_request(&caller, &gateway, &handle).await.is_err());
+    }
+
+    /// Connects to a private test bus, starting one if `bus` is `None`.
+    async fn connect_test_bus(bus: Option<&TestBus>) -> (Connection, TestBus) {
+        let bus = match bus {
+            Some(bus) => bus.clone(),
+            None => TestBus::new(),
+        };
+        let connection = zbus::connection::Builder::address(bus.address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        (connection, bus)
+    }
+
+    async fn close_request(
+        caller: &Connection,
+        gateway: &Connection,
+        handle: &OwnedObjectPath,
+    ) -> fdo::Result<()> {
+        caller
+            .call_method(
+                gateway.unique_name(),
+                handle,
+                Some("org.freedesktop.impl.portal.Request"),
+                "Close",
+                &(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(fdo::Error::from)
+    }
+
+    #[derive(Clone)]
+    struct TestBus {
+        address: String,
+        _bus: Rc<TestBusGuard>,
+    }
+
+    struct TestBusGuard(TestDBus);
+
+    impl Drop for TestBusGuard {
+        fn drop(&mut self) {
+            self.0.down();
+        }
+    }
+
+    impl TestBus {
+        fn new() -> Self {
+            let bus = TestDBus::new(TestDBusFlags::NONE);
+            bus.up();
+            let address = bus.bus_address().expect("test bus to be up").to_string();
+            Self {
+                address,
+                _bus: Rc::new(TestBusGuard(bus)),
+            }
+        }
+    }
 }
