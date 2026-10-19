@@ -2,6 +2,7 @@
 
 ## Improvements
 
+- daemon: Don't log error if we get PresenceRequired over hybrid (Thank you, @michaelbeaumont!)
 - daemon: Cancel ceremony if UI disappears (Thank you, @michaelbeaumont!)
 - daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
 - daemon: Allow Firefox to contact daemon on more distros with different app IDs (Thank you, @michaelbeaumont!)

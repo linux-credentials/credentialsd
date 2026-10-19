@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use async_stream::stream;
 use futures_lite::Stream;
 use libwebauthn::{
+    UvUpdate,
     proto::CtapError,
     transport::{
         Channel, ChannelSettings, Device,
@@ -347,6 +348,8 @@ async fn handle_hybrid_updates(
     while let Ok(msg) = ux_update_receiver.recv().await {
         debug!(?msg, "Received hybrid update");
         let new_state: Option<HybridStateInternal> = match msg {
+            // Our UI already indicates this and authenticators over hybrid also generally indicate
+            CableUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => None,
             CableUxUpdate::UvUpdate(uv_update) => {
                 error!(
                     "Received unexpected UV update in hybrid handler: {:?}",
