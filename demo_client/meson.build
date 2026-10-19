@@ -1,16 +1,9 @@
-dependency('dbus-1', version: '>= 1.6')
-dependency('glib-2.0', version: '>= 2.66')
-dependency('gio-2.0', version: '>= 2.66')
-dependency('gtk4', version: '>= 4.6.2')
-
-glib_compile_resources = find_program('glib-compile-resources', required: true)
-
 demo_blueprints = custom_target(
   'demo-blueprints',
   input: files('window.blp'),
   output: 'ui',
   command: [
-    find_program('blueprint-compiler', required: false),
+    blueprint_compiler,
     'batch-compile',
     '@OUTPUT@',
     '@CURRENT_SOURCE_DIR@',
@@ -46,7 +39,8 @@ gui_sources = files(
 custom_target(
   'demo-gui',
   input: [gui_sources],
-  build_by_default: false,
+  # build if explicitly enabled, otherwise, the target must be selected
+  build_by_default: demo_client_feat.enabled(),
   output: '.',
   depends: [demo_resources],
   command: ['cp', '@INPUT@', '@OUTPUT@'],
