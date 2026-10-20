@@ -21,7 +21,9 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use credentialsd_common::model::{BackgroundEvent, Credential, PinNotSetError};
+use credentialsd_common::model::{
+    BackgroundEvent, Credential, PinNotSetError, TransportRestartReason,
+};
 
 use crate::model::{CredentialRequest, GetAssertionResponseInternal};
 
@@ -40,8 +42,6 @@ pub struct InProcessUsbHandler {}
 
 impl InProcessUsbHandler {
     async fn process_idle_waiting(
-        failures: &mut usize,
-        prev_usb_state: &UsbStateInternal,
         cancellation: &CancellationToken,
     ) -> Result<UsbStateInternal, CredentialServiceError> {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
@@ -60,20 +60,12 @@ impl InProcessUsbHandler {
                 }
             }
             Err(err) => {
-                *failures += 1;
-                if *failures == 5 {
-                    Err(CredentialServiceError::Internal(format!(
-                        "Failed to list USB authenticators: {:?}. Cancelling USB state updates.",
-                        err
-                    )))
-                } else {
-                    tracing::warn!(
-                        "Failed to list USB authenticators: {:?}. Throttling USB state updates",
-                        err
-                    );
-                    super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
-                    Ok(prev_usb_state.clone())
-                }
+                // Throttle, then let the main loop count this as a pre-active failure.
+                tracing::warn!("Failed to list USB authenticators: {:?}", err);
+                super::cancellable_sleep(Duration::from_secs(1), cancellation).await?;
+                Err(CredentialServiceError::Internal(format!(
+                    "Failed to list USB authenticators: {err:?}"
+                )))
             }
         }
     }
@@ -84,7 +76,7 @@ impl InProcessUsbHandler {
     ) -> Result<UsbStateInternal, CredentialServiceError> {
         let expected_answers = hid_devices.len();
         let (blinking_tx, mut blinking_rx) =
-            tokio::sync::mpsc::channel::<Option<usize>>(expected_answers);
+            tokio::sync::mpsc::channel::<Result<Option<usize>, String>>(expected_answers);
         let mut channel_map = HashMap::new();
         let (setup_tx, mut setup_rx) =
             tokio::sync::mpsc::channel::<(usize, HidDevice, HidChannelHandle)>(expected_answers);
@@ -118,8 +110,7 @@ impl InProcessUsbHandler {
                         err
                     )),
                 }
-                .inspect_err(|err| tracing::warn!(err))
-                .unwrap_or_default(); // In case of error, we also send `None`
+                .inspect_err(|err| tracing::warn!(err));
                 if let Err(err) = tx.send(res).await {
                     tracing::error!("Failed to send notification of wink response: {:?}", err,);
                 }
@@ -134,6 +125,9 @@ impl InProcessUsbHandler {
         tracing::info!("Waiting for user interaction");
         drop(blinking_tx);
         let mut state = UsbStateInternal::Idle;
+        // Whether any device got as far as waiting for a touch. If none did, every
+        // device failed to open or blink, which counts as a pre-active failure.
+        let mut any_device_responded = false;
 
         loop {
             let maybe_msg_fut = blinking_rx.recv();
@@ -155,7 +149,7 @@ impl InProcessUsbHandler {
                 break;
             };
             match msg {
-                Some(idx) => {
+                Ok(Some(idx)) => {
                     let (device, _handle) = channel_map.remove(&idx).unwrap();
                     tracing::info!("User selected device {device:?}.");
                     for (_key, (device, handle)) in channel_map.into_iter() {
@@ -165,10 +159,19 @@ impl InProcessUsbHandler {
                     state = UsbStateInternal::Connected(Arc::new(AsyncMutex::new(device)));
                     break;
                 }
-                None => {
+                // Not selected (e.g. no touch before the blink timed out).
+                Ok(None) => {
+                    any_device_responded = true;
+                    continue;
+                }
+                // Already logged by the device task.
+                Err(_) => {
                     continue;
                 }
             }
+        }
+        if matches!(state, UsbStateInternal::Idle) && !any_device_responded {
+            return Err(CredentialServiceError::AuthenticatorError);
         }
         Ok(state)
     }
@@ -275,10 +278,12 @@ impl InProcessUsbHandler {
         cancellation: CancellationToken,
     ) -> Result<(), CredentialServiceError> {
         let mut state = UsbStateInternal::Idle;
+        let mut active = false;
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
-        let mut failures = 0;
+        // Consecutive failures before the user interacted; reset when `active` turns on.
+        let mut pre_active_failures = 0;
         // act on current USB USB state, send state changes to the stream, and
         // loop until a credential or error is returned.
         loop {
@@ -287,8 +292,7 @@ impl InProcessUsbHandler {
             let select_next_usb_state_fut = async {
                 match prev_usb_state {
                     UsbStateInternal::Idle | UsbStateInternal::Waiting => {
-                        Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation)
-                            .await
+                        Self::process_idle_waiting(&cancellation).await
                     }
                     UsbStateInternal::SelectingDevice(ref hid_devices) => {
                         Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await
@@ -320,7 +324,7 @@ impl InProcessUsbHandler {
                     // state, but we cover it here for exhaustiveness.
                     UsbStateInternal::Completed(_)
                     | UsbStateInternal::Failed(_)
-                    | UsbStateInternal::Restarting => Ok(prev_usb_state.clone()),
+                    | UsbStateInternal::Restarting(_) => Ok(prev_usb_state.clone()),
                 }
             };
 
@@ -355,35 +359,103 @@ impl InProcessUsbHandler {
                     std::mem::discriminant(new_state) != std::mem::discriminant(old_state)
                 }
             };
-            // Suppress forwarding a non-terminating Failed state to the UI directly:
-            // the Restarting state emitted below takes its place with cleaner semantics.
-            let is_non_terminating_failure = matches!(
-                &state,
-                UsbStateInternal::Failed(err) if !super::is_ceremony_terminating(err)
-            );
-            if state_changed && !is_non_terminating_failure {
-                tracing::debug!("USB current state: {state:?}");
-                tx.send(state.clone()).await.map_err(|_| {
-                    CredentialServiceError::Internal(
-                        "USB state channel receiver closed prematurely".to_string(),
-                    )
-                })?;
-            }
-
-            // Check for terminal states AFTER sending
-            match state {
-                UsbStateInternal::Completed(_) => break Ok(()),
-                UsbStateInternal::Failed(ref err) => {
-                    if super::is_ceremony_terminating(err) {
-                        break Err(err.clone());
-                    }
-                    // Non-terminating: notify the UI that a restart is in progress so
-                    // it can navigate back to the start page, then restart polling.
-                    tracing::warn!(?err, "USB authenticator error, restarting transport");
-                    let _ = tx.send(UsbStateInternal::Restarting).await;
-                    state = UsbStateInternal::Idle;
+            // Activate when libwebauthn signals it is waiting for user input.
+            // The flag is monotonic within a single ceremony attempt; it is reset
+            // to false when the transport restarts below.
+            match &state {
+                UsbStateInternal::NeedsPin { .. }
+                | UsbStateInternal::PinNotSet { .. }
+                | UsbStateInternal::NeedsUserVerification { .. }
+                | UsbStateInternal::NeedsUserPresence => {
+                    active = true;
+                    pre_active_failures = 0;
                 }
                 _ => {}
+            }
+
+            match state {
+                UsbStateInternal::Completed(_) => {
+                    tracing::debug!("USB current state: {state:?}");
+                    tx.send(state.clone()).await.map_err(|_| {
+                        CredentialServiceError::Internal(
+                            "USB state channel receiver closed prematurely".to_string(),
+                        )
+                    })?;
+                    break Ok(());
+                }
+
+                // Catch terminating errors first. Doesn't matter if the user was already engaged
+                // or not. We have to terminate either way.
+                UsbStateInternal::Failed(ref err) if super::is_ceremony_terminating(err) => {
+                    if state_changed {
+                        tracing::debug!("USB current state: {state:?}");
+                        tx.send(UsbStateInternal::Failed(err.clone()))
+                            .await
+                            .map_err(|_| {
+                                CredentialServiceError::Internal(
+                                    "USB state channel receiver closed prematurely".to_string(),
+                                )
+                            })?;
+                    }
+                    break Err(err.clone());
+                }
+
+                // Active non-terminating failure: the user was already engaged, surface
+                // the error via the Restarting signal so the UI navigates back to
+                // start_page.
+                // Reset active here only: the other Failed arms either break
+                // (so active is moot) or reach this arm with active already false.
+                UsbStateInternal::Failed(err) if active => {
+                    let reason = match err {
+                        CredentialServiceError::NoCredentials => {
+                            TransportRestartReason::NoCredentials
+                        }
+                        CredentialServiceError::PinAttemptsExhausted => {
+                            TransportRestartReason::PinAttemptsExhausted
+                        }
+                        _ => TransportRestartReason::Interrupted,
+                    };
+                    tracing::warn!(?err, "USB authenticator error, restarting transport");
+                    let _ = tx.send(UsbStateInternal::Restarting(reason)).await;
+                    active = false;
+                    state = UsbStateInternal::Idle;
+                }
+
+                // Pre-active non-terminating failure: the device errored before the user
+                // touched it. Restart silently without any UI notification, but give up
+                // after MAX_PRE_ACTIVE_FAILURES in a row.
+                UsbStateInternal::Failed(err) => {
+                    pre_active_failures += 1;
+                    if pre_active_failures >= super::MAX_PRE_ACTIVE_FAILURES {
+                        tracing::warn!(
+                            ?err,
+                            "USB failed {pre_active_failures} times before user interaction, giving up"
+                        );
+                        let err = CredentialServiceError::UnrecoverableTransportError;
+                        tx.send(UsbStateInternal::Failed(err.clone()))
+                            .await
+                            .map_err(|_| {
+                                CredentialServiceError::Internal(
+                                    "USB state channel receiver closed prematurely".to_string(),
+                                )
+                            })?;
+                        break Err(err);
+                    }
+                    tracing::debug!(?err, "USB pre-active error, restarting silently");
+                    state = UsbStateInternal::Idle;
+                }
+
+                // All other state changes are sent, if they are 'new'
+                _ => {
+                    if state_changed {
+                        tracing::debug!("USB current state: {state:?}");
+                        tx.send(state.clone()).await.map_err(|_| {
+                            CredentialServiceError::Internal(
+                                "USB state channel receiver closed prematurely".to_string(),
+                            )
+                        })?;
+                    }
+                }
             }
         }
     }
@@ -572,7 +644,7 @@ pub(super) enum UsbStateInternal {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 /// Used to share public state between  credential service and UI.
@@ -627,7 +699,7 @@ pub enum UsbState {
 
     /// The ceremony was interrupted by a non-terminating error and the transport
     /// is restarting. The UI should navigate back to the start page.
-    Restarting,
+    Restarting(TransportRestartReason),
 }
 
 impl From<UsbStateInternal> for UsbState {
@@ -685,7 +757,7 @@ impl From<UsbStateInternal> for UsbState {
                 }
             }
             UsbStateInternal::Failed(err) => UsbState::Failed(err),
-            UsbStateInternal::Restarting => UsbState::Restarting,
+            UsbStateInternal::Restarting(reason) => UsbState::Restarting(reason),
         }
     }
 }
@@ -723,20 +795,24 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(CredentialServiceError::AuthenticatorError) => {
                 BackgroundEvent::ErrorAuthenticator
             }
-            UsbState::Failed(CredentialServiceError::NoCredentials) => {
-                BackgroundEvent::ErrorNoCredentials
-            }
             UsbState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
-            }
-            UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
-                BackgroundEvent::ErrorAuthenticator
             }
             UsbState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
                 BackgroundEvent::ErrorCancelled
             }
-            UsbState::Failed(CredentialServiceError::Internal(_)) => BackgroundEvent::ErrorInternal,
-            UsbState::Restarting => BackgroundEvent::UsbRestarting,
+            UsbState::Failed(CredentialServiceError::Internal(_))
+            | UsbState::Failed(CredentialServiceError::NoCredentials)
+            | UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
+                BackgroundEvent::ErrorInternal
+            }
+            // USB stopped for this request; the UI stops offering it.
+            UsbState::Failed(CredentialServiceError::UnrecoverableTransportError) => {
+                BackgroundEvent::UsbRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }
+            }
+            UsbState::Restarting(reason) => BackgroundEvent::UsbRestarting { reason: *reason },
         }
     }
 }

@@ -240,6 +240,31 @@ impl CredentialsUiWindow {
             }
         ));
 
+        // A transport gave up mid-request. If the user is on its page, go back to
+        // start_page, where the remaining transports are.
+        view_model.connect_hybrid_transport_available_notify(clone!(
+            #[weak]
+            stack,
+            move |vm| {
+                if !vm.hybrid_transport_available()
+                    && stack.visible_child_name().as_deref() == Some("hybrid_qr")
+                {
+                    stack.set_visible_child_name("start_page");
+                }
+            }
+        ));
+        view_model.connect_security_key_transport_available_notify(clone!(
+            #[weak]
+            stack,
+            move |vm| {
+                if !vm.security_key_transport_available()
+                    && stack.visible_child_name().as_deref() == Some("usb_or_nfc")
+                {
+                    stack.set_visible_child_name("start_page");
+                }
+            }
+        ));
+
         view_model.connect_completed_notify(clone!(
             #[weak]
             stack,
