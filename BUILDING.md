@@ -217,12 +217,11 @@ feature_gui            enabled                  [enabled, disabled,      Whether
                                                  auto]
 feature_web_extension  enabled                  [enabled, disabled,      Whether to build the web extension
                                                  auto]
-profile                default                  [default, development]   The build profile for Credential Manager. One
-                                                                         of "default" or "development".
+profile                release                  [release, development]   The build profile for the targets. The
+                                                                         `development` profile also allows disabling
+                                                                         some security checks for easier development.
 ```
 
-
-> TODO: rename `default` profile to `release` to reduce confusion.
 See [Meson documentation on feature options][meson-features-doc] for more information on the values
 for the `feature_*` options.
 

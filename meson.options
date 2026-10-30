@@ -3,9 +3,9 @@
 option(
   'profile',
   type: 'combo',
-  choices: ['default', 'development'],
-  value: 'default',
-  description: 'The build profile for Credential Manager. One of "default" or "development".',
+  choices: ['release', 'development'],
+  value: 'release',
+  description: 'The build profile for the targets. The `development` profile also allows disabling some security checks for easier development.',
 )
 option(
   'cargo_home',
@@ -30,26 +30,26 @@ option(
   'feature_daemon',
   type: 'feature',
   value: 'auto',
-  description: 'Whether to build the credentialsd daemon'
+  description: 'Whether to build the credentialsd daemon',
 )
 
 option(
   'feature_demo_client',
   type: 'feature',
   value: 'auto',
-  description: 'Whether to build the demo client'
+  description: 'Whether to build the demo client',
 )
 
 option(
   'feature_gui',
   type: 'feature',
   value: 'enabled',
-  description: 'Whether to build the credentialsd-ui GUI'
+  description: 'Whether to build the credentialsd-ui GUI',
 )
 
 option(
   'feature_web_extension',
   type: 'feature',
   value: 'enabled',
-  description: 'Whether to build the web extension'
+  description: 'Whether to build the web extension',
 )
