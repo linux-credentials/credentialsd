@@ -199,28 +199,34 @@ There are a few Meson options to control the build that may be useful for packag
 
 > meson configure
 # ...
-Project options    Default Value        Possible Values      Description
------------------  -------------        ---------------      -----------
-cargo_home                                                   The directory to
-                                                             store files
-                                                             downloaded by
-                                                             Cargo
-cargo_offline      false                [true, false]        Whether to
-                                                             perform an
-                                                             offline build
-                                                             with Cargo.
-                                                             Defaults to false
-                                                             to download
-                                                             crates from
-                                                             registries.
-profile            default              [default,            The build profile
-                                         development]        for Credential
-                                                             Manager. One of
-                                                             "default" or
-                                                             "development".
+Project options        Default Value            Possible Values          Description
+-----------------      -------------            ---------------          -----------
+cargo_home                                                               The directory to store files downloaded by
+                                                                         Cargo
+cargo_locked           false                    [True, False]            Whether Cargo.lock will be used without
+                                                                         modification. Defaults to false to
+                                                                         automatically resolve dependencies.
+cargo_offline          false                    [True, False]            Whether to perform an offline build with
+                                                                         Cargo. Defaults to false to download crates
+                                                                         from registries.
+feature_daemon         auto                     [enabled, disabled,      Whether to build the credentialsd daemon
+                                                 auto]
+feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client
+                                                 auto]
+feature_gui            enabled                  [enabled, disabled,      Whether to build the credentialsd-ui GUI
+                                                 auto]
+feature_web_extension  enabled                  [enabled, disabled,      Whether to build the web extension
+                                                 auto]
+profile                default                  [default, development]   The build profile for Credential Manager. One
+                                                                         of "default" or "development".
 ```
 
+
 > TODO: rename `default` profile to `release` to reduce confusion.
+See [Meson documentation on feature options][meson-features-doc] for more information on the values
+for the `feature_*` options.
+
+[meson-features-doc]: https://mesonbuild.com/Build-options.html#features
 
 # Running Tests
 
