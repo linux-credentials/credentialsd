@@ -195,50 +195,40 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
                         let client_pin_tx = client_pin_tx.clone();
                         let set_pin_tx = set_pin_tx.clone();
                         let cred_selector_tx = cred_selector_tx.clone();
-                        let stream =
-                            svc.lock()
-                                .await
-                                .start_discovery()
-                                .await
-                                .map(move |device_update| {
-                                    match &device_update {
-                                        DeviceStateUpdate::Nfc(NfcState::NeedsPin {
-                                            pin_tx,
-                                            ..
-                                        }) => {
-                                            *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                        }
 
-                                        DeviceStateUpdate::Usb(UsbState::NeedsPin {
-                                            pin_tx,
-                                            ..
-                                        }) => {
-                                            *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                        }
-                                        DeviceStateUpdate::Nfc(NfcState::PinNotSet {
-                                            pin_tx,
-                                            ..
-                                        }) => {
-                                            *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                        }
+                        let discovery_stream = match svc.lock().await.start_discovery().await {
+                            Ok(s) => s,
+                            Err(err) => {
+                                tracing::error!(%err, "Failed to start discovery");
+                                break;
+                            }
+                        };
+                        let stream = discovery_stream.map(move |device_update| {
+                            match &device_update {
+                                DeviceStateUpdate::Nfc(NfcState::NeedsPin { pin_tx, .. }) => {
+                                    *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                }
 
-                                        DeviceStateUpdate::Usb(UsbState::PinNotSet {
-                                            pin_tx,
-                                            ..
-                                        }) => {
-                                            *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
-                                        }
-                                        DeviceStateUpdate::Usb(UsbState::SelectingCredential {
-                                            cred_tx,
-                                            ..
-                                        }) => {
-                                            *cred_selector_tx.lock().unwrap() =
-                                                Some(cred_tx.clone());
-                                        }
-                                        _ => {}
-                                    }
-                                    device_update.into()
-                                });
+                                DeviceStateUpdate::Usb(UsbState::NeedsPin { pin_tx, .. }) => {
+                                    *client_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                }
+                                DeviceStateUpdate::Nfc(NfcState::PinNotSet { pin_tx, .. }) => {
+                                    *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                }
+
+                                DeviceStateUpdate::Usb(UsbState::PinNotSet { pin_tx, .. }) => {
+                                    *set_pin_tx.lock().unwrap() = Some(pin_tx.clone());
+                                }
+                                DeviceStateUpdate::Usb(UsbState::SelectingCredential {
+                                    cred_tx,
+                                    ..
+                                }) => {
+                                    *cred_selector_tx.lock().unwrap() = Some(cred_tx.clone());
+                                }
+                                _ => {}
+                            }
+                            device_update.into()
+                        });
                         let flow = flow.clone();
                         forward_background_event_stream(flow, stream);
                     }
@@ -458,8 +448,11 @@ mod tests {
 
         async fn start_discovery(
             &self,
-        ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
-            Box::pin(futures_lite::stream::empty())
+        ) -> Result<
+            Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>,
+            CredentialServiceError,
+        > {
+            Ok(Box::pin(futures_lite::stream::empty()))
         }
     }
 

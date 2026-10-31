@@ -161,7 +161,10 @@ pub trait ManageDevice {
     async fn cancel_request(&self, request_id: RequestId);
     async fn start_discovery(
         &self,
-    ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>;
+    ) -> Result<
+        Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>,
+        CredentialServiceError,
+    >;
     fn get_transports(&self) -> Vec<Transport>;
 }
 
@@ -329,7 +332,18 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
 
     async fn start_discovery(
         &self,
-    ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>> {
+    ) -> Result<
+        Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>,
+        CredentialServiceError,
+    > {
+        // TODO: Change this API so that this can't happen. Make a separate
+        // struct that is returned by init_request, and put this method on it.
+        if self.ctx.lock().unwrap().is_none() {
+            return Err(CredentialServiceError::Internal(
+                "StartDiscovery called without initialization".to_string(),
+            ));
+        }
+
         // Start exactly what detect_transports() reported to the UI.
         let transports = self
             .ctx
@@ -363,7 +377,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 .boxed();
             selected_transports.push(hybrid);
         }
-        futures::stream::select_all(selected_transports).boxed()
+        Ok(futures::stream::select_all(selected_transports).boxed())
     }
 
     fn get_transports(&self) -> Vec<Transport> {
@@ -642,9 +656,11 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use credentialsd_common::model::TransportRestartReason;
     use std::time::Duration;
+
+    use credentialsd_common::model::TransportRestartReason;
+
+    use super::*;
 
     // Mock handlers for testing
     #[derive(Debug)]
@@ -1794,5 +1810,16 @@ mod tests {
         assert!(!token.is_cancelled());
 
         service.cancel_request(id).await;
+    }
+
+    #[tokio::test]
+    async fn test_start_discovery_fails_without_init() {
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, MockUsbHandler);
+        let result = service.start_discovery().await;
+
+        let Err(CredentialServiceError::Internal(msg)) = result else {
+            panic!("Expected failure");
+        };
+        assert_eq!(msg, "StartDiscovery called without initialization");
     }
 }
