@@ -5,7 +5,10 @@ pub mod usb;
 use std::{
     fmt::{Debug, Display},
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     task::Poll,
 };
 
@@ -90,6 +93,8 @@ pub enum CredentialServiceError {
     /// interacted with it, and gave up for the rest of this request. The ceremony
     /// continues on the remaining transports.
     UnrecoverableTransportError,
+    /// The caller requested cancellation.
+    RequestCancelled,
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
@@ -106,6 +111,7 @@ impl Display for CredentialServiceError {
             Self::PinAttemptsExhausted => f.write_str("PinAttemptsExhausted"),
             Self::NonTerminatingCancellation => f.write_str("NonTerminatingCancellation"),
             Self::UnrecoverableTransportError => f.write_str("UnrecoverableTransportError"),
+            Self::RequestCancelled => f.write_str("RequestCancelled"),
             Self::Internal(s) => write!(f, "InternalError: {s}"),
         }
     }
@@ -157,22 +163,14 @@ pub trait ManageDevice {
         &self,
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    ) -> Result<(RequestId, CancellationToken), CredentialServiceError>;
-    async fn cancel_request(&self, request_id: RequestId);
-    async fn start_discovery(
-        &self,
-    ) -> Result<
-        Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>,
-        CredentialServiceError,
-    >;
+        cancellation_token: CancellationToken,
+    ) -> Result<RequestId, CredentialServiceError>;
     fn get_transports(&self) -> Vec<Transport>;
 }
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
-    /// Current request and channel to respond to caller.
-    ctx: Arc<Mutex<Option<RequestContext>>>,
-
+    is_request_in_progress: AtomicBool,
     hybrid_handler: Mutex<H>,
     nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
@@ -183,8 +181,7 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
 {
     pub fn new(hybrid_handler: H, nfc_handler: N, usb_handler: U) -> Self {
         Self {
-            ctx: Arc::new(Mutex::new(None)),
-
+            is_request_in_progress: AtomicBool::new(false),
             hybrid_handler: Mutex::new(hybrid_handler),
             nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
@@ -197,8 +194,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
 {
     async fn get_hybrid_credential(
         &self,
+        ctx: &Arc<Mutex<Option<RequestContext>>>,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
+        let guard = ctx.lock().unwrap();
         if let Some(RequestContext {
             ref request,
             ref cancellation,
@@ -210,10 +208,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .lock()
                 .unwrap()
                 .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
             Box::pin(HybridStateStream {
                 inner: stream,
-                ctx,
+                ctx: ctx.clone(),
                 cancellation_token: cancellation.clone(),
             })
         } else {
@@ -224,8 +221,11 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
-    async fn get_usb_credential(&self) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
+    async fn get_usb_credential(
+        &self,
+        ctx: &Arc<Mutex<Option<RequestContext>>>,
+    ) -> Pin<Box<dyn Stream<Item = UsbState> + Send + 'static>> {
+        let guard = ctx.lock().unwrap();
         if let Some(RequestContext {
             ref request,
             ref cancellation,
@@ -237,10 +237,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .lock()
                 .unwrap()
                 .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
             Box::pin(UsbStateStream {
                 inner: stream,
-                ctx,
+                ctx: ctx.clone(),
                 cancellation_token: cancellation.clone(),
             })
         } else {
@@ -251,8 +250,11 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
         }
     }
 
-    async fn get_nfc_credential(&self) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
+    async fn get_nfc_credential(
+        &self,
+        ctx: &Arc<Mutex<Option<RequestContext>>>,
+    ) -> Pin<Box<dyn Stream<Item = NfcState> + Send + 'static>> {
+        let guard = ctx.lock().unwrap();
         if let Some(RequestContext {
             ref request,
             ref cancellation,
@@ -264,10 +266,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
                 .lock()
                 .unwrap()
                 .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
             Box::pin(NfcStateStream {
                 inner: stream,
-                ctx,
+                ctx: ctx.clone(),
                 cancellation_token: cancellation.clone(),
             })
         } else {
@@ -287,47 +288,60 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         &self,
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
-    ) -> Result<(RequestId, CancellationToken), CredentialServiceError> {
-        let supported_transports = supported_transports(&available_transports().await);
-        let mut cred_request = self.ctx.lock().unwrap();
-        if cred_request.is_some() {
-            Err(CredentialServiceError::Internal(
-                "Already a request in progress.".to_string(),
-            ))
-        } else {
-            // Generate non-zero request ID
-            let request_id: RequestId = rand::random_range(1..=u32::MAX);
-            let cancellation = CancellationToken::new();
-            // TODO: Spawn a task here that will listen to the signals from ui_control_client.
-            // Move the get_*_credential(), etc. from gateway to here.
-            let ctx = RequestContext {
-                request: request.clone(),
-                response_channel: tx,
-                request_id,
-                cancellation: cancellation.clone(),
-                transports: supported_transports,
-            };
-            _ = cred_request.insert(ctx);
-            Ok((request_id, cancellation))
-        }
-    }
-
-    async fn cancel_request(&self, request_id: RequestId) {
-        let mut guard = self.ctx.lock().expect("Lock to be taken");
-        if let Some(ctx) = guard.take_if(|ctx| ctx.request_id == request_id)
-            && request_id == ctx.request_id
+        cancellation_token: CancellationToken,
+    ) -> Result<RequestId, CredentialServiceError> {
+        if self
+            .is_request_in_progress
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
         {
-            tracing::debug!("Cancelling request {request_id}");
-            ctx.cancellation.cancel();
-
-            // It's fine if the requestor is no longer listening for the response.
-            // TODO: create Cancelled variant
-            _ = ctx
-                .response_channel
-                .send(Err(CredentialServiceError::Internal(format!(
-                    "Cancelled request {request_id}."
-                ))));
+            return Err(CredentialServiceError::Internal(
+                "Already a request in progress.".to_string(),
+            ));
         }
+
+        let supported_transports = supported_transports(&available_transports().await);
+
+        // Generate non-zero request ID
+        let request_id: RequestId = rand::random_range(1..=u32::MAX);
+        let ctx = RequestContext {
+            request: request.clone(),
+            response_channel: tx,
+            request_id,
+            cancellation: cancellation_token,
+            transports: supported_transports,
+        };
+        _ = cred_request.insert(ctx);
+        Ok(request_id)
+    }
+}
+
+pub struct Ceremony<'a, H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> {
+    /// Current request and channel to respond to caller.
+    ctx: Arc<Mutex<Option<RequestContext>>>,
+
+    request_id:
+    svc: &'a CredentialService<H, N, U>,
+
+    /// Used to signal to the manager that this ceremony is ending
+    completion_signal: oneshot::Receiver<()>,
+}
+
+impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Ceremony<'_, H, N, U> {
+    async fn cancel_request(self, request_id: RequestId) {
+        let mut guard = self.ctx.lock().expect("Lock to be taken");
+        let Some(ctx) = guard.take() else {
+            // request cancelled multiple times, no-op;
+            return;
+        };
+        tracing::debug!(request_id = %ctx.request_id, "Cancelling request");
+        ctx.cancellation.cancel();
+
+        // It's fine if the requestor is no longer listening for the response.
+        // TODO: create Cancelled variant
+        _ = ctx
+            .response_channel
+            .send(Err(CredentialServiceError::RequestCancelled));
     }
 
     async fn start_discovery(
@@ -371,7 +385,8 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         }
         if transports.contains(&Transport::HybridQr) {
             let hybrid = self
-                .get_hybrid_credential()
+                .svc
+                .get_hybrid_credential(&self.ctx)
                 .await
                 .map(DeviceStateUpdate::from)
                 .boxed();
@@ -387,6 +402,10 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             .as_ref()
             .map_or(Vec::new(), |x| x.transports.to_vec())
     }
+}
+
+impl Drop for Ceremony<'_, H, N, U> {
+
 }
 
 pub struct HybridStateStream<H> {
@@ -594,6 +613,9 @@ pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
         // The transport gave up for this request; the others keep running.
         CredentialServiceError::UnrecoverableTransportError => false,
 
+        // Caller requested cancellation, stop the ceremony.
+        CredentialServiceError::RequestCancelled => true,
+
         // Transient internal errors: do not kill the ceremony.
         CredentialServiceError::Internal(_) => false,
     }
@@ -656,7 +678,7 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_matches, time::Duration};
 
     use credentialsd_common::model::TransportRestartReason;
 
@@ -775,30 +797,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_request_returns_token_and_id() {
+    async fn test_init_request_returns_id() {
         let service = CredentialService::new(MockHybridHandler, MockNfcHandler, MockUsbHandler);
         let (tx, _rx) = oneshot::channel();
         let request = create_test_request().await;
+        let cancellation_token = CancellationToken::new();
 
-        let result = service.init_request(&request, tx).await;
+        let result = service.init_request(&request, tx, cancellation_token).await;
 
         assert!(result.is_ok());
-        let (request_id, cancellation_token) = result.unwrap();
+        let request_id = result.unwrap();
         assert!(request_id > 0);
-        assert!(!cancellation_token.is_cancelled());
     }
 
     #[tokio::test]
     async fn test_cancel_request_triggers_cancellation() {
         let service = CredentialService::new(MockHybridHandler, MockNfcHandler, MockUsbHandler);
-        let (tx, _rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let request = create_test_request().await;
 
-        let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
-        assert!(!cancellation_token.is_cancelled());
+        let cancellation_token = CancellationToken::new();
+        let request_id = service
+            .init_request(&request, tx, cancellation_token.child_token())
+            .await
+            .unwrap();
 
         service.cancel_request(request_id).await;
-        assert!(cancellation_token.is_cancelled());
+        assert!(service.ctx.lock().unwrap().is_none());
+        assert_matches!(
+            rx.await.unwrap().unwrap_err(),
+            CredentialServiceError::RequestCancelled
+        );
     }
 
     #[tokio::test]
@@ -840,11 +869,15 @@ mod tests {
         let request = create_test_request().await;
 
         // First request should succeed
-        let result1 = service.init_request(&request, tx1).await;
+        let result1 = service
+            .init_request(&request, tx1, CancellationToken::new())
+            .await;
         assert!(result1.is_ok());
 
         // Second concurrent request should fail
-        let result2 = service.init_request(&request, tx2).await;
+        let result2 = service
+            .init_request(&request, tx2, CancellationToken::new())
+            .await;
         assert!(result2.is_err());
         assert!(
             result2
@@ -1004,7 +1037,11 @@ mod tests {
         let request = create_test_request().await;
         let (tx, _rx) = oneshot::channel();
 
-        let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let cancellation_token = CancellationToken::new();
+        let request_id = service
+            .init_request(&request, tx, cancellation_token.child_token())
+            .await
+            .unwrap();
 
         // Token should not be cancelled initially
         assert!(!cancellation_token.is_cancelled());
@@ -1027,7 +1064,11 @@ mod tests {
         let request = create_test_request().await;
         let (tx, _rx) = oneshot::channel();
 
-        let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let cancellation_token = CancellationToken::new();
+        let request_id = service
+            .init_request(&request, tx, cancellation_token)
+            .await
+            .unwrap();
 
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
@@ -1092,7 +1133,11 @@ mod tests {
         let request = create_test_request().await;
         let (tx, _rx) = oneshot::channel();
 
-        let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let cancellation_token = CancellationToken::new();
+        let request_id = service
+            .init_request(&request, tx, cancellation_token)
+            .await
+            .unwrap();
 
         // Cancel with a different ID (should be a no-op)
         let wrong_id = request_id.wrapping_add(1);
@@ -1165,7 +1210,11 @@ mod tests {
         let request = create_test_request().await;
         let (tx, _rx) = oneshot::channel();
 
-        let (request_id, cancellation_token) = service.init_request(&request, tx).await.unwrap();
+        let cancellation_token = CancellationToken::new();
+        let request_id = service
+            .init_request(&request, tx, cancellation_token)
+            .await
+            .unwrap();
 
         let mut usb_stream = service.get_usb_credential().await;
         let mut hybrid_stream = service.get_hybrid_credential().await;
