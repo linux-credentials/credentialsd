@@ -176,7 +176,7 @@ $XDP_BINARY &
 
 # Run the server, with debug logging enabled, and configure the server to trust your xdg-desktop-portal
 export CREDSD_TRUSTED_CALLERS=$XDP_BINARY
-export RUST_LOG=credentialsd=debug,libwebauthn=debug
+export RUST_LOG=credentialsd=debug,libwebauthn=debug,pxp=debug
 $CREDSD_REPO/build/credentialsd/src/credentialsd &
 
 # Run the backend UI
