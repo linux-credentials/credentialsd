@@ -329,7 +329,7 @@ async fn run_hybrid_ceremony(
     };
 
     tracing::debug!("Polling hybrid channel for updates.");
-    match cancellation
+    let result = match cancellation
         .run_until_cancelled(wait_for_response_fut)
         .await
     {
@@ -338,7 +338,11 @@ async fn run_hybrid_ceremony(
             tracing::debug!("Hybrid handler cancelled, stopping processing");
             Err(CredentialServiceError::NonTerminatingCancellation)
         }
-    }
+    };
+
+    // Send the tunnel Shutdown so the phone does not show an error.
+    channel.close().await;
+    result
 }
 
 async fn handle_hybrid_updates(
