@@ -107,15 +107,14 @@ impl HybridHandler for InternalHybridHandler {
                         let _ = tx.send(HybridStateInternal::Completed(auth_response)).await;
                         break;
                     }
+                    Err(CredentialServiceError::NonTerminatingCancellation) => {
+                        tracing::trace!("Hybrid handler cancelled, exiting silently");
+                        break;
+                    }
                     Err(err) if super::is_ceremony_terminating(&err) => {
                         // Terminating errors (CredentialExcluded, NonTerminatingCancellation
                         // from a winning transport, etc.) stop the loop.
-                        // NonTerminatingCancellation exits silently; others surface as Failed.
-                        if !matches!(err, CredentialServiceError::NonTerminatingCancellation) {
-                            let _ = tx.send(HybridStateInternal::Failed(err)).await;
-                        } else {
-                            tracing::debug!("Hybrid handler cancelled, exiting silently");
-                        }
+                        let _ = tx.send(HybridStateInternal::Failed(err)).await;
                         break;
                     }
                     Err(err) => {
