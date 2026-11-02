@@ -209,7 +209,7 @@ cargo_locked           false                    [True, False]            Whether
 cargo_offline          false                    [True, False]            Whether to perform an offline build with
                                                                          Cargo. Defaults to false to download crates
                                                                          from registries.
-feature_daemon         auto                     [enabled, disabled,      Whether to build the credentialsd daemon
+feature_daemon         enabled                  [enabled, disabled,      Whether to build the credentialsd daemon
                                                  auto]
 feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client
                                                  auto]
