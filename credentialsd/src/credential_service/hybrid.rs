@@ -8,9 +8,9 @@ use libwebauthn::{
     proto::CtapError,
     transport::{
         Channel, ChannelSettings, Device,
-        cable::{
-            channel::{CableUpdate, CableUxUpdate},
-            qr_code_device::{CableQrCodeDevice, CableTransports, QrCodeOperationHint},
+        hybrid::{
+            channel::{HybridUxUpdate, PxpUpdate},
+            qr_code_device::{PxpQrCodeDevice, PxpTransports, QrCodeOperationHint},
         },
     },
     webauthn::{WebAuthn, error::WebAuthnError},
@@ -65,25 +65,25 @@ impl HybridHandler for InternalHybridHandler {
                 .map(|s| s.to_lowercase() == "true")
                 .unwrap_or_default()
             {
-                CableTransports::CloudAssistedOrLocal
+                PxpTransports::CloudAssistedOrLocal
             } else {
-                CableTransports::CloudAssistedOnly
+                PxpTransports::CloudAssistedOnly
             };
 
             // Outer retry loop: re-issues QR on non-terminating failures.
-            // Each iteration creates a fresh CableQrCodeDevice (the previous one
+            // Each iteration creates a fresh PxpQrCodeDevice (the previous one
             // is consumed by channel()), so the old QR secret is discarded.
             loop {
-                let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
+                let mut device = match PxpQrCodeDevice::new_transient(hint, hybrid_transports) {
                     Ok(device) => device,
                     Err(err) => {
-                        tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                        tracing::error!("Failed to create hybrid QR code device: {:?}", err);
                         // Device creation failure cannot be retried meaningfully —
                         // break to avoid a tight error loop.
                         let _ = tx
                             .send(HybridStateInternal::Failed(
                                 CredentialServiceError::Internal(format!(
-                                    "Failed to create caBLE device: {err:?}"
+                                    "Failed to create hybrid device: {err:?}"
                                 )),
                             ))
                             .await;
@@ -93,7 +93,7 @@ impl HybridHandler for InternalHybridHandler {
 
                 let qr_code = device.qr_code.to_string();
                 if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
-                    tracing::error!("Failed to send caBLE update: {:?}", err);
+                    tracing::error!("Failed to send hybrid update: {:?}", err);
                     break;
                 }
 
@@ -244,14 +244,14 @@ impl From<&HybridState> for BackgroundEvent {
     }
 }
 
-/// Runs a single hybrid ceremony attempt: opens the caBLE channel, spawns the UX
+/// Runs a single hybrid ceremony attempt: opens the hybrid channel, spawns the UX
 /// update forwarder, and drives the `webauthn_make_credential` / `webauthn_get_assertion`
 /// retry loop until a terminal result or cancellation.
 ///
 /// Returns `Ok(CredentialResponse)` on success, or `Err(CredentialServiceError)` on
 /// failure. `NonTerminatingCancellation` is returned when the cancellation token fires.
 async fn run_hybrid_ceremony(
-    device: &mut CableQrCodeDevice,
+    device: &mut PxpQrCodeDevice,
     request: &CredentialRequest,
     tx: &Sender<HybridStateInternal>,
     cancellation: CancellationToken,
@@ -329,7 +329,7 @@ async fn run_hybrid_ceremony(
     };
 
     tracing::debug!("Polling hybrid channel for updates.");
-    match cancellation
+    let result = match cancellation
         .run_until_cancelled(wait_for_response_fut)
         .await
     {
@@ -338,31 +338,35 @@ async fn run_hybrid_ceremony(
             tracing::debug!("Hybrid handler cancelled, stopping processing");
             Err(CredentialServiceError::NonTerminatingCancellation)
         }
-    }
+    };
+
+    // Send the tunnel Shutdown so the phone does not show an error.
+    channel.close().await;
+    result
 }
 
 async fn handle_hybrid_updates(
     state_sender: &Sender<HybridStateInternal>,
-    mut ux_update_receiver: broadcast::Receiver<CableUxUpdate>,
+    mut ux_update_receiver: broadcast::Receiver<HybridUxUpdate>,
 ) {
     while let Ok(msg) = ux_update_receiver.recv().await {
         debug!(?msg, "Received hybrid update");
         let new_state: Option<HybridStateInternal> = match msg {
             // Our UI already indicates this and authenticators over hybrid also generally indicate
-            CableUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => None,
-            CableUxUpdate::UvUpdate(uv_update) => {
+            HybridUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => None,
+            HybridUxUpdate::UvUpdate(uv_update) => {
                 error!(
                     "Received unexpected UV update in hybrid handler: {:?}",
                     uv_update
                 );
                 None
             }
-            CableUxUpdate::CableUpdate(cable_update) => match cable_update {
-                CableUpdate::ProximityCheck => None,
-                CableUpdate::Connecting => Some(HybridStateInternal::Connecting),
-                CableUpdate::Authenticating => Some(HybridStateInternal::Connecting),
-                CableUpdate::Connected => Some(HybridStateInternal::Connected),
-                CableUpdate::Error(transport_error) => {
+            HybridUxUpdate::PxpUpdate(pxp_update) => match pxp_update {
+                PxpUpdate::ProximityCheck => None,
+                PxpUpdate::Connecting => Some(HybridStateInternal::Connecting),
+                PxpUpdate::Authenticating => Some(HybridStateInternal::Connecting),
+                PxpUpdate::Connected => Some(HybridStateInternal::Connected),
+                PxpUpdate::Error(transport_error) => {
                     error!(?transport_error, "Hybrid transport error");
                     Some(HybridStateInternal::Failed(
                         CredentialServiceError::AuthenticatorError,

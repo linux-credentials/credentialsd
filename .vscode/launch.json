@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/build/credentialsd/src/credentialsd",
             "args": [],
             "env": {
-                "RUST_LOG": "credentialsd=debug,libwebauthn=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug",
+                "RUST_LOG": "credentialsd=debug,libwebauthn=debug,pxp=debug,libwebauthn::webauthn=debug,libwebauthn=warn,libwebauthn::proto::ctap2::preflight=debug,libwebauthn::transport::channel=debug,zbus::object_server::debug,zbus=debug",
                 "RUST_BACKTRACE": "1",
                 "CREDSD_TRUSTED_CALLERS": "/usr/local/libexec/xdg-desktop-portal,/usr/bin/python3.14,${workspaceFolder}/../../portal/xdg-desktop-portal/build/desktop-portal/xdg-desktop-portal",
                 "CREDSD_TRUSTED_APP_IDS": "xyz.iinuwa.credentialsd.DemoCredentialsUi",

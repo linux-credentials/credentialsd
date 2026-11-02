@@ -318,7 +318,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             id: String::from("0"),
             transport: Transport::Usb,
         }];
-        if libwebauthn::transport::cable::is_available().await {
+        if libwebauthn::transport::hybrid::is_available().await {
             devices.push(Device {
                 id: String::from("1"),
                 transport: Transport::HybridQr,
