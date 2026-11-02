@@ -9,6 +9,9 @@
 - daemon: Fix all subsequent requests being rejected after the UI failed to launch.
 - daemon: Don't busy loop polling for NFC devices when NFC is enabled.
 - daemon: Use systemd unit name to determine whether a caller is trusted. (Thank you, @NyCodeGHG!)
+- daemon: Update to libwebauthn 0.11.0, with various PXP and attestation format improvements.
+- daemon: Change to standardized PXP BLE length-prefixed framing.
+- daemon: Send PXP shutdown on close to prevent Android clients from hanging.
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
