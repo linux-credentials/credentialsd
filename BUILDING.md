@@ -222,8 +222,9 @@ profile                release                  [release, development]   The bui
                                                                          some security checks for easier development.
 ```
 
-See [Meson documentation on feature options][meson-features-doc] for more information on the values
-for the `feature_*` options.
+For the `feature_*` options, `auto` means that the feature will be enabled if its dependencies are
+discovered, and disabled if they are not: missing dependencies will not fail the build. See
+[Meson documentation on feature options][meson-features-doc] for more information on those values.
 
 [meson-features-doc]: https://mesonbuild.com/Build-options.html#features
 
