@@ -209,7 +209,7 @@ cargo_locked           false                    [True, False]            Whether
 cargo_offline          false                    [True, False]            Whether to perform an offline build with
                                                                          Cargo. Defaults to false to download crates
                                                                          from registries.
-feature_daemon         auto                     [enabled, disabled,      Whether to build the credentialsd daemon
+feature_daemon         enabled                  [enabled, disabled,      Whether to build the credentialsd daemon
                                                  auto]
 feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client
                                                  auto]
@@ -222,8 +222,9 @@ profile                release                  [release, development]   The bui
                                                                          some security checks for easier development.
 ```
 
-See [Meson documentation on feature options][meson-features-doc] for more information on the values
-for the `feature_*` options.
+For the `feature_*` options, `auto` means that the feature will be enabled if its dependencies are
+discovered, and disabled if they are not: missing dependencies will not fail the build. See
+[Meson documentation on feature options][meson-features-doc] for more information on those values.
 
 [meson-features-doc]: https://mesonbuild.com/Build-options.html#features
 

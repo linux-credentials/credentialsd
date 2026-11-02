@@ -29,7 +29,7 @@ option(
 option(
   'feature_daemon',
   type: 'feature',
-  value: 'auto',
+  value: 'enabled',
   description: 'Whether to build the credentialsd daemon',
 )
 
