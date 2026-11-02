@@ -17,6 +17,7 @@
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
 - build: Make daemon, credentialsd-ui, demo client and web extension optional
 - build: Rename `default` profile to `release`.
+- daemon: Fix hybrid cancellation handling
 
 # 0.3.1 [2026-09-05]
 
