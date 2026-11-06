@@ -1,7 +1,11 @@
 # [unreleased]
 
+# 0.4.0 [2026-11-05]
+
 ## Improvements
 
+- build: Make daemon, credentialsd-ui, demo client and web extension optional
+- build: Rename `default` profile to `release`.
 - daemon: Don't log error if we get PresenceRequired over hybrid (Thank you, @michaelbeaumont!)
 - daemon: Cancel ceremony if UI disappears (Thank you, @michaelbeaumont!)
 - daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
@@ -12,12 +16,10 @@
 - daemon: Update to libwebauthn 0.11.0, with various PXP and attestation format improvements.
 - daemon: Change to standardized PXP BLE length-prefixed framing.
 - daemon: Send PXP shutdown on close to prevent Android clients from hanging.
+- daemon: Fix hybrid cancellation handling
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
-- build: Make daemon, credentialsd-ui, demo client and web extension optional
-- build: Rename `default` profile to `release`.
-- daemon: Fix hybrid cancellation handling
 
 # 0.3.1 [2026-09-05]
 
