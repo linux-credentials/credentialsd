@@ -102,8 +102,10 @@ method to start the process that hosts the UI Control API.
 
 Credential requests on the Gateway are handled one at a time; if a new request
 comes in, it is immediately rejected, and the client is expected to retry if
-necessary. Currently, clients cannot cancel their own requests; the user has to
-do that via the UI.
+necessary. Clients can cancel their own requests by passing a `request_handle`
+option: the Gateway exports an `org.freedesktop.impl.portal.Request` object at
+that path for the duration of the request, and calling `Close()` on it cancels
+the request and dismisses the UI. Otherwise, the user has to cancel via the UI.
 
 ### `credentialsd/src/credential_service/`
 
