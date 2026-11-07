@@ -1,47 +1,53 @@
-demo_blueprints = custom_target(
-  'demo-blueprints',
-  input: files('window.blp'),
-  output: 'ui',
-  command: [
-    blueprint_compiler,
-    'batch-compile',
-    '@OUTPUT@',
-    '@CURRENT_SOURCE_DIR@',
-    '@INPUT@',
-  ],
-)
+adwaita_dep = dependency('libadwaita-1', version: '>=1.9', required: demo_client_feat)
 
-demo_resources = custom_target(
-  'demo-resource',
-  input: files('resources.gresource.xml'),
-  depend_files: files('style.css'),
-  depfile: 'gresource.deps',
-  output: 'resources.gresource',
-  command: [
-    glib_compile_resources,
-    '--target=@OUTPUT@',
-    '--dependency-file=@DEPFILE@',
-    '--sourcedir=@CURRENT_SOURCE_DIR@',
-    '--sourcedir', demo_blueprints[0],
-    '@INPUT@',
-  ],
-)
+if adwaita_dep.found()
 
-gui_sources = files(
-  '../doc/xyz.iinuwa.credentialsd.Credentials.xml',
-  'cbor.py',
-  'gui.py',
-  'main.py',
-  'util.py',
-  'webauthn.py',
-)
+  demo_blueprints = custom_target(
+    'demo-blueprints',
+    input: files('window.blp'),
+    output: 'ui',
+    command: [
+      blueprint_compiler,
+      'batch-compile',
+      '@OUTPUT@',
+      '@CURRENT_SOURCE_DIR@',
+      '@INPUT@',
+    ],
+  )
 
-custom_target(
-  'demo-gui',
-  input: [gui_sources],
-  # build if explicitly enabled, otherwise, the target must be selected
-  build_by_default: demo_client_feat.enabled(),
-  output: '.',
-  depends: [demo_resources],
-  command: ['cp', '@INPUT@', '@OUTPUT@'],
-)
+  demo_resources = custom_target(
+    'demo-resource',
+    input: files('resources.gresource.xml'),
+    depend_files: files('style.css'),
+    depfile: 'gresource.deps',
+    output: 'resources.gresource',
+    command: [
+      glib_compile_resources,
+      '--target=@OUTPUT@',
+      '--dependency-file=@DEPFILE@',
+      '--sourcedir=@CURRENT_SOURCE_DIR@',
+      '--sourcedir', demo_blueprints[0],
+      '@INPUT@',
+    ],
+  )
+
+  gui_sources = files(
+    '../doc/xyz.iinuwa.credentialsd.Credentials.xml',
+    'cbor.py',
+    'gui.py',
+    'main.py',
+    'util.py',
+    'webauthn.py',
+  )
+
+  custom_target(
+    'demo-gui',
+    input: [gui_sources],
+    # build if explicitly enabled, otherwise, the target must be selected
+    build_by_default: demo_client_feat.enabled(),
+    output: '.',
+    depends: [demo_resources],
+    command: ['cp', '@INPUT@', '@OUTPUT@'],
+  )
+
+endif

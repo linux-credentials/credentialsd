@@ -1,5 +1,9 @@
 # [unreleased]
 
+## Improvements
+
+- build: Don't require libadwaita by default
+
 # 0.4.0 [2026-11-05]
 
 ## Improvements
