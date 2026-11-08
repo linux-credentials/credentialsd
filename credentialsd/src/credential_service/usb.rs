@@ -254,7 +254,7 @@ impl InProcessUsbHandler {
                                 ),
                             ))
                         } else {
-                            Ok(UsbStateInternal::SelectCredential {
+                            Ok(UsbStateInternal::SelectingCredential {
                                 response: get_assertion_response,
                                 cred_tx: cred_tx.clone(),
                             })
@@ -310,7 +310,7 @@ impl InProcessUsbHandler {
                     | UsbStateInternal::NeedsUserPresence => {
                         Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                     }
-                    UsbStateInternal::SelectCredential {
+                    UsbStateInternal::SelectingCredential {
                         ref response,
                         cred_tx: _,
                     } => Self::process_select_credential(response, &mut cred_rx).await,
@@ -559,7 +559,7 @@ pub(super) enum UsbStateInternal {
     NeedsUserPresence,
 
     /// Multiple credentials have been found and the user has to select which to use
-    SelectCredential {
+    SelectingCredential {
         response: GetAssertionResponse,
         cred_tx: mpsc::Sender<String>,
     },
@@ -652,7 +652,7 @@ impl From<UsbStateInternal> for UsbState {
             UsbStateInternal::NeedsUserPresence => UsbState::NeedsUserPresence,
             UsbStateInternal::Completed(_) => UsbState::Completed,
             UsbStateInternal::SelectingDevice(_) => UsbState::SelectingDevice,
-            UsbStateInternal::SelectCredential { response, cred_tx } => {
+            UsbStateInternal::SelectingCredential { response, cred_tx } => {
                 UsbState::SelectingCredential {
                     creds: response
                         .assertions
