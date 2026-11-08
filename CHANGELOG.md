@@ -1,5 +1,11 @@
 # [unreleased]
 
+## Breaking Changes
+
+### UI Controller API
+
+- Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+
 # 0.4.0 [2026-11-05]
 
 ## Improvements
