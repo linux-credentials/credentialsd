@@ -151,7 +151,7 @@ impl InProcessNfcHandler {
                                 ),
                             ))
                         } else {
-                            Ok(NfcStateInternal::SelectCredential {
+                            Ok(NfcStateInternal::SelectingCredential {
                                 response: get_assertion_response,
                                 cred_tx: cred_tx.clone(),
                             })
@@ -203,7 +203,7 @@ impl InProcessNfcHandler {
                     | NfcStateInternal::NeedsUserVerification { .. } => {
                         Self::process_user_interaction(&mut signal_rx, &cred_tx).await
                     }
-                    NfcStateInternal::SelectCredential {
+                    NfcStateInternal::SelectingCredential {
                         ref response,
                         cred_tx: _,
                     } => Self::process_select_credential(response, &mut cred_rx).await,
@@ -449,7 +449,7 @@ pub(super) enum NfcStateInternal {
     NeedsUserVerification { attempts_left: Option<u32> },
 
     /// Multiple credentials have been found and the user has to select which to use
-    SelectCredential {
+    SelectingCredential {
         response: GetAssertionResponse,
         cred_tx: mpsc::Sender<String>,
     },
@@ -532,7 +532,7 @@ impl From<NfcStateInternal> for NfcState {
             }
             NfcStateInternal::Completed(_) => NfcState::Completed,
             NfcStateInternal::Restarting => NfcState::Restarting,
-            NfcStateInternal::SelectCredential { response, cred_tx } => {
+            NfcStateInternal::SelectingCredential { response, cred_tx } => {
                 NfcState::SelectingCredential {
                     creds: response
                         .assertions
