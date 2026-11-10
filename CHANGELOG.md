@@ -1,5 +1,11 @@
 # [unreleased]
 
+## Breaking Changes
+
+### UI Controller API
+
+- Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+
 ## Improvements
 
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)

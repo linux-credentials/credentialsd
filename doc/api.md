@@ -54,6 +54,7 @@ sequenceDiagram
 - (Gateway): Make `origin` and `type` a required method parameter.
 - (Gateway): Flatten nested D-Bus struct with `request_json` on CreateCredential and GetCredential
 - (Gateway): Remove Client Capabilities method from Gateway API until further notice.
+- (UI Controller): Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
 
 ### Improvements
 
@@ -509,9 +510,6 @@ The device needs evidence of user presence (e.g. touch) to release the credentia
 
 ### BackgroundEvent::SelectingCredential
 
-> TODO: field names of Credential type are confusing: "name" is an ID, and
-> "username" is a name. We should flip them.
-
 Multiple credentials have been found and the user has to select which to use
 
 `tag`: `0x13`
@@ -521,8 +519,10 @@ Multiple credentials have been found and the user has to select which to use
 ```
 Credential [a{sv}] {
     id: string. An opaque ID referring to the credential on the device.
-    name: string. A human-readable identifier for the account.
-    username: string. A human-readable name for the account, intended for display. May be empty.
+    name: string. A human-readable identifier for the account, from the WebAuthn
+        `user.name` field, for example, "alice@example.com".
+    display_name: string. A human-readable name for the account, intended for
+        display, from the WebAuthn `user.displayName` field. May be empty.
 }
 ```
 
