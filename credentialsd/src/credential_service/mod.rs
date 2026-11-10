@@ -314,23 +314,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
     async fn get_available_public_key_devices(&self) -> Result<Vec<Device>, ()> {
         // We create the list new for each call, in case someone plugs in
         // an NFC-reader in the middle of an auth-flow
-        let mut devices = vec![Device {
-            id: String::from("0"),
-            transport: Transport::Usb,
-        }];
-        if libwebauthn::transport::hybrid::is_available().await {
-            devices.push(Device {
-                id: String::from("1"),
-                transport: Transport::HybridQr,
-            });
-        }
-        if libwebauthn::transport::nfc::is_nfc_available() {
-            devices.push(Device {
-                id: String::from("2"),
-                transport: Transport::Nfc,
-            });
-        }
-        Ok(devices)
+        Ok(devices_for_transports(&available_transports().await))
     }
 
     async fn start_discovery(
@@ -618,6 +602,26 @@ impl From<GetAssertionResponse> for AuthenticatorResponse {
     }
 }
 
+/// The devices to offer the user for the given available transports, with a
+/// stable ID per transport.
+///
+/// libwebauthn reports Bluetooth availability as both `Ble` and `Hybrid`; only
+/// hybrid (QR code) flows are offered for now.
+fn devices_for_transports(available: &[libwebauthn::Transport]) -> Vec<Device> {
+    [
+        (libwebauthn::Transport::Usb, "0", Transport::Usb),
+        (libwebauthn::Transport::Hybrid, "1", Transport::HybridQr),
+        (libwebauthn::Transport::Nfc, "2", Transport::Nfc),
+    ]
+    .into_iter()
+    .filter(|(available_transport, _, _)| available.contains(available_transport))
+    .map(|(_, id, transport)| Device {
+        id: String::from(id),
+        transport,
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,6 +737,49 @@ mod tests {
                 .expect("Failed to parse request JSON");
 
         CredentialRequest::CreatePublicKeyCredentialRequest(make_credentials_request)
+    }
+
+    #[test]
+    fn devices_for_transports_follow_available_transports() {
+        let ids_and_transports =
+            |available: &[libwebauthn::Transport]| -> Vec<(String, Transport)> {
+                devices_for_transports(available)
+                    .into_iter()
+                    .map(|d| (d.id, d.transport))
+                    .collect()
+            };
+
+        assert_eq!(
+            ids_and_transports(&[libwebauthn::Transport::Usb]),
+            vec![(String::from("0"), Transport::Usb)]
+        );
+        assert_eq!(
+            ids_and_transports(&[
+                libwebauthn::Transport::Usb,
+                libwebauthn::Transport::Ble,
+                libwebauthn::Transport::Hybrid,
+                libwebauthn::Transport::Nfc,
+            ]),
+            vec![
+                (String::from("0"), Transport::Usb),
+                (String::from("1"), Transport::HybridQr),
+                (String::from("2"), Transport::Nfc),
+            ]
+        );
+        // IDs stay the same when a transport in between is unavailable.
+        assert_eq!(
+            ids_and_transports(&[libwebauthn::Transport::Nfc, libwebauthn::Transport::Usb]),
+            vec![
+                (String::from("0"), Transport::Usb),
+                (String::from("2"), Transport::Nfc),
+            ]
+        );
+    }
+
+    #[test]
+    fn devices_for_transports_does_not_offer_ble_alone() {
+        assert!(devices_for_transports(&[libwebauthn::Transport::Ble]).is_empty());
+        assert!(devices_for_transports(&[]).is_empty());
     }
 
     #[tokio::test]
