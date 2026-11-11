@@ -24,6 +24,12 @@ option(
   value: false,
   description: 'Whether to perform an offline build with Cargo. Defaults to false to download crates from registries.',
 )
+option(
+  'enable_core_dumps',
+  type: 'boolean',
+  value: false,
+  description: 'Allow credentialsd-ui to write core dumps, for debugging crashes. Defaults to false because the UI handles PINs typed by the user.',
+)
 
 # Features
 option(

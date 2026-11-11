@@ -1,4 +1,5 @@
 pub const APP_ID: &str = @APP_ID@;
+pub const ENABLE_CORE_DUMPS: bool = @ENABLE_CORE_DUMPS@;
 pub const GETTEXT_PACKAGE: &str = @GETTEXT_PACKAGE@;
 pub const LOCALEDIR: &str = @LOCALEDIR@;
 pub const PKGDATADIR: &str = @PKGDATADIR@;
