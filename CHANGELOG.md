@@ -18,6 +18,7 @@
 - daemon: Allow clients to cancel requests through xdg-desktop-portal.
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
+- daemon: Add an optional in-memory test authenticator for testing without hardware, off by default (`-Dtest_authenticator=true` and `CREDSD_TEST_AUTHENTICATOR=1`, test sites only) (#107)
 
 # 0.4.0 [2026-11-05]
 

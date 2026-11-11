@@ -193,6 +193,25 @@ export GSETTINGS_SCHEMA_DIR=$CREDSD_REPO/build/credentialsd-ui/data
 $CREDSD_REPO/build/credentialsd-ui/src/credentialsd-ui
 ```
 
+## Testing without a security key
+
+For development, credentialsd can offer an in-memory test authenticator as a
+USB security key. It is never built by default:
+
+```shell
+meson setup -Dprofile=development -Dtest_authenticator=true build
+ninja -C build
+CREDSD_TEST_AUTHENTICATOR=1 ./build/credentialsd/src/credentialsd
+```
+
+It is only offered to `https://webauthn.io` and `https://demo.yubico.com`. It
+answers the "touch your key" step and user verification automatically, keeps
+its keys in memory only, and forgets them when credentialsd exits. Do not use
+it for real accounts.
+
+While it is offered, it answers the device selection step instantly, so a real
+security key plugged in at the same time can't be picked on those sites.
+
 ## Testing development builds with Firefox Web Add-On
 
 If you are using the Firefox add-on to test during development, follow the instructions for
