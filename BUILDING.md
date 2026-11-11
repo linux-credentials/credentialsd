@@ -181,7 +181,7 @@ $CREDSD_REPO/build/credentialsd/src/credentialsd &
 
 # Run the backend UI
 export RUST_LOG=debug
-export GSETTINGS_SCHEMA_DIR=$CREDS_REPO/build/credentialsd-ui/data
+export GSETTINGS_SCHEMA_DIR=$CREDSD_REPO/build/credentialsd-ui/data
 $CREDSD_REPO/build/credentialsd-ui/src/credentialsd-ui
 ```
 
