@@ -42,6 +42,7 @@ impl InProcessUsbHandler {
     async fn process_idle_waiting(
         failures: &mut usize,
         prev_usb_state: &UsbStateInternal,
+        extra_device: Option<&HidDevice>,
         cancellation: &CancellationToken,
     ) -> Result<UsbStateInternal, CredentialServiceError> {
         let list_device_fut = libwebauthn::transport::hid::list_devices();
@@ -51,7 +52,8 @@ impl InProcessUsbHandler {
         };
 
         match result {
-            Ok(hid_devices) => {
+            Ok(mut hid_devices) => {
+                hid_devices.extend(extra_device.cloned());
                 if hid_devices.is_empty() {
                     super::cancellable_sleep(Duration::from_millis(50), cancellation).await?;
                     Ok(UsbStateInternal::Waiting)
@@ -278,6 +280,10 @@ impl InProcessUsbHandler {
         let (signal_tx, mut signal_rx) = mpsc::channel(256);
         let (cred_tx, mut cred_rx) = mpsc::channel(1);
         debug!("polling for USB status");
+        #[cfg(feature = "test-authenticator")]
+        let extra_device = super::test_authenticator::device_for_origin(cred_request.origin());
+        #[cfg(not(feature = "test-authenticator"))]
+        let extra_device: Option<HidDevice> = None;
         let mut failures = 0;
         // act on current USB USB state, send state changes to the stream, and
         // loop until a credential or error is returned.
@@ -287,8 +293,13 @@ impl InProcessUsbHandler {
             let select_next_usb_state_fut = async {
                 match prev_usb_state {
                     UsbStateInternal::Idle | UsbStateInternal::Waiting => {
-                        Self::process_idle_waiting(&mut failures, &prev_usb_state, &cancellation)
-                            .await
+                        Self::process_idle_waiting(
+                            &mut failures,
+                            &prev_usb_state,
+                            extra_device.as_ref(),
+                            &cancellation,
+                        )
+                        .await
                     }
                     UsbStateInternal::SelectingDevice(ref hid_devices) => {
                         Self::process_selecting_device(hid_devices.as_slice(), &cancellation).await

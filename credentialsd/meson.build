@@ -50,6 +50,12 @@ endif
 if get_option('cargo_offline') == true
   cargo_options += ['--offline']
 endif
+if get_option('test_authenticator')
+  if get_option('profile') != 'development'
+    error('test_authenticator requires -Dprofile=development')
+  endif
+  cargo_options += ['--features', 'test-authenticator']
+endif
 
 subdir('src')
 subdir('tests')
