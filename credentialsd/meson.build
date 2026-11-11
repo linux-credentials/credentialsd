@@ -2,16 +2,12 @@ backend_executable_name = 'credentialsd'
 backend_build_dir = meson.current_build_dir()
 base_id = 'xyz.iinuwa.credentialsd.Credentialsd'
 
-dependency('dbus-1', version: '>= 1.6')
-dependency('glib-2.0', version: '>= 2.66')
-dependency('gio-2.0', version: '>= 2.66')
-dependency('gtk4', version: '>= 4.6.2')
-dependency('ssl', 'openssl', version: '>= 3.0')
-dependency('udev', version: '>= 249')
-
-cargo = find_program('cargo', required: true)
-
 version = meson.project_version()
+
+nfc_dep = dependency('libnfc', version: '>=1.8.0', required: true)
+pcsclite_dep = dependency('libpcsclite', version: '>=2.0.3', required: true)
+ssl_dep = dependency('ssl', 'openssl', version: '>= 3.0', required: true)
+udev_dep = dependency('udev', version: '>= 249', required: true)
 
 if get_option('profile') == 'development'
   profile = 'Devel'

@@ -85,7 +85,7 @@ pub struct SetDevicePinOptions {}
 pub struct Credential {
     pub id: String,
     pub name: String,
-    pub username: Option<String>,
+    pub display_name: Option<String>,
 }
 
 /// Emitted when an an authenticator presents multiple matching credentials, and
@@ -403,5 +403,28 @@ impl Display for WindowHandle {
             Self::Wayland(handle) => write!(f, "wayland:{handle}"),
             Self::X11(xid) => write!(f, "x11:{xid}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zvariant::Value;
+
+    use super::Credential;
+
+    #[test]
+    fn credential_dict_uses_webauthn_field_names() {
+        let cred = Credential {
+            id: String::from("abc"),
+            name: String::from("alice@example.com"),
+            display_name: Some(String::from("Alice")),
+        };
+        let Value::Dict(dict) = Value::from(cred) else {
+            panic!("Credential should serialize as a dict");
+        };
+        let get = |key: &str| dict.get::<&str, String>(&key).unwrap();
+        assert_eq!(get("name").as_deref(), Some("alice@example.com"));
+        assert_eq!(get("display_name").as_deref(), Some("Alice"));
+        assert_eq!(get("username"), None);
     }
 }

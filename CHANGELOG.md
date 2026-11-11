@@ -2,10 +2,23 @@
 
 ## Breaking Changes
 
-- ui: `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
+### UI Controller API
+
+- Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+- `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
 
 ## Improvements
 
+- ui: Display restart reason in case of premature failure
+- daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
+- daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
+
+# 0.4.0 [2026-11-05]
+
+## Improvements
+
+- build: Make daemon, credentialsd-ui, demo client and web extension optional
+- build: Rename `default` profile to `release`.
 - daemon: Don't log error if we get PresenceRequired over hybrid (Thank you, @michaelbeaumont!)
 - daemon: Cancel ceremony if UI disappears (Thank you, @michaelbeaumont!)
 - daemon: Fix UI service failing to launch when started manually instead of via D-Bus activation.
@@ -13,12 +26,13 @@
 - daemon: Fix all subsequent requests being rejected after the UI failed to launch.
 - daemon: Don't busy loop polling for NFC devices when NFC is enabled.
 - daemon: Use systemd unit name to determine whether a caller is trusted. (Thank you, @NyCodeGHG!)
+- daemon: Update to libwebauthn 0.11.0, with various PXP and attestation format improvements.
+- daemon: Change to standardized PXP BLE length-prefixed framing.
+- daemon: Send PXP shutdown on close to prevent Android clients from hanging.
+- daemon: Fix hybrid cancellation handling
 - ui: Add Bulgarian translation (Thank you, @salif!)
 - webext: Try to read app ID from associated desktop entry (Thank you, @michaelbeaumont!)
 - ui: Basic recovery from failed attempts to use devices (e.g. flaky bluetooth)
-- ui: Display restart reason in case of premature failure
-- daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
-- daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
 
 # 0.3.1 [2026-09-05]
 

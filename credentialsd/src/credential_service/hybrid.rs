@@ -8,9 +8,9 @@ use libwebauthn::{
     proto::CtapError,
     transport::{
         Channel, ChannelSettings, Device,
-        cable::{
-            channel::{CableUpdate, CableUxUpdate},
-            qr_code_device::{CableQrCodeDevice, CableTransports, QrCodeOperationHint},
+        hybrid::{
+            channel::{HybridUxUpdate, PxpUpdate},
+            qr_code_device::{PxpQrCodeDevice, PxpTransports, QrCodeOperationHint},
         },
     },
     webauthn::{WebAuthn, error::WebAuthnError},
@@ -68,26 +68,26 @@ impl HybridHandler for InternalHybridHandler {
                 .map(|s| s.to_lowercase() == "true")
                 .unwrap_or_default()
             {
-                CableTransports::CloudAssistedOrLocal
+                PxpTransports::CloudAssistedOrLocal
             } else {
-                CableTransports::CloudAssistedOnly
+                PxpTransports::CloudAssistedOnly
             };
 
             // Outer retry loop: re-issues QR on non-terminating failures.
-            // Each iteration creates a fresh CableQrCodeDevice (the previous one
+            // Each iteration creates a fresh PxpQrCodeDevice (the previous one
             // is consumed by channel()), so the old QR secret is discarded.
             // Consecutive failures before the phone connected; reset once it does.
             let mut pre_active_failures = 0;
             loop {
                 // Reset the active flag for each ceremony attempt. run_hybrid_ceremony
                 // sets it if libwebauthn reported the phone's BLE advert
-                // (`CableUpdate::Connecting`), i.e. the QR code was scanned.
+                // (`PxpUpdate::Connecting`), i.e. the QR code was scanned.
                 let mut active = false;
 
-                let mut device = match CableQrCodeDevice::new_transient(hint, hybrid_transports) {
+                let mut device = match PxpQrCodeDevice::new_transient(hint, hybrid_transports) {
                     Ok(device) => device,
                     Err(err) => {
-                        tracing::error!("Failed to create caBLE QR code device: {:?}", err);
+                        tracing::error!("Failed to create hybrid QR code device: {:?}", err);
                         // Device creation failure cannot be retried meaningfully —
                         // give up on hybrid for this request; other transports go on.
                         let _ = tx
@@ -101,7 +101,7 @@ impl HybridHandler for InternalHybridHandler {
 
                 let qr_code = device.qr_code.to_string();
                 if let Err(err) = tx.send(HybridStateInternal::Init(qr_code)).await {
-                    tracing::error!("Failed to send caBLE update: {:?}", err);
+                    tracing::error!("Failed to send hybrid update: {:?}", err);
                     break;
                 }
 
@@ -124,7 +124,7 @@ impl HybridHandler for InternalHybridHandler {
                     // Must come before is_ceremony_terminating(), which returns false for
                     // cancellation (poll_next must not complete_request() twice).
                     Err(CredentialServiceError::NonTerminatingCancellation) => {
-                        tracing::debug!("Hybrid handler cancelled, exiting silently");
+                        tracing::trace!("Hybrid handler cancelled, exiting silently");
                         break;
                     }
                     Err(err) if super::is_ceremony_terminating(&err) => {
@@ -291,14 +291,14 @@ impl From<&HybridState> for BackgroundEvent {
     }
 }
 
-/// Runs a single hybrid ceremony attempt: opens the caBLE channel, spawns the UX
+/// Runs a single hybrid ceremony attempt: opens the hybrid channel, spawns the UX
 /// update forwarder, and drives the `webauthn_make_credential` / `webauthn_get_assertion`
 /// retry loop until a terminal result or cancellation.
 ///
 /// Returns `Ok(CredentialResponse)` on success, or `Err(CredentialServiceError)` on
 /// failure. `NonTerminatingCancellation` is returned when the cancellation token fires.
 async fn run_hybrid_ceremony(
-    device: &mut CableQrCodeDevice,
+    device: &mut PxpQrCodeDevice,
     request: &CredentialRequest,
     tx: &Sender<HybridStateInternal>,
     cancellation: CancellationToken,
@@ -400,6 +400,9 @@ async fn run_hybrid_ceremony(
         }
     };
     *active = phone_engaged(&mut progress_rx);
+
+    // Send the tunnel Shutdown so the phone does not show an error.
+    channel.close().await;
     result
 }
 
@@ -407,11 +410,11 @@ async fn run_hybrid_ceremony(
 /// `Connecting` once it has received the phone's BLE advert, which only happens
 /// after the QR code was scanned. Every update sent before the attempt ended is
 /// already queued in `rx` when this is called.
-fn phone_engaged(rx: &mut broadcast::Receiver<CableUxUpdate>) -> bool {
+fn phone_engaged(rx: &mut broadcast::Receiver<HybridUxUpdate>) -> bool {
     while let Ok(update) = rx.try_recv() {
         match update {
             // Before (or without) the phone's BLE advert, e.g. the advert scan failed.
-            CableUxUpdate::CableUpdate(CableUpdate::ProximityCheck | CableUpdate::Error(_)) => {}
+            HybridUxUpdate::PxpUpdate(PxpUpdate::ProximityCheck | PxpUpdate::Error(_)) => {}
             // Everything else only happens once the phone's advert arrived.
             _ => return true,
         }
@@ -421,26 +424,26 @@ fn phone_engaged(rx: &mut broadcast::Receiver<CableUxUpdate>) -> bool {
 
 async fn handle_hybrid_updates(
     state_sender: &Sender<HybridStateInternal>,
-    mut ux_update_receiver: broadcast::Receiver<CableUxUpdate>,
+    mut ux_update_receiver: broadcast::Receiver<HybridUxUpdate>,
 ) {
     while let Ok(msg) = ux_update_receiver.recv().await {
         debug!(?msg, "Received hybrid update");
         let new_state: Option<HybridStateInternal> = match msg {
             // Our UI already indicates this and authenticators over hybrid also generally indicate
-            CableUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => None,
-            CableUxUpdate::UvUpdate(uv_update) => {
+            HybridUxUpdate::UvUpdate(UvUpdate::PresenceRequired) => None,
+            HybridUxUpdate::UvUpdate(uv_update) => {
                 error!(
                     "Received unexpected UV update in hybrid handler: {:?}",
                     uv_update
                 );
                 None
             }
-            CableUxUpdate::CableUpdate(cable_update) => match cable_update {
-                CableUpdate::ProximityCheck => None,
-                CableUpdate::Connecting => Some(HybridStateInternal::Connecting),
-                CableUpdate::Authenticating => Some(HybridStateInternal::Connecting),
-                CableUpdate::Connected => Some(HybridStateInternal::Connected),
-                CableUpdate::Error(transport_error) => {
+            HybridUxUpdate::PxpUpdate(pxp_update) => match pxp_update {
+                PxpUpdate::ProximityCheck => None,
+                PxpUpdate::Connecting => Some(HybridStateInternal::Connecting),
+                PxpUpdate::Authenticating => Some(HybridStateInternal::Connecting),
+                PxpUpdate::Connected => Some(HybridStateInternal::Connected),
+                PxpUpdate::Error(transport_error) => {
                     // Not forwarded: the failed attempt also ends the webauthn call
                     // with an error, which the retry loop handles (restart or give up).
                     error!(?transport_error, "Hybrid transport error");
@@ -458,28 +461,28 @@ async fn handle_hybrid_updates(
 
 #[cfg(test)]
 mod tests {
-    use libwebauthn::transport::cable::error::CableError;
+    use libwebauthn::transport::hybrid::error::PxpError;
 
     use super::*;
 
-    fn cable(update: CableUpdate) -> CableUxUpdate {
-        CableUxUpdate::CableUpdate(update)
+    fn pxp(update: PxpUpdate) -> HybridUxUpdate {
+        HybridUxUpdate::PxpUpdate(update)
     }
 
     #[test]
     fn test_phone_engaged() {
         let (tx, mut rx) = broadcast::channel(16);
-        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
+        tx.send(pxp(PxpUpdate::ProximityCheck)).unwrap();
         assert!(!phone_engaged(&mut rx), "QR shown, never scanned");
 
-        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
-        tx.send(cable(CableUpdate::Error(CableError::ConnectionFailed)))
+        tx.send(pxp(PxpUpdate::ProximityCheck)).unwrap();
+        tx.send(pxp(PxpUpdate::Error(PxpError::ConnectionFailed)))
             .unwrap();
         assert!(!phone_engaged(&mut rx), "advert scan failed before a scan");
 
-        tx.send(cable(CableUpdate::ProximityCheck)).unwrap();
-        tx.send(cable(CableUpdate::Connecting)).unwrap();
-        tx.send(cable(CableUpdate::Error(CableError::ConnectionFailed)))
+        tx.send(pxp(PxpUpdate::ProximityCheck)).unwrap();
+        tx.send(pxp(PxpUpdate::Connecting)).unwrap();
+        tx.send(pxp(PxpUpdate::Error(PxpError::ConnectionFailed)))
             .unwrap();
         assert!(phone_engaged(&mut rx), "failed after the phone's advert");
     }

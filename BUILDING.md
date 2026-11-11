@@ -176,12 +176,12 @@ $XDP_BINARY &
 
 # Run the server, with debug logging enabled, and configure the server to trust your xdg-desktop-portal
 export CREDSD_TRUSTED_CALLERS=$XDP_BINARY
-export RUST_LOG=credentialsd=debug,libwebauthn=debug
+export RUST_LOG=credentialsd=debug,libwebauthn=debug,pxp=debug
 $CREDSD_REPO/build/credentialsd/src/credentialsd &
 
 # Run the backend UI
 export RUST_LOG=debug
-export GSETTINGS_SCHEMA_DIR=$CREDS_REPO/build/credentialsd-ui/data
+export GSETTINGS_SCHEMA_DIR=$CREDSD_REPO/build/credentialsd-ui/data
 $CREDSD_REPO/build/credentialsd-ui/src/credentialsd-ui
 ```
 
@@ -199,28 +199,34 @@ There are a few Meson options to control the build that may be useful for packag
 
 > meson configure
 # ...
-Project options    Default Value        Possible Values      Description
------------------  -------------        ---------------      -----------
-cargo_home                                                   The directory to
-                                                             store files
-                                                             downloaded by
-                                                             Cargo
-cargo_offline      false                [true, false]        Whether to
-                                                             perform an
-                                                             offline build
-                                                             with Cargo.
-                                                             Defaults to false
-                                                             to download
-                                                             crates from
-                                                             registries.
-profile            default              [default,            The build profile
-                                         development]        for Credential
-                                                             Manager. One of
-                                                             "default" or
-                                                             "development".
+Project options        Default Value            Possible Values          Description
+-----------------      -------------            ---------------          -----------
+cargo_home                                                               The directory to store files downloaded by
+                                                                         Cargo
+cargo_locked           false                    [True, False]            Whether Cargo.lock will be used without
+                                                                         modification. Defaults to false to
+                                                                         automatically resolve dependencies.
+cargo_offline          false                    [True, False]            Whether to perform an offline build with
+                                                                         Cargo. Defaults to false to download crates
+                                                                         from registries.
+feature_daemon         enabled                  [enabled, disabled,      Whether to build the credentialsd daemon
+                                                 auto]
+feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client
+                                                 auto]
+feature_gui            enabled                  [enabled, disabled,      Whether to build the credentialsd-ui GUI
+                                                 auto]
+feature_web_extension  enabled                  [enabled, disabled,      Whether to build the web extension
+                                                 auto]
+profile                release                  [release, development]   The build profile for the targets. The
+                                                                         `development` profile also allows disabling
+                                                                         some security checks for easier development.
 ```
 
-> TODO: rename `default` profile to `release` to reduce confusion.
+For the `feature_*` options, `auto` means that the feature will be enabled if its dependencies are
+discovered, and disabled if they are not: missing dependencies will not fail the build. See
+[Meson documentation on feature options][meson-features-doc] for more information on those values.
+
+[meson-features-doc]: https://mesonbuild.com/Build-options.html#features
 
 # Running Tests
 
