@@ -5,8 +5,8 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use async_std::{channel::Receiver, sync::Mutex as AsyncMutex};
 
-use credentialsd_common::model::Device;
 use credentialsd_common::model::{Credential, PinNotSetError, WindowHandle};
+use credentialsd_common::model::{Device, Transport};
 
 use crate::{ViewRequest, client::FlowControlClient};
 
@@ -73,7 +73,7 @@ pub enum ViewUpdate {
         qr_prompt: String,
         usb_prompt: String,
     },
-    SetDevices(Vec<Device>),
+    SetTransports(Vec<Transport>),
     // TODO: Fix this
     SetCredentials(Vec<Credential>),
 
@@ -96,8 +96,11 @@ pub enum ViewUpdate {
     HybridConnected,
 
     /// A transport ceremony was interrupted by a non-terminating error and
-    /// is restarting. The UI should navigate back to the start page.
-    TransportRestarting,
+    /// is restarting. The UI should navigate back to the start page and display
+    /// the provided localized message.
+    TransportRestarting {
+        message: String,
+    },
 
     Completed,
     Cancelled,

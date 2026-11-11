@@ -5,10 +5,13 @@
 ### UI Controller API
 
 - Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+- `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
 
 ## Improvements
 
-- daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
+- ui: Display restart reason in case of premature failure
+- daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
+- daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
 
 # 0.4.0 [2026-11-05]
 

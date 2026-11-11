@@ -8,7 +8,7 @@ use async_std::{
     sync::Mutex as AsyncMutex,
 };
 use credentialsd_common::memfd::read_secret;
-use credentialsd_common::model::{BackgroundEvent, Credential};
+use credentialsd_common::model::{BackgroundEvent, Credential, TransportRestartReason};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
@@ -31,8 +31,8 @@ pub(crate) struct ViewModel {
     app_name: String,
     app_path_or_id: String,
 
-    // This includes devices like platform authenticator, USB, hybrid
-    devices: Vec<Device>,
+    // Transports offered to the user, e.g. USB and hybrid
+    transports: Vec<Transport>,
     selected_device: Option<Device>,
 
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -52,7 +52,7 @@ impl ViewModel {
         } = request.requesting_app;
 
         let app_name: Option<String> = app_name.into();
-        let devices = request.initial_devices;
+        let transports = request.initial_transports;
         Self {
             flow_controller,
             rx_event,
@@ -63,7 +63,7 @@ impl ViewModel {
             app_path_or_id: path,
             title: String::default(),
             subtitle: String::default(),
-            devices,
+            transports,
             selected_device: None,
             hybrid_qr_code_data: None,
         }
@@ -121,12 +121,26 @@ impl ViewModel {
             .unwrap();
     }
 
-    async fn update_devices(&mut self, devices: Vec<Device>) {
-        self.devices = devices;
+    async fn send_transports(&self) {
         self.tx_update
-            .send(ViewUpdate::SetDevices(self.devices.to_owned()))
+            .send(ViewUpdate::SetTransports(self.transports.to_owned()))
             .await
             .unwrap();
+    }
+
+    /// Stops offering transports that gave up for this request.
+    async fn drop_transports(&mut self, gone: &[Transport]) {
+        self.transports
+            .retain(|transport| !gone.contains(transport));
+        self.send_transports().await;
+        if self.transports.is_empty() {
+            self.tx_update
+                .send(ViewUpdate::Failed(gettext(
+                    "None of the available methods are working right now. Please try again later.",
+                )))
+                .await
+                .unwrap();
+        }
     }
 
     pub(crate) async fn start_discovery(&self) {
@@ -146,7 +160,7 @@ impl ViewModel {
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
-                    self.update_devices(self.devices.clone()).await;
+                    self.send_transports().await;
                     self.start_discovery().await;
                 }
                 Event::View(ViewEvent::PinEntered(pin)) => {
@@ -252,31 +266,7 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
-                Event::Background(BackgroundEvent::ErrorNoCredentials) => {
-                    let error_msg = gettext("No matching credentials found on this authenticator.");
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
-                Event::Background(BackgroundEvent::ErrorPinAttemptsExhausted) => {
-                    let error_msg = gettext(
-                        "No more PIN attempts allowed. Try removing your device and plugging it back in.",
-                    );
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
-                Event::Background(BackgroundEvent::ErrorPinNotSet) => {
-                    let error_msg = gettext(
-                        "This server requires your device to have additional protection like a PIN, which is not set. Please set a PIN for this device and try again.",
-                    );
-                    self.tx_update
-                        .send(ViewUpdate::Failed(error_msg))
-                        .await
-                        .unwrap()
-                }
+
                 Event::Background(BackgroundEvent::ErrorTimedOut) => {
                     let error_msg = gettext("The credential request timed out. Please try again.");
                     self.tx_update
@@ -348,14 +338,34 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                // A transport gave up for this request: stop offering it. No
+                // TransportRestarting here, as that would pull the user off the page
+                // of a transport that still works.
+                Event::Background(BackgroundEvent::HybridRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::HybridQr, Transport::HybridLinked])
+                        .await;
+                }
+                Event::Background(BackgroundEvent::UsbRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::Usb]).await;
+                }
+                Event::Background(BackgroundEvent::NfcRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                }) => {
+                    self.drop_transports(&[Transport::Nfc]).await;
+                }
                 Event::Background(
-                    BackgroundEvent::HybridRestarting
-                    | BackgroundEvent::UsbRestarting
-                    | BackgroundEvent::NfcRestarting,
+                    BackgroundEvent::HybridRestarting { reason }
+                    | BackgroundEvent::UsbRestarting { reason }
+                    | BackgroundEvent::NfcRestarting { reason },
                 ) => {
                     self.hybrid_qr_code_data = None;
+                    let message = localized_transport_restart_reason(&reason);
                     self.tx_update
-                        .send(ViewUpdate::TransportRestarting)
+                        .send(ViewUpdate::TransportRestarting { message })
                         .await
                         .unwrap();
                 }
@@ -387,6 +397,23 @@ impl Debug for ViewEvent {
             Self::PinEntered(_) => f.debug_tuple("PinEntered").field(&"******").finish(),
             Self::SetNewDevicePin(_) => f.debug_tuple("SetNewDevicePin").field(&"******").finish(),
             Self::UserCancelled => write!(f, "UserCancelled"),
+        }
+    }
+}
+
+fn localized_transport_restart_reason(reason: &TransportRestartReason) -> String {
+    match reason {
+        TransportRestartReason::Interrupted => gettext(
+            "The previous attempt was interrupted. Please follow the new prompts to try again.",
+        ),
+        TransportRestartReason::NoCredentials => {
+            gettext("No matching credentials on this authenticator. Please try a different one.")
+        }
+        TransportRestartReason::PinAttemptsExhausted => gettext(
+            "No more PIN attempts allowed. Remove and reinsert your device, or use a different authenticator.",
+        ),
+        TransportRestartReason::TransportUnavailable => {
+            gettext("This method isn't working right now. Please choose another one.")
         }
     }
 }
