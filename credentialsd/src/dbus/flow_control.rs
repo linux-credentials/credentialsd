@@ -99,7 +99,7 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     let origin = msg.origin().to_string();
 
     let top_origin = msg.top_origin().map(|o| o.to_string());
-    let transports = svc.lock().await.detect_transports().await;
+    let transports = svc.lock().await.get_transports();
 
     let ClientDetails {
         app_id,
@@ -388,7 +388,7 @@ mod tests {
             self.cancelled.lock().unwrap().push(request_id);
         }
 
-        async fn detect_transports(&self) -> Vec<Transport> {
+        fn get_transports(&self) -> Vec<Transport> {
             Vec::new()
         }
 

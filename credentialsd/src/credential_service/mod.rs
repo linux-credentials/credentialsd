@@ -159,12 +159,10 @@ pub trait ManageDevice {
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Result<(RequestId, CancellationToken), CredentialServiceError>;
     async fn cancel_request(&self, request_id: RequestId);
-    /// Detects the transports usable for the current request and remembers them,
-    /// so `start_discovery` starts exactly what was reported to the UI.
-    async fn detect_transports(&self) -> Vec<Transport>;
     async fn start_discovery(
         &self,
     ) -> Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>;
+    fn get_transports(&self) -> Vec<Transport>;
 }
 
 #[derive(Debug)]
@@ -287,6 +285,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Result<(RequestId, CancellationToken), CredentialServiceError> {
+        let supported_transports = supported_transports(&available_transports().await);
         let mut cred_request = self.ctx.lock().unwrap();
         if cred_request.is_some() {
             Err(CredentialServiceError::Internal(
@@ -303,7 +302,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 response_channel: tx,
                 request_id,
                 cancellation: cancellation.clone(),
-                transports: Vec::new(),
+                transports: supported_transports,
             };
             _ = cred_request.insert(ctx);
             Ok((request_id, cancellation))
@@ -326,14 +325,6 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                     "Cancelled request {request_id}."
                 ))));
         }
-    }
-
-    async fn detect_transports(&self) -> Vec<Transport> {
-        let transports = supported_transports(&available_transports().await);
-        if let Some(ctx) = self.ctx.lock().unwrap().as_mut() {
-            ctx.transports = transports.clone();
-        }
-        transports
     }
 
     async fn start_discovery(
@@ -373,6 +364,14 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             selected_transports.push(hybrid);
         }
         futures::stream::select_all(selected_transports).boxed()
+    }
+
+    fn get_transports(&self) -> Vec<Transport> {
+        self.ctx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(Vec::new(), |x| x.transports.to_vec())
     }
 }
 
