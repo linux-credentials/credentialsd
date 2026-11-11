@@ -6,11 +6,18 @@
 
 - Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
 
+### Gateway API
+
+- Replaced the WebAuthn DOMException-style error names (`SecurityError`, `TypeError`, etc.) returned by `CreateCredential` and `GetCredential` with more descriptive credentialsd errors, such as `InvalidOrigin`, `UntrustedCaller`, `InvalidOptions` and `InvalidUserId`. See `doc/api.md` for the full list and their WebAuthn equivalents. The web extension's native messaging shim must be updated together with the daemon. (#212)
+
 ## Improvements
 
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
+- daemon: Reject registration requests whose `user.id` is empty or longer than 64 bytes. (#212)
+- daemon: Report an RP ID that does not match the origin as `InvalidOrigin` (previously `TypeError`). (#212)
+- daemon: Return `InvalidOrigin` instead of crashing when an unprivileged client sends an `app:` origin. (#212)
 
 # 0.4.0 [2026-11-05]
 

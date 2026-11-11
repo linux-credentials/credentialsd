@@ -103,7 +103,7 @@ impl GatewayService {
                     })?;
             if make_cred_request.algorithms.is_empty() {
                 tracing::info!("No supported algorithms given in request. Rejecting request.");
-                return Err(WebAuthnError::NotSupportedError);
+                return Err(WebAuthnError::NotSupported);
             }
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
@@ -125,20 +125,20 @@ impl GatewayService {
                         tracing::error!(
                             "Failed to parse credential response from authenticator: {err}"
                         );
-                        // Using NotAllowedError as a catch-all error.
-                        WebAuthnError::NotAllowedError
+                        // Using NotAllowed as a catch-all error.
+                        WebAuthnError::NotAllowed
                     })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
                 // tracing::error!("Expected create public key credential response, received {response:?}");
                 tracing::error!("Did not receive expected create public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError)
+                // Using NotAllowed as a catch-all error.
+                Err(WebAuthnError::NotAllowed)
             }
         } else {
             tracing::error!("Unknown credential type request: {}", request.r#type);
-            Err(WebAuthnError::TypeError)
+            Err(WebAuthnError::InvalidOptions)
         }
     }
 
@@ -163,9 +163,10 @@ impl GatewayService {
             let get_cred_request =
                 get_credential_request_try_into_ctap2(&request, &request_environment)
                     .await
-                    .map_err(|e| {
-                        tracing::error!("Could not parse passkey assertion request: {e:?}");
-                        WebAuthnError::TypeError
+                    .inspect_err(|_| {
+                        tracing::error!(
+                            "Could not parse passkey assertion request. Rejecting request."
+                        );
                     })?;
             let cred_request =
                 CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
@@ -187,22 +188,22 @@ impl GatewayService {
                             tracing::error!(
                                 "Failed to parse credential response from authenticator: {err}"
                             );
-                            // Using NotAllowedError as a catch-all error.
-                            WebAuthnError::NotAllowedError
+                            // Using NotAllowed as a catch-all error.
+                            WebAuthnError::NotAllowed
                         })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
                 // tracing::error!("Expected get public key credential response, received {response:?}");
                 tracing::error!("Did not receive expected get public key credential response.");
-                // Using NotAllowedError as a catch-all error.
-                Err(WebAuthnError::NotAllowedError)
+                // Using NotAllowed as a catch-all error.
+                Err(WebAuthnError::NotAllowed)
             }
         } else {
             tracing::error!(
                 "Request did not match any known credential types. Supported types: [`public_key`]."
             );
-            Err(WebAuthnError::TypeError)
+            Err(WebAuthnError::InvalidOptions)
         }
     }
 }
@@ -223,7 +224,7 @@ fn validate_request(context: &RequestContext) -> Result<NavigationContext, WebAu
                     "App ID {:?} is not allowed for origin {origin}",
                     context.app_id
                 );
-                return Err(WebAuthnError::SecurityError);
+                return Err(WebAuthnError::UntrustedCaller);
             }
         }
     };
@@ -390,7 +391,7 @@ fn check_origin_from_privileged_client(
         }
         _ => {
             tracing::warn!("Caller requested non-HTTPS schemed origin, which is not supported.");
-            Err(WebAuthnError::SecurityError)
+            Err(WebAuthnError::InvalidOrigin)
         }
     }
 }
@@ -479,44 +480,74 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
     }
 }
 
-// We want to keep these aligned with how the spec names them.
-#[expect(clippy::enum_variant_names)]
-#[derive(Debug)]
+/// Errors returned to gateway clients.
+///
+/// These are credentialsd-specific rather than WebAuthn DOMException names so
+/// that they can carry more detail and be used by non-WebAuthn callers. Clients
+/// map them back to WebAuthn errors as needed.
+///
+/// Only errors that the caller could deduce from its own request parameters
+/// are reported specifically. Anything that depends on what the user did (or
+/// did not do) during the ceremony is reported as [`WebAuthnError::NotAllowed`],
+/// so that an unprivileged caller cannot learn whether the user has
+/// credentials without their consent.
+#[derive(Debug, PartialEq, Eq)]
 pub enum WebAuthnError {
-    /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
-    /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
-    /// Operations.
-    AbortError,
+    /// The request was cancelled by the client. Not returned yet.
+    ///
+    /// WebAuthn equivalent: `AbortError`.
+    Aborted,
 
-    /// Either `residentKey` was set to required and no available authenticator
-    /// supported resident keys, or `userVerification` was set to required and no
-    /// available authenticator could perform user verification.
-    ConstraintError,
+    /// `userVerification` was set to `required` and no available authenticator
+    /// can perform user verification. Not returned yet.
+    ///
+    /// WebAuthn equivalent: `ConstraintError`.
+    UserVerificationUnsatisfiable,
 
-    /// The authenticator used in the ceremony recognized an entry in
-    /// `excludeCredentials` after the user consented to registering a credential.
-    InvalidStateError,
+    /// `residentKey` was set to `required` and no available authenticator
+    /// supports discoverable credentials. Not returned yet.
+    ///
+    /// WebAuthn equivalent: `ConstraintError`.
+    DiscoverableCredentialUnsatisfiable,
 
-    /// No entry in `pubKeyCredParams` had a type property of `public-key`, or the
-    /// authenticator did not support any of the signature algorithms specified
-    /// in `pubKeyCredParams`.
-    NotSupportedError,
+    /// The authenticator recognized an entry in `excludeCredentials`.
+    ///
+    /// WebAuthn equivalent: `InvalidStateError`.
+    CredentialExcluded,
 
-    /// The effective domain was not a valid domain, or `rp.id` was not equal to
-    /// or a registrable domain suffix of the effective domain. In the latter
-    /// case, the client does not support related origin requests or the related
-    /// origins validation procedure failed.
-    SecurityError,
+    /// No entry in `pubKeyCredParams` is supported, or the request uses an
+    /// option that is not supported.
+    ///
+    /// WebAuthn equivalent: `NotSupportedError`.
+    NotSupported,
 
-    /// A catch-all error covering a wide range of possible reasons, including
-    /// common ones like the user canceling out of the ceremony. Some of these
-    /// causes are documented throughout this spec, while others are
-    /// client-specific.
-    NotAllowedError,
+    /// The origin is not a valid HTTPS origin, or the RP ID (or AppID) is not
+    /// valid for the origin.
+    ///
+    /// WebAuthn equivalent: `SecurityError`.
+    InvalidOrigin,
 
-    /// The options argument was not a valid `CredentialCreationOptions` value, or
-    /// the value of `user.id` was empty or was longer than 64 bytes.
-    TypeError,
+    /// The calling application could not be verified, or is not allowed to
+    /// make requests for the given origin.
+    ///
+    /// WebAuthn equivalent: `SecurityError`.
+    UntrustedCaller,
+
+    /// `user.id` is empty or longer than 64 bytes.
+    ///
+    /// WebAuthn equivalent: `TypeError`.
+    InvalidUserId,
+
+    /// The request options are missing or malformed.
+    ///
+    /// WebAuthn equivalent: `TypeError`.
+    InvalidOptions,
+
+    /// A catch-all error, including the user cancelling the ceremony, no
+    /// matching credentials, or an internal failure.
+    ///
+    /// WebAuthn equivalent: `NotAllowedError`.
+    NotAllowed,
 }
 
 impl std::error::Error for WebAuthnError {}
@@ -524,13 +555,24 @@ impl std::error::Error for WebAuthnError {}
 impl Display for WebAuthnError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            WebAuthnError::AbortError => "Operation was aborted by client.",
-            WebAuthnError::ConstraintError => "Resident key or user verification requirement was not able to be met.",
-            WebAuthnError::InvalidStateError => "A user consented to create a new credential after trying to use an authenticator with a previously registered credential.",
-            WebAuthnError::NotSupportedError => "Operation parameters are not supported.",
-            WebAuthnError::SecurityError => "Validation of the client context for given RP ID failed.",
-            WebAuthnError::NotAllowedError => "An unspecified error occurred, and the operation is not allowed to continue.",
-            WebAuthnError::TypeError => "Invalid parameters specified.",
+            WebAuthnError::Aborted => "Operation was aborted by client.",
+            WebAuthnError::UserVerificationUnsatisfiable => {
+                "User verification was required, but no available authenticator supports it."
+            }
+            WebAuthnError::DiscoverableCredentialUnsatisfiable => {
+                "A discoverable credential was required, but no available authenticator supports it."
+            }
+            WebAuthnError::CredentialExcluded => {
+                "The authenticator already contains a credential listed in excludeCredentials."
+            }
+            WebAuthnError::NotSupported => "Operation parameters are not supported.",
+            WebAuthnError::InvalidOrigin => "The origin or RP ID is not valid for this request.",
+            WebAuthnError::UntrustedCaller => "The calling application could not be verified.",
+            WebAuthnError::InvalidUserId => "user.id must be between 1 and 64 bytes long.",
+            WebAuthnError::InvalidOptions => "Invalid request options specified.",
+            WebAuthnError::NotAllowed => {
+                "An unspecified error occurred, and the operation is not allowed to continue."
+            }
         })
     }
 }
@@ -555,10 +597,10 @@ mod test {
     }
 
     #[test]
-    fn test_throws_security_error_when_passing_app_id_origin() {
+    fn test_returns_invalid_origin_when_passing_app_id_origin() {
         assert!(matches!(
             check_same_origin("app:com.example.App"),
-            Err(WebAuthnError::SecurityError)
+            Err(WebAuthnError::InvalidOrigin)
         ))
     }
 }
