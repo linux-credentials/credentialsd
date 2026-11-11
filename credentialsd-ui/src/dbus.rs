@@ -311,11 +311,9 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyHybridRestartingOptions,
     ) -> fdo::Result<()> {
-        let reason =
-            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,
@@ -328,11 +326,9 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyUsbRestartingOptions,
     ) -> fdo::Result<()> {
-        let reason =
-            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,
@@ -345,11 +341,9 @@ impl CredentialPortalBackend {
         &self,
         #[zbus(object_server)] object_server: &ObjectServer,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()> {
-        let reason =
-            TransportRestartReason::try_from(reason).unwrap_or(TransportRestartReason::Interrupted);
         self.notify_state_changed(
             object_server,
             session_handle,

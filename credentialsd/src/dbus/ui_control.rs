@@ -25,7 +25,7 @@ use credentialsd_common::model::{
     NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
     NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
     Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, Transport,
-    UserInteractedEvent, WindowHandle,
+    TransportRestartReason, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -152,7 +152,7 @@ trait UiControlService {
     async fn notify_hybrid_restarting(
         &self,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyHybridRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -160,7 +160,7 @@ trait UiControlService {
     async fn notify_usb_restarting(
         &self,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyUsbRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -168,7 +168,7 @@ trait UiControlService {
     async fn notify_nfc_restarting(
         &self,
         session_handle: ObjectPath<'_>,
-        reason: u8,
+        reason: TransportRestartReason,
         _options: NotifyNfcRestartingOptions,
     ) -> fdo::Result<()>;
 
@@ -327,7 +327,7 @@ impl Ceremony {
                 self.proxy
                     .notify_hybrid_restarting(
                         self.session_handle.as_ref(),
-                        u8::from(reason),
+                        reason,
                         NotifyHybridRestartingOptions {},
                     )
                     .await
@@ -336,7 +336,7 @@ impl Ceremony {
                 self.proxy
                     .notify_usb_restarting(
                         self.session_handle.as_ref(),
-                        u8::from(reason),
+                        reason,
                         NotifyUsbRestartingOptions {},
                     )
                     .await
@@ -345,7 +345,7 @@ impl Ceremony {
                 self.proxy
                     .notify_nfc_restarting(
                         self.session_handle.as_ref(),
-                        u8::from(reason),
+                        reason,
                         NotifyNfcRestartingOptions {},
                     )
                     .await
