@@ -5,6 +5,13 @@ members = ["credentialsd", "credentialsd-common", "credentialsd-ui"]
 [profile.release]
 lto = true
 
+# PIN hashing in credentialsd-ui is noticeably slow without optimisations.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [workspace.dependencies]
 futures-lite = "=2.6.1"
 libc = "=0.2.189"

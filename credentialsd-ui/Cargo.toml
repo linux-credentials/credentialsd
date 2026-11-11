@@ -12,6 +12,7 @@ wayland = ["gdk-wayland"]
 [dependencies]
 credentialsd-common = { path = "../credentialsd-common" }
 
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 futures-lite.workspace = true
 libc.workspace = true
 serde.workspace = true
@@ -25,3 +26,4 @@ gio-unix = "=0.22.8"
 gtk = { version = "=0.11.4", package = "gtk4", features = ["v4_14"] }
 gdk-wayland = { version = "=0.11.4", package = "gdk4-wayland", optional = true }
 qrcode = "=0.14.1"
+zeroize = "=1.9.0"

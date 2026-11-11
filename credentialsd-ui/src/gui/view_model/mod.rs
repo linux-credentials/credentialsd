@@ -11,11 +11,15 @@ use credentialsd_common::memfd::read_secret;
 use credentialsd_common::model::{BackgroundEvent, Credential};
 use gettextrs::gettext;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use credentialsd_common::model::{Device, Operation, Transport};
 
-use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
+use crate::{
+    RequestingApplication, ViewRequest,
+    client::{CTAP_CLIENT_SECRET_MAX_LEN, FlowControlClient},
+    pin_history::{PinCheck, PinHistory},
+};
 
 use super::ViewUpdate;
 
@@ -36,6 +40,12 @@ pub(crate) struct ViewModel {
     selected_device: Option<Device>,
 
     hybrid_qr_code_data: Option<Vec<u8>>,
+
+    /// Hashes of PINs already sent to the connected device, if the locked
+    /// memory for them could be set up.
+    pin_history: Option<PinHistory>,
+    /// PIN retries left, as last reported by the device.
+    pin_attempts_left: Option<u32>,
 }
 
 impl ViewModel {
@@ -66,6 +76,38 @@ impl ViewModel {
             devices,
             selected_device: None,
             hybrid_qr_code_data: None,
+            pin_history: PinHistory::new()
+                .inspect_err(|err| warn!(%err, "Not warning about repeated PIN entries"))
+                .ok(),
+            pin_attempts_left: None,
+        }
+    }
+
+    /// Returns true if `pin` was already tried on the connected device and the
+    /// user should be told instead of sending it again.
+    fn pin_already_tried(&mut self, pin: &str) -> bool {
+        // Over-long PINs are rejected without being sent, so never record them.
+        if pin.len() > CTAP_CLIENT_SECRET_MAX_LEN {
+            return false;
+        }
+        let Some(history) = self.pin_history.as_mut() else {
+            return false;
+        };
+        match history.check(pin.as_bytes()) {
+            Ok(check) => check == PinCheck::AlreadyTried,
+            Err(err) => {
+                warn!(%err, "Failed to check PIN against earlier attempts");
+                false
+            }
+        }
+    }
+
+    /// Forgets earlier PIN attempts, since a new connection may be a
+    /// different device with a different PIN.
+    fn reset_pin_history(&mut self) {
+        if let Some(Err(err)) = self.pin_history.as_mut().map(PinHistory::clear) {
+            warn!(%err, "Failed to reset PIN history");
+            self.pin_history = None;
         }
     }
 
@@ -150,6 +192,15 @@ impl ViewModel {
                     self.start_discovery().await;
                 }
                 Event::View(ViewEvent::PinEntered(pin)) => {
+                    if self.pin_already_tried(&pin) {
+                        self.tx_update
+                            .send(ViewUpdate::PinAlreadyTried {
+                                attempts_left: self.pin_attempts_left,
+                            })
+                            .await
+                            .unwrap();
+                        continue;
+                    }
                     let mut cred_service = self.flow_controller.lock().await;
                     if cred_service.enter_client_pin(pin).await.is_err() {
                         error!("Failed to send pin to device");
@@ -203,6 +254,7 @@ impl ViewModel {
 
                 Event::Background(BackgroundEvent::UsbConnected) => {
                     info!("Found USB device");
+                    self.reset_pin_history();
                     self.tx_update
                         .send(ViewUpdate::WaitingForDevice(Device {
                             id: "TODO: bogus".to_string(),
@@ -212,6 +264,7 @@ impl ViewModel {
                         .unwrap();
                 }
                 Event::Background(BackgroundEvent::NeedsPin { attempts_left }) => {
+                    self.pin_attempts_left = attempts_left;
                     self.tx_update
                         .send(ViewUpdate::NeedsPin { attempts_left })
                         .await
@@ -305,6 +358,7 @@ impl ViewModel {
                 }
                 Event::Background(BackgroundEvent::NfcConnected) => {
                     info!("Found NFC device");
+                    self.reset_pin_history();
                     self.tx_update
                         .send(ViewUpdate::WaitingForDevice(Device {
                             id: "TODO: bogus".to_string(),
@@ -395,4 +449,118 @@ impl Debug for ViewEvent {
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use async_std::channel::{Receiver, Sender, unbounded};
+    use credentialsd_common::model::UserInteractedEvent;
+
+    use super::*;
+
+    struct Harness {
+        view_tx: Sender<ViewEvent>,
+        bg_tx: Sender<BackgroundEvent>,
+        updates: Receiver<ViewUpdate>,
+        sent: Receiver<UserInteractedEvent>,
+    }
+
+    fn start() -> Harness {
+        let (view_tx, view_rx) = unbounded();
+        let (bg_tx, bg_rx) = unbounded();
+        let (update_tx, updates) = unbounded();
+        let (client_tx, sent) = unbounded();
+        let client = FlowControlClient {
+            tx: client_tx,
+            rx: AsyncMutex::new(Some(bg_rx)),
+        };
+        let request = ViewRequest {
+            operation: Operation::PublicKeyCreate,
+            rp_id: "example.com".to_string(),
+            requesting_app: RequestingApplication::default(),
+            initial_devices: Vec::new(),
+            window_handle: None,
+        };
+        let mut vm = ViewModel::new(
+            request,
+            Arc::new(AsyncMutex::new(client)),
+            view_rx,
+            update_tx,
+        );
+        async_std::task::spawn(async move { vm.start_event_loop().await });
+        Harness {
+            view_tx,
+            bg_tx,
+            updates,
+            sent,
+        }
+    }
+
+    impl Harness {
+        async fn connect_usb(&self) {
+            self.bg_tx
+                .send(BackgroundEvent::UsbConnected)
+                .await
+                .unwrap();
+            let update = self.updates.recv().await.unwrap();
+            assert!(matches!(update, ViewUpdate::WaitingForDevice(_)));
+        }
+
+        /// Enters `pin` and returns true if it was sent to the backend.
+        async fn enter_pin(&self, pin: &str) -> bool {
+            self.view_tx
+                .send(ViewEvent::PinEntered(pin.to_string()))
+                .await
+                .unwrap();
+            let sent = async { Ok(self.sent.recv().await.unwrap()) };
+            let warned = async { Err(self.updates.recv().await.unwrap()) };
+            match sent.race(warned).await {
+                Ok(UserInteractedEvent::ClientPinEntered(_)) => true,
+                Ok(other) => panic!("unexpected backend event {other:?}"),
+                Err(ViewUpdate::PinAlreadyTried { .. }) => false,
+                Err(other) => panic!("unexpected view update {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_pin_is_never_sent() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            assert!(h.enter_pin("1234").await);
+            assert!(!h.enter_pin("1234").await);
+            assert!(!h.enter_pin("1234").await);
+            assert!(h.enter_pin("5678").await);
+        });
+    }
+
+    #[test]
+    fn over_long_pin_is_not_recorded() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            let long = "1".repeat(CTAP_CLIENT_SECRET_MAX_LEN + 1);
+            h.view_tx
+                .send(ViewEvent::PinEntered(long.clone()))
+                .await
+                .unwrap();
+            h.view_tx.send(ViewEvent::PinEntered(long)).await.unwrap();
+            // Neither entry is sent, and the second one is not reported as
+            // already tried; the next valid PIN goes straight through.
+            assert!(h.enter_pin("1234").await);
+            assert!(h.updates.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn new_connection_forgets_tried_pins() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            assert!(h.enter_pin("1234").await);
+            h.connect_usb().await;
+            assert!(h.enter_pin("1234").await);
+        });
+    }
 }

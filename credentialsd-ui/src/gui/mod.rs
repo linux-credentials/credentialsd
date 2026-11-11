@@ -84,6 +84,10 @@ pub enum ViewUpdate {
     NeedsPin {
         attempts_left: Option<u32>,
     },
+    /// The entered PIN was already tried on this device and was not sent.
+    PinAlreadyTried {
+        attempts_left: Option<u32>,
+    },
     PinNotSet {
         error: PinNotSetError,
     },

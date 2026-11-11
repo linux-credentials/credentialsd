@@ -8,7 +8,7 @@ use credentialsd_common::{
     model::{BackgroundEvent, PinNotSetError, UserInteractedEvent},
 };
 
-const CTAP_CLIENT_SECRET_MAX_LEN: usize = 63;
+pub(crate) const CTAP_CLIENT_SECRET_MAX_LEN: usize = 63;
 
 #[derive(Debug)]
 pub struct FlowControlClient {
