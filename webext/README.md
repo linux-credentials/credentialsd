@@ -66,8 +66,8 @@ couple of options:
 5. Open Firefox and go to `about:debugging`
 6. Click "This Firefox" > Load Temporary Extension. Select `webext/add-on/manifest.json`
 7. Build with `ninja -C ./build` and run the D-Bus services:
-   - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
-   - `./build/credentialsd/target/debug/credentialsd`
+   - `GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/src/credentialsd-ui`
+   - `./build/credentialsd/src/credentialsd`
 8. Navigate to [https://webauthn.io]().
 9. Run through the registration and creation process.
 
@@ -82,7 +82,8 @@ couple of options:
    ```shell
    cp webext/add-on/manifest.chromium.json webext/add-on/manifest.json
    ```
-3. Open Edge and go to `edge://extensions` (or `chrome://extensions` for Chrome).
+3. Open Edge and go to `edge://extensions` (or `chrome://extensions` for Chrome,
+   `brave://extensions` for Brave).
 4. Enable "Developer mode" (toggle in top right).
 5. Click "Load unpacked" and select the `webext/add-on/` directory.
 6. Note the extension ID shown on the extensions page (e.g., `abcdefghijklmnop...`).
@@ -94,6 +95,8 @@ couple of options:
    # mkdir -p ~/.config/google-chrome/NativeMessagingHosts
    # For Chromium:
    # mkdir -p ~/.config/chromium/NativeMessagingHosts
+   # For Brave:
+   # mkdir -p ~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts
 
    cat > ~/.config/microsoft-edge/NativeMessagingHosts/xyz.iinuwa.credentialsd_helper.json << EOF
    {
@@ -107,7 +110,7 @@ couple of options:
    ```
    Replace `YOUR_EXTENSION_ID` with the extension ID from step 6.
 8. Build with `ninja -C ./build` and run the D-Bus services:
-   - `GSCHEMA_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/target/debug/credentialsd-ui`
-   - `./build/credentialsd/target/debug/credentialsd`
+   - `GSETTINGS_SCHEMA_DIR=build/credentialsd-ui/data ./build/credentialsd-ui/src/credentialsd-ui`
+   - `./build/credentialsd/src/credentialsd`
 9. Navigate to [https://webauthn.io]().
 10. Run through the registration and creation process.
