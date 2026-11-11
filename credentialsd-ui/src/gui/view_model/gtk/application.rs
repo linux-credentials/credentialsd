@@ -26,6 +26,8 @@ mod imp {
         pub window: OnceCell<WeakRef<CredentialsUiWindow>>,
 
         pub(super) parent_window: RefCell<Option<WindowHandle>>,
+        /// Token from the caller that allows the window to take focus.
+        pub(super) activation_token: RefCell<Option<String>>,
         pub(super) tx: RefCell<Option<Sender<ViewEvent>>>,
         pub(super) rx: RefCell<Option<Receiver<ViewUpdate>>>,
     }
@@ -59,6 +61,11 @@ mod imp {
             let window = CredentialsUiWindow::new(&app, view_model);
             if let Some(parent_window) = self.parent_window.borrow().as_ref() {
                 _ = self.set_dialog_window(&window, parent_window);
+            }
+            // GTK hands this to the compositor (xdg-activation on Wayland,
+            // startup notification on X11) when the window is presented.
+            if let Some(token) = self.activation_token.take() {
+                window.set_startup_id(&token);
             }
 
             let window2 = window.clone();
@@ -214,11 +221,13 @@ impl CredentialsUi {
 
     pub(crate) fn new(
         parent_window: Option<WindowHandle>,
+        activation_token: Option<String>,
         tx: Sender<ViewEvent>,
         rx: Receiver<ViewUpdate>,
     ) -> Self {
         let app: Self = glib::Object::new();
         app.imp().parent_window.replace(parent_window);
+        app.imp().activation_token.replace(activation_token);
         app.imp().tx.replace(Some(tx));
         app.imp().rx.replace(Some(rx));
         app

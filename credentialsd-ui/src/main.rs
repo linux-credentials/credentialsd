@@ -73,4 +73,8 @@ pub struct ViewRequest {
 
     /// Client window handle.
     pub window_handle: Option<WindowHandle>,
+
+    /// XDG activation token (Wayland) or startup notification ID (X11) that
+    /// lets the UI window take focus.
+    pub activation_token: Option<String>,
 }

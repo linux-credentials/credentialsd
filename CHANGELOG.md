@@ -9,6 +9,7 @@
 ## Improvements
 
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
+- ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 
 # 0.4.0 [2026-11-05]
 
