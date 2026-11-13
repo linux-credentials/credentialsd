@@ -217,10 +217,10 @@ impl CredentialPortalGateway {
 
 /// Runs a ceremony that the client can cancel.
 ///
-/// If `request_handle` is set, an `org.freedesktop.impl.portal.Request` object
-/// is exported at that path for the duration of the ceremony. Calling `Close()`
-/// on it cancels the token passed to `ceremony`, and the ceremony is reported
-/// as cancelled.
+/// If `request_handle` is set, an
+/// `org.freedesktop.handler.portal.experimental.Request` object is exported at
+/// that path for the duration of the ceremony. Calling `Close()` on it cancels
+/// the token passed to `ceremony`, and the ceremony is reported as cancelled.
 async fn run_ceremony<T, F, Fut>(
     connection: &Connection,
     sender: Option<&UniqueName<'_>>,
@@ -246,7 +246,7 @@ where
         tracing::warn!(%request_handle, "Invalid request handle passed. Rejecting request.");
         return Err(Error::TypeError).into();
     }
-    let request = PortalRequest {
+    let request = HandlerRequest {
         caller: sender.to_owned().into(),
         cancellation: cancellation.clone(),
     };
@@ -267,7 +267,7 @@ where
 
     if let Err(err) = connection
         .object_server()
-        .remove::<PortalRequest, _>(request_handle.as_ref())
+        .remove::<HandlerRequest, _>(request_handle.as_ref())
         .await
     {
         tracing::warn!(%request_handle, %err, "Failed to remove request handle");
@@ -282,14 +282,19 @@ where
 }
 
 /// Request object that lets the caller cancel an in-flight ceremony.
-struct PortalRequest {
+///
+/// This is part of the internal interface between xdg-desktop-portal and the
+/// handler, not of the backend portal API: clients should close the
+/// `org.freedesktop.portal.Request` object exported by xdg-desktop-portal, which
+/// forwards the call here.
+struct HandlerRequest {
     /// Unique bus name of the caller that started the ceremony.
     caller: OwnedUniqueName,
     cancellation: CancellationToken,
 }
 
-#[interface(name = "org.freedesktop.impl.portal.Request")]
-impl PortalRequest {
+#[interface(name = "org.freedesktop.handler.portal.experimental.Request")]
+impl HandlerRequest {
     async fn close(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
         if header.sender() != Some(&self.caller) {
             tracing::warn!(sender = ?header.sender(), "Rejecting request to close request from untrusted caller");
@@ -332,7 +337,8 @@ struct CreateCredentialPortalOptions {
     /// type.
     public_key: Option<String>,
 
-    /// Path at which to export an `org.freedesktop.impl.portal.Request`
+    /// Path at which to export an
+    /// `org.freedesktop.handler.portal.experimental.Request`
     /// object that the caller can use to cancel the request.
     request_handle: Option<OwnedObjectPath>,
 }
@@ -352,7 +358,8 @@ struct GetCredentialPortalOptions {
     /// type.
     public_key: Option<String>,
 
-    /// Path at which to export an `org.freedesktop.impl.portal.Request`
+    /// Path at which to export an
+    /// `org.freedesktop.handler.portal.experimental.Request`
     /// object that the caller can use to cancel the request.
     request_handle: Option<OwnedObjectPath>,
 }
@@ -766,7 +773,7 @@ mod test {
             .call_method(
                 gateway.unique_name(),
                 handle,
-                Some("org.freedesktop.impl.portal.Request"),
+                Some("org.freedesktop.handler.portal.experimental.Request"),
                 "Close",
                 &(),
             )

@@ -54,11 +54,11 @@ sequenceDiagram
 - (Gateway): Make `origin` and `type` a required method parameter.
 - (Gateway): Flatten nested D-Bus struct with `request_json` on CreateCredential and GetCredential
 - (Gateway): Remove Client Capabilities method from Gateway API until further notice.
+- (UI Controller): Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
 
 ### Improvements
 
 - Document errors returned to gateway requests
-- (Gateway): Add optional `request_handle` option to allow clients to cancel requests
 
 ## [0.1.0] - 2025-08-14
 
@@ -205,7 +205,6 @@ CreateCredentialRequest(
     IN options a{sv} {
         activation_token: s
         top_origin: s
-        request_handle: o
         <type_specific_fields>
     },
     IN app_id s,
@@ -213,8 +212,6 @@ CreateCredentialRequest(
 ```
 
 For information on `parent_window`, see [Window Identifiers](#window-identifiers).
-
-For information on `request_handle`, see [Cancelling Requests](#cancelling-requests).
 
 > TODO: We should make this a tagged enum
 
@@ -326,7 +323,6 @@ GetCredentialRequest (
     IN options a{sv} {
         activation_token: s
         top_origin: s
-        request_handle: o
         <type_specific_fields>
         public_key: s
     },
@@ -335,8 +331,6 @@ GetCredentialRequest (
 ```
 
 For information on `parent_window`, see [Window Identifiers](#window-identifiers).
-
-For information on `request_handle`, see [Cancelling Requests](#cancelling-requests).
 
 Note that while only one credential type can be specified in
 `CreateCredential()`, credential types in this `GetCredential()` are not mutually
@@ -408,43 +402,6 @@ denoted by `type: "publicKey"`:
 - `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
 - `TypeError`: An invalid request is made.
 - `NotAllowedError`: catch-all error.
-
-## Cancelling Requests
-
-`CreateCredential()` and `GetCredential()` return a response code and results,
-following the [XDG Desktop Portal `Response` conventions][xdg-request]:
-
-- `0`: Success. The results contain the credential.
-- `1`: The request was cancelled by the client. The results are empty.
-- `2`: The request failed. The results contain an `error` string.
-
-A caller that wants to be able to cancel an in-flight request passes the
-optional `request_handle` option, an object path below
-`/org/freedesktop/portal/desktop/request/`. For the duration of the request, the
-gateway exports an object implementing `org.freedesktop.impl.portal.Request` at
-that path:
-
-```
-org.freedesktop.impl.portal.Request {
-    Close()
-}
-```
-
-Calling `Close()` cancels the request and dismisses the UI, and the original
-method call returns response code `1`. `Close()` is only accepted from the same
-D-Bus connection that made the `CreateCredential()` or `GetCredential()` call;
-other callers receive `org.freedesktop.DBus.Error.AccessDenied`. The object is
-removed when the request ends, whether it succeeded, failed or was cancelled.
-
-If the path is already in use or is outside of the prefix above, the request is
-rejected with `TypeError`. If `request_handle` is omitted, the request cannot be
-cancelled.
-
-xdg-desktop-portal passes the path of the `Request` object it created for the
-client, so that closing that request, or the client disconnecting, cancels the
-ceremony.
-
-[xdg-request]: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Request.html
 
 # Flow Control API
 
@@ -553,9 +510,6 @@ The device needs evidence of user presence (e.g. touch) to release the credentia
 
 ### BackgroundEvent::SelectingCredential
 
-> TODO: field names of Credential type are confusing: "name" is an ID, and
-> "username" is a name. We should flip them.
-
 Multiple credentials have been found and the user has to select which to use
 
 `tag`: `0x13`
@@ -565,8 +519,10 @@ Multiple credentials have been found and the user has to select which to use
 ```
 Credential [a{sv}] {
     id: string. An opaque ID referring to the credential on the device.
-    name: string. A human-readable identifier for the account.
-    username: string. A human-readable name for the account, intended for display. May be empty.
+    name: string. A human-readable identifier for the account, from the WebAuthn
+        `user.name` field, for example, "alice@example.com".
+    display_name: string. A human-readable name for the account, intended for
+        display, from the WebAuthn `user.displayName` field. May be empty.
 }
 ```
 
