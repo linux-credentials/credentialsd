@@ -2,39 +2,37 @@
 //! request, so the user can be told instead of wasting a PIN attempt on a PIN
 //! that already failed.
 //!
-//! Each PIN is hashed with Argon2id, keyed with a random pepper created per
-//! history (that is, per request) and salted with a [`PinSalt`] that the
-//! caller creates each time a device asks for a PIN, so different devices
-//! and PIN prompts have distinct histories. The pepper and hashes live in an
+//! Each PIN is stored as a SHA-256 hash, so every entry has the same size
+//! whatever the PIN length. The hash covers a random pepper created per
+//! history (that is, per request), a [`PinSalt`] that the caller creates each
+//! time a device asks for a PIN, and the PIN, so different devices and PIN
+//! prompts have distinct histories. The pepper and hashes live in an
 //! anonymous mapping that is locked into RAM (`mlock`) and excluded from core
-//! dumps (`MADV_DONTDUMP`); so does Argon2's working memory while a PIN is
-//! hashed. Both are zeroed before they are unmapped.
+//! dumps (`MADV_DONTDUMP`), and are zeroed before it is unmapped.
 //!
-//! Limitation: the `blake2` crate used inside Argon2 does not zeroize its
-//! state, so a copy of the PIN, salt and pepper can remain on the hashing
-//! thread's stack until it is overwritten. The PIN itself is already held in
-//! ordinary memory by GTK while the user types it.
+//! Limitation: the `sha2` crate does not zeroize its state, so a copy of the
+//! PIN, salt and pepper can remain on the hashing thread's stack until it is
+//! overwritten. The PIN itself is already held in ordinary memory by GTK
+//! while the user types it.
 
 use std::{io, ptr::NonNull};
 
-use argon2::{Algorithm, Argon2, Block, Params, Version};
 use rand::{TryRng, rngs::SysRng};
+use sha2::{
+    Digest, Sha256,
+    digest::{OutputSizeUser, typenum::Unsigned},
+};
 use zeroize::Zeroize;
 
 const PEPPER_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const HASH_LEN: usize = 32;
+const _: () = assert!(HASH_LEN == <Sha256 as OutputSizeUser>::OutputSize::USIZE);
 /// One PIN prompt allows at most 8 attempts (CTAP's retry limit), so this
 /// is enough for a whole prompt.
 /// A power of two, so the ring buffer index is a cheap mask.
 const MAX_ENTRIES: usize = 16;
 const _: () = assert!(MAX_ENTRIES.is_power_of_two());
-
-/// Argon2 memory cost in KiB (one block each). Kept far below the usual
-/// 8 MiB `RLIMIT_MEMLOCK` so the working memory can be locked. The pepper is
-/// secret, so memory-hardness matters little here.
-const M_COST_KIB: u32 = 512;
-const T_COST: u32 = 3;
 
 const SCRATCH_OFFSET: usize = PEPPER_LEN;
 const ENTRIES_OFFSET: usize = SCRATCH_OFFSET + HASH_LEN;
@@ -56,8 +54,6 @@ pub(crate) enum PinHistoryError {
     Memory(io::Error),
     /// The kernel random number generator failed.
     Random(rand::rngs::SysError),
-    /// Argon2 rejected its parameters or inputs.
-    Hash(argon2::Error),
 }
 
 impl std::fmt::Display for PinHistoryError {
@@ -65,7 +61,6 @@ impl std::fmt::Display for PinHistoryError {
         match self {
             Self::Memory(err) => write!(f, "failed to set up locked memory for PIN history: {err}"),
             Self::Random(err) => write!(f, "failed to generate random bytes: {err}"),
-            Self::Hash(err) => write!(f, "failed to hash PIN: {err}"),
         }
     }
 }
@@ -75,9 +70,6 @@ impl std::error::Error for PinHistoryError {
         match self {
             Self::Memory(err) => Some(err),
             Self::Random(err) => Some(err),
-            // argon2::Error only implements std::error::Error with the
-            // crate's `std` feature; its message is included in Display.
-            Self::Hash(_) => None,
         }
     }
 }
@@ -120,20 +112,14 @@ impl PinHistory {
 
     /// Checks `pin` against the PINs already tried with `salt` and records it
     /// if it is new.
-    pub(crate) fn check(
-        &mut self,
-        salt: &PinSalt,
-        pin: &[u8],
-    ) -> Result<PinCheck, PinHistoryError> {
-        let hashed = self.hash_into_scratch(salt, pin);
-        let result = hashed.map(|()| {
-            if self.scratch_is_recorded() {
-                PinCheck::AlreadyTried
-            } else {
-                self.push_scratch();
-                PinCheck::Send
-            }
-        });
+    pub(crate) fn check(&mut self, salt: &PinSalt, pin: &[u8]) -> PinCheck {
+        self.hash_into_scratch(salt, pin);
+        let result = if self.scratch_is_recorded() {
+            PinCheck::AlreadyTried
+        } else {
+            self.push_scratch();
+            PinCheck::Send
+        };
         self.page.as_mut_slice()[SCRATCH_OFFSET..ENTRIES_OFFSET].zeroize();
         result
     }
@@ -152,20 +138,15 @@ impl PinHistory {
                 .all(|b| *b == 0)
     }
 
-    fn hash_into_scratch(&mut self, salt: &PinSalt, pin: &[u8]) -> Result<(), PinHistoryError> {
+    fn hash_into_scratch(&mut self, salt: &PinSalt, pin: &[u8]) {
         let bytes = self.page.as_mut_slice();
         let (pepper, rest) = bytes.split_at_mut(SCRATCH_OFFSET);
         let scratch = &mut rest[..HASH_LEN];
-        let params =
-            Params::new(M_COST_KIB, T_COST, 1, Some(HASH_LEN)).map_err(PinHistoryError::Hash)?;
-        let argon = Argon2::new_with_secret(pepper, Algorithm::Argon2id, Version::V0x13, params)
-            .map_err(PinHistoryError::Hash)?;
-        // Dropped (zeroed and unmapped) at the end of this function.
-        let mut memory = LockedPage::new(M_COST_KIB as usize * size_of::<Block>())
-            .map_err(PinHistoryError::Memory)?;
-        argon
-            .hash_password_into_with_memory(pin, &salt.0, scratch, memory.as_mut_blocks())
-            .map_err(PinHistoryError::Hash)
+        let mut hasher = Sha256::new();
+        hasher.update(&*pepper);
+        hasher.update(salt.0);
+        hasher.update(pin);
+        hasher.finalize_into(scratch.into());
     }
 
     fn scratch_is_recorded(&self) -> bool {
@@ -252,17 +233,6 @@ impl LockedPage {
         // SAFETY: as in `as_slice`; `&mut self` guarantees exclusive access.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
-
-    /// Views the mapping as Argon2 blocks; trailing bytes that do not fill a
-    /// whole block are left out.
-    fn as_mut_blocks(&mut self) -> &mut [Block] {
-        let count = self.len / size_of::<Block>();
-        // SAFETY: mmap returns page-aligned memory, which satisfies Block's
-        // 64-byte alignment; `count` blocks fit in `len` bytes; a Block is a
-        // plain array of u64, for which the all-zero (or any) bit pattern is
-        // valid; `&mut self` guarantees exclusive access.
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast::<Block>(), count) }
-    }
 }
 
 impl Drop for LockedPage {
@@ -289,61 +259,49 @@ mod tests {
     #[test]
     fn new_pin_is_sent() {
         let mut history = PinHistory::new().unwrap();
-        assert_eq!(history.check(&salt(), b"1234").unwrap(), PinCheck::Send);
+        assert_eq!(history.check(&salt(), b"1234"), PinCheck::Send);
     }
 
     #[test]
     fn repeated_pin_is_always_refused() {
         let mut history = PinHistory::new().unwrap();
         let salt = salt();
-        history.check(&salt, b"1234").unwrap();
-        assert_eq!(
-            history.check(&salt, b"1234").unwrap(),
-            PinCheck::AlreadyTried
-        );
-        assert_eq!(
-            history.check(&salt, b"1234").unwrap(),
-            PinCheck::AlreadyTried
-        );
+        history.check(&salt, b"1234");
+        assert_eq!(history.check(&salt, b"1234"), PinCheck::AlreadyTried);
+        assert_eq!(history.check(&salt, b"1234"), PinCheck::AlreadyTried);
     }
 
     #[test]
     fn every_tried_pin_is_remembered() {
         let mut history = PinHistory::new().unwrap();
         let salt = salt();
-        history.check(&salt, b"1111").unwrap();
-        history.check(&salt, b"2222").unwrap();
-        assert_eq!(
-            history.check(&salt, b"1111").unwrap(),
-            PinCheck::AlreadyTried
-        );
-        assert_eq!(
-            history.check(&salt, b"2222").unwrap(),
-            PinCheck::AlreadyTried
-        );
-        assert_eq!(history.check(&salt, b"3333").unwrap(), PinCheck::Send);
+        history.check(&salt, b"1111");
+        history.check(&salt, b"2222");
+        assert_eq!(history.check(&salt, b"1111"), PinCheck::AlreadyTried);
+        assert_eq!(history.check(&salt, b"2222"), PinCheck::AlreadyTried);
+        assert_eq!(history.check(&salt, b"3333"), PinCheck::Send);
     }
 
     #[test]
     fn different_salts_keep_separate_histories() {
         let mut history = PinHistory::new().unwrap();
-        history.check(&salt(), b"1234").unwrap();
-        assert_eq!(history.check(&salt(), b"1234").unwrap(), PinCheck::Send);
+        history.check(&salt(), b"1234");
+        assert_eq!(history.check(&salt(), b"1234"), PinCheck::Send);
     }
 
     #[test]
     fn clear_forgets_tried_pins() {
         let mut history = PinHistory::new().unwrap();
         let salt = salt();
-        history.check(&salt, b"1234").unwrap();
+        history.check(&salt, b"1234");
         history.clear();
-        assert_eq!(history.check(&salt, b"1234").unwrap(), PinCheck::Send);
+        assert_eq!(history.check(&salt, b"1234"), PinCheck::Send);
     }
 
     #[test]
     fn clear_wipes_stored_hashes() {
         let mut history = PinHistory::new().unwrap();
-        history.check(&salt(), b"1234").unwrap();
+        history.check(&salt(), b"1234");
         history.clear();
         let bytes = history.page.as_slice();
         assert!(bytes[ENTRIES_OFFSET..].iter().all(|b| *b == 0));
@@ -355,31 +313,22 @@ mod tests {
         let salt = salt();
         for i in 0..=MAX_ENTRIES {
             assert_eq!(
-                history.check(&salt, format!("{i:04}").as_bytes()).unwrap(),
+                history.check(&salt, format!("{i:04}").as_bytes()),
                 PinCheck::Send
             );
         }
         // 0000 was overwritten by 0016; sending it again overwrites 0001.
-        assert_eq!(history.check(&salt, b"0000").unwrap(), PinCheck::Send);
-        assert_eq!(history.check(&salt, b"0001").unwrap(), PinCheck::Send);
-        assert_eq!(
-            history.check(&salt, b"0003").unwrap(),
-            PinCheck::AlreadyTried
-        );
-        assert_eq!(
-            history.check(&salt, b"0016").unwrap(),
-            PinCheck::AlreadyTried
-        );
-        assert_eq!(
-            history.check(&salt, b"0000").unwrap(),
-            PinCheck::AlreadyTried
-        );
+        assert_eq!(history.check(&salt, b"0000"), PinCheck::Send);
+        assert_eq!(history.check(&salt, b"0001"), PinCheck::Send);
+        assert_eq!(history.check(&salt, b"0003"), PinCheck::AlreadyTried);
+        assert_eq!(history.check(&salt, b"0016"), PinCheck::AlreadyTried);
+        assert_eq!(history.check(&salt, b"0000"), PinCheck::AlreadyTried);
     }
 
     #[test]
     fn scratch_hash_is_wiped_after_check() {
         let mut history = PinHistory::new().unwrap();
-        history.check(&salt(), b"98765432").unwrap();
+        history.check(&salt(), b"98765432");
         let bytes = history.page.as_slice();
         assert!(
             bytes[SCRATCH_OFFSET..ENTRIES_OFFSET]
