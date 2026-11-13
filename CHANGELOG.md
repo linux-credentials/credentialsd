@@ -8,6 +8,7 @@
 
 ## Improvements
 
+- build: Harden the systemd user services with seccomp-based sandboxing (system call filter, address family and namespace restrictions, no new privileges) (#21)
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
