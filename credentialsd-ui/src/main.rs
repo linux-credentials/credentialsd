@@ -3,6 +3,7 @@ mod client;
 mod config;
 mod dbus;
 mod gui;
+mod hardening;
 
 use std::error::Error;
 
@@ -13,6 +14,12 @@ use crate::dbus::CredentialPortalBackend;
 
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt::init();
+    // Keep typed PINs out of core dumps.
+    if config::ENABLE_CORE_DUMPS {
+        tracing::info!("Core dumps are enabled by the enable_core_dumps build option");
+    } else if let Err(err) = hardening::disable_core_dumps() {
+        tracing::warn!(%err, "Failed to disable core dumps");
+    }
     tracing::debug!("Starting credentials UI service");
     async_std::task::block_on(run())
 }
