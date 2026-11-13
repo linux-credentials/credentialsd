@@ -21,12 +21,13 @@ use credentialsd_common::model::{
     BACKGROUND_EVENT_ERROR_NO_CREDENTIALS, BACKGROUND_EVENT_ERROR_PIN_ATTEMPTS_EXHAUSTED,
     BACKGROUND_EVENT_ERROR_PIN_NOT_SET, BACKGROUND_EVENT_ERROR_TIMED_OUT, BackgroundEvent,
     ClientPinEnteredOptions, Credential, CredentialSelectedOptions, Device,
-    DiscoveryRequestedOptions, NotifyHybridConnectedOptions, NotifyHybridConnectingOptions,
-    NotifyHybridRestartingOptions, NotifyHybridStartedOptions, NotifyNeedsPinOptions,
-    NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions, NotifyNfcConnectedOptions,
-    NotifyNfcRestartingOptions, NotifyPinNotSetOptions, NotifySelectingCredentialOptions,
-    NotifyUsbConnectedOptions, NotifyUsbRestartingOptions, Operation, PinNotSetError,
-    PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent, WindowHandle,
+    DiscoveryRequestedOptions, NotifyDevicesChangedOptions, NotifyHybridConnectedOptions,
+    NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
+    NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
+    NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
+    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
+    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, UserInteractedEvent,
+    WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -147,6 +148,17 @@ trait UiControlService {
         &self,
         session_handle: ObjectPath<'_>,
         _options: NotifyUsbConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    /// Emitted when the set of available authenticator sources changes during
+    /// the request, e.g. because Bluetooth was turned on. `devices` is the
+    /// full new list.
+    #[zbus(no_reply)]
+    async fn notify_devices_changed(
+        &self,
+        session_handle: ObjectPath<'_>,
+        devices: Vec<Device>,
+        _options: NotifyDevicesChangedOptions,
     ) -> fdo::Result<()>;
 
     #[zbus(no_reply)]
@@ -318,6 +330,15 @@ impl Ceremony {
                     .notify_usb_connected(
                         self.session_handle.as_ref(),
                         NotifyUsbConnectedOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::DevicesChanged(devices) => {
+                self.proxy
+                    .notify_devices_changed(
+                        self.session_handle.as_ref(),
+                        devices,
+                        NotifyDevicesChangedOptions {},
                     )
                     .await
             }

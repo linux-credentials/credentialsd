@@ -153,6 +153,8 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
             loop {
                 let Some(ui_request) = flow.receive_ui_event().await else {
                     tracing::debug!("UI event stream closed");
+                    // Without a UI, nobody can finish the request.
+                    svc.lock().await.cancel_request(request_id).await;
                     break;
                 };
                 match ui_request {
