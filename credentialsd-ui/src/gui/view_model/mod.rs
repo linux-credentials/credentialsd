@@ -18,7 +18,7 @@ use credentialsd_common::model::{Device, Operation, Transport};
 use crate::{
     RequestingApplication, ViewRequest,
     client::{CTAP_CLIENT_SECRET_MAX_LEN, FlowControlClient},
-    pin_history::{PinCheck, PinHistory},
+    pin_history::{PinCheck, PinHistory, PinSalt},
 };
 
 use super::ViewUpdate;
@@ -41,9 +41,12 @@ pub(crate) struct ViewModel {
 
     hybrid_qr_code_data: Option<Vec<u8>>,
 
-    /// Hashes of PINs already sent to the connected device, if the locked
-    /// memory for them could be set up.
+    /// Hashes of PINs already sent during the current PIN prompt, if the
+    /// locked memory for them could be set up.
     pin_history: Option<PinHistory>,
+    /// Salt for the current PIN prompt. Set while a device is asking for a
+    /// PIN, and dropped together with the history as soon as it stops.
+    pin_salt: Option<PinSalt>,
     /// PIN retries left, as last reported by the device.
     pin_attempts_left: Option<u32>,
 }
@@ -79,6 +82,7 @@ impl ViewModel {
             pin_history: PinHistory::new()
                 .inspect_err(|err| warn!(%err, "Not warning about repeated PIN entries"))
                 .ok(),
+            pin_salt: None,
             pin_attempts_left: None,
         }
     }
@@ -90,10 +94,11 @@ impl ViewModel {
         if pin.len() > CTAP_CLIENT_SECRET_MAX_LEN {
             return false;
         }
-        let Some(history) = self.pin_history.as_mut() else {
+        let (Some(history), Some(salt)) = (self.pin_history.as_mut(), self.pin_salt.as_ref())
+        else {
             return false;
         };
-        match history.check(pin.as_bytes()) {
+        match history.check(salt, pin.as_bytes()) {
             Ok(check) => check == PinCheck::AlreadyTried,
             Err(err) => {
                 warn!(%err, "Failed to check PIN against earlier attempts");
@@ -102,12 +107,26 @@ impl ViewModel {
         }
     }
 
-    /// Forgets earlier PIN attempts, since a new connection may be a
-    /// different device with a different PIN.
-    fn reset_pin_history(&mut self) {
-        if let Some(Err(err)) = self.pin_history.as_mut().map(PinHistory::clear) {
-            warn!(%err, "Failed to reset PIN history");
-            self.pin_history = None;
+    /// Starts a PIN history when a device asks for a PIN, and wipes it as
+    /// soon as the prompt is over: the PIN was accepted, the device changed,
+    /// or the request failed. Called for every event before it is handled.
+    fn track_pin_prompt(&mut self, event: &Event) {
+        match pin_prompt_change(event) {
+            Some(PinPrompt::Open) => {
+                if self.pin_salt.is_none() {
+                    self.pin_salt = PinSalt::generate()
+                        .inspect_err(|err| warn!(%err, "Not warning about repeated PIN entries"))
+                        .ok();
+                }
+            }
+            Some(PinPrompt::Closed) => {
+                if self.pin_salt.take().is_some()
+                    && let Some(history) = self.pin_history.as_mut()
+                {
+                    history.clear();
+                }
+            }
+            None => {}
         }
     }
 
@@ -185,6 +204,7 @@ impl ViewModel {
         let mut all_events = view_events.merge(bg_events.map(Event::Background));
         while let Some(event) = all_events.next().await {
             tracing::trace!("View event received: {event:?}");
+            self.track_pin_prompt(&event);
             match event {
                 Event::View(ViewEvent::Initiated) => {
                     self.update_title().await;
@@ -254,7 +274,6 @@ impl ViewModel {
 
                 Event::Background(BackgroundEvent::UsbConnected) => {
                     info!("Found USB device");
-                    self.reset_pin_history();
                     self.tx_update
                         .send(ViewUpdate::WaitingForDevice(Device {
                             id: "TODO: bogus".to_string(),
@@ -358,7 +377,6 @@ impl ViewModel {
                 }
                 Event::Background(BackgroundEvent::NfcConnected) => {
                     info!("Found NFC device");
-                    self.reset_pin_history();
                     self.tx_update
                         .send(ViewUpdate::WaitingForDevice(Device {
                             id: "TODO: bogus".to_string(),
@@ -451,6 +469,60 @@ pub enum Event {
     View(ViewEvent),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinPrompt {
+    Open,
+    Closed,
+}
+
+/// How `event` affects the PIN prompt, if at all.
+///
+/// Events that cannot come from the device being asked for its PIN are
+/// ignored, so that e.g. hybrid restarting in the background does not wipe
+/// the history while the user is typing. `ErrorAuthenticator` and
+/// `ErrorInternal` don't say which transport failed, so they are ignored too;
+/// the transport restarting afterwards ends the prompt.
+///
+/// Any USB or NFC event ends the prompt. That assumes only one of the two is
+/// discovering at a time, which holds while NFC discovery is disabled in the
+/// daemon; if both run at once, events from the other transport should be
+/// ignored like hybrid ones.
+fn pin_prompt_change(event: &Event) -> Option<PinPrompt> {
+    let Event::Background(event) = event else {
+        return None;
+    };
+    match event {
+        BackgroundEvent::NeedsPin { .. } => Some(PinPrompt::Open),
+        BackgroundEvent::HybridIdle
+        | BackgroundEvent::HybridStarted(_)
+        | BackgroundEvent::HybridConnecting
+        | BackgroundEvent::HybridConnected
+        | BackgroundEvent::HybridRestarting
+        | BackgroundEvent::ErrorAuthenticator
+        | BackgroundEvent::ErrorInternal => None,
+        BackgroundEvent::CeremonyCompleted
+        | BackgroundEvent::PinNotSet { .. }
+        | BackgroundEvent::NeedsUserVerification { .. }
+        | BackgroundEvent::NeedsUserPresence
+        | BackgroundEvent::SelectingCredential { .. }
+        | BackgroundEvent::NfcIdle
+        | BackgroundEvent::NfcWaiting
+        | BackgroundEvent::NfcConnected
+        | BackgroundEvent::NfcRestarting
+        | BackgroundEvent::UsbIdle
+        | BackgroundEvent::UsbWaiting
+        | BackgroundEvent::UsbSelectingDevice
+        | BackgroundEvent::UsbConnected
+        | BackgroundEvent::UsbRestarting
+        | BackgroundEvent::ErrorTimedOut
+        | BackgroundEvent::ErrorCancelled
+        | BackgroundEvent::ErrorNoCredentials
+        | BackgroundEvent::ErrorPinAttemptsExhausted
+        | BackgroundEvent::ErrorPinNotSet
+        | BackgroundEvent::ErrorCredentialExcluded => Some(PinPrompt::Closed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use async_std::channel::{Receiver, Sender, unbounded};
@@ -465,7 +537,7 @@ mod tests {
         sent: Receiver<UserInteractedEvent>,
     }
 
-    fn start() -> Harness {
+    fn view_model() -> (ViewModel, Harness) {
         let (view_tx, view_rx) = unbounded();
         let (bg_tx, bg_rx) = unbounded();
         let (update_tx, updates) = unbounded();
@@ -480,30 +552,49 @@ mod tests {
             requesting_app: RequestingApplication::default(),
             initial_devices: Vec::new(),
             window_handle: None,
+            activation_token: None,
         };
-        let mut vm = ViewModel::new(
+        let vm = ViewModel::new(
             request,
             Arc::new(AsyncMutex::new(client)),
             view_rx,
             update_tx,
         );
-        async_std::task::spawn(async move { vm.start_event_loop().await });
-        Harness {
+        let harness = Harness {
             view_tx,
             bg_tx,
             updates,
             sent,
-        }
+        };
+        (vm, harness)
+    }
+
+    fn start() -> Harness {
+        let (mut vm, harness) = view_model();
+        async_std::task::spawn(async move { vm.start_event_loop().await });
+        harness
     }
 
     impl Harness {
+        /// Sends a background event and returns the first view update it
+        /// causes.
+        async fn background(&self, event: BackgroundEvent) -> ViewUpdate {
+            self.bg_tx.send(event).await.unwrap();
+            self.updates.recv().await.unwrap()
+        }
+
         async fn connect_usb(&self) {
-            self.bg_tx
-                .send(BackgroundEvent::UsbConnected)
-                .await
-                .unwrap();
-            let update = self.updates.recv().await.unwrap();
+            let update = self.background(BackgroundEvent::UsbConnected).await;
             assert!(matches!(update, ViewUpdate::WaitingForDevice(_)));
+        }
+
+        async fn needs_pin(&self) {
+            let update = self
+                .background(BackgroundEvent::NeedsPin {
+                    attempts_left: Some(8),
+                })
+                .await;
+            assert!(matches!(update, ViewUpdate::NeedsPin { .. }));
         }
 
         /// Enters `pin` and returns true if it was sent to the backend.
@@ -528,6 +619,7 @@ mod tests {
         async_std::task::block_on(async {
             let h = start();
             h.connect_usb().await;
+            h.needs_pin().await;
             assert!(h.enter_pin("1234").await);
             assert!(!h.enter_pin("1234").await);
             assert!(!h.enter_pin("1234").await);
@@ -536,10 +628,113 @@ mod tests {
     }
 
     #[test]
+    fn wrong_pin_prompt_keeps_history() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            // The device rejected the PIN and asks again.
+            h.needs_pin().await;
+            assert!(!h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn hybrid_restart_during_pin_prompt_keeps_history() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            let update = h.background(BackgroundEvent::HybridRestarting).await;
+            assert!(matches!(update, ViewUpdate::TransportRestarting));
+            assert!(!h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn ambiguous_error_during_pin_prompt_keeps_history() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            let update = h.background(BackgroundEvent::ErrorAuthenticator).await;
+            assert!(matches!(update, ViewUpdate::Failed(_)));
+            assert!(!h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn transport_restart_forgets_tried_pins() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            let update = h.background(BackgroundEvent::UsbRestarting).await;
+            assert!(matches!(update, ViewUpdate::TransportRestarting));
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn accepted_pin_forgets_tried_pins() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            let update = h.background(BackgroundEvent::NeedsUserPresence).await;
+            assert!(matches!(update, ViewUpdate::NeedsUserPresence));
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn new_connection_forgets_tried_pins() {
+        async_std::task::block_on(async {
+            let h = start();
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+            h.connect_usb().await;
+            h.needs_pin().await;
+            assert!(h.enter_pin("1234").await);
+        });
+    }
+
+    #[test]
+    fn end_of_pin_prompt_wipes_history_and_salt() {
+        let (mut vm, _h) = view_model();
+        vm.track_pin_prompt(&Event::Background(BackgroundEvent::NeedsPin {
+            attempts_left: None,
+        }));
+        assert!(vm.pin_salt.is_some());
+        assert!(!vm.pin_already_tried("1234"));
+        assert!(!vm.pin_history.as_ref().unwrap().is_empty());
+
+        vm.track_pin_prompt(&Event::Background(BackgroundEvent::NeedsUserPresence));
+        assert!(vm.pin_salt.is_none());
+        assert!(vm.pin_history.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pin_entered_without_prompt_is_not_recorded() {
+        let (mut vm, _h) = view_model();
+        assert!(!vm.pin_already_tried("1234"));
+        assert!(vm.pin_history.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
     fn over_long_pin_is_not_recorded() {
         async_std::task::block_on(async {
             let h = start();
             h.connect_usb().await;
+            h.needs_pin().await;
             let long = "1".repeat(CTAP_CLIENT_SECRET_MAX_LEN + 1);
             h.view_tx
                 .send(ViewEvent::PinEntered(long.clone()))
@@ -550,17 +745,6 @@ mod tests {
             // already tried; the next valid PIN goes straight through.
             assert!(h.enter_pin("1234").await);
             assert!(h.updates.try_recv().is_err());
-        });
-    }
-
-    #[test]
-    fn new_connection_forgets_tried_pins() {
-        async_std::task::block_on(async {
-            let h = start();
-            h.connect_usb().await;
-            assert!(h.enter_pin("1234").await);
-            h.connect_usb().await;
-            assert!(h.enter_pin("1234").await);
         });
     }
 }
