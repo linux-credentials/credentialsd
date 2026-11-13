@@ -179,6 +179,22 @@ impl ViewModel {
                                     view_model.set_prompt(prompt);
                                     view_model.set_usb_nfc_pin_entry_visible(true);
                                 }
+                                ViewUpdate::PinAlreadyTried { attempts_left } => {
+                                    let prompt = if let Some(left) = attempts_left {
+                                        let localized = ngettext(
+                                            "You already tried this PIN. Enter a different PIN. One attempt remaining.",
+                                            "You already tried this PIN. Enter a different PIN. %d attempts remaining.",
+                                            left,
+                                        );
+                                        localized.replace("%d", &format!("{}", left))
+                                    } else {
+                                        gettext(
+                                            "You already tried this PIN. Enter a different PIN.",
+                                        )
+                                    };
+                                    view_model.set_prompt(prompt);
+                                    view_model.set_usb_nfc_pin_entry_visible(true);
+                                }
                                 ViewUpdate::NeedsUserVerification { attempts_left } => {
                                     let prompt = match attempts_left {
                                         Some(left) => {

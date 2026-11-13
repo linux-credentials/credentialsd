@@ -843,10 +843,13 @@ dependencies = [
  "gtk4",
  "libc",
  "qrcode",
+ "rand 0.10.2",
  "serde",
+ "sha2",
  "tracing",
  "tracing-subscriber",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]
