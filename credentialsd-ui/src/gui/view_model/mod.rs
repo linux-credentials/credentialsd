@@ -98,13 +98,7 @@ impl ViewModel {
         else {
             return false;
         };
-        match history.check(salt, pin.as_bytes()) {
-            Ok(check) => check == PinCheck::AlreadyTried,
-            Err(err) => {
-                warn!(%err, "Failed to check PIN against earlier attempts");
-                false
-            }
-        }
+        history.check(salt, pin.as_bytes()) == PinCheck::AlreadyTried
     }
 
     /// Starts a PIN history when a device asks for a PIN, and wipes it as
@@ -479,9 +473,7 @@ enum PinPrompt {
 ///
 /// Events that cannot come from the device being asked for its PIN are
 /// ignored, so that e.g. hybrid restarting in the background does not wipe
-/// the history while the user is typing. `ErrorAuthenticator` and
-/// `ErrorInternal` don't say which transport failed, so they are ignored too;
-/// the transport restarting afterwards ends the prompt.
+/// the history while the user is typing.
 ///
 /// Any USB or NFC event ends the prompt. That assumes only one of the two is
 /// discovering at a time, which holds while NFC discovery is disabled in the
@@ -497,9 +489,7 @@ fn pin_prompt_change(event: &Event) -> Option<PinPrompt> {
         | BackgroundEvent::HybridStarted(_)
         | BackgroundEvent::HybridConnecting
         | BackgroundEvent::HybridConnected
-        | BackgroundEvent::HybridRestarting
-        | BackgroundEvent::ErrorAuthenticator
-        | BackgroundEvent::ErrorInternal => None,
+        | BackgroundEvent::HybridRestarting => None,
         BackgroundEvent::CeremonyCompleted
         | BackgroundEvent::PinNotSet { .. }
         | BackgroundEvent::NeedsUserVerification { .. }
@@ -519,7 +509,9 @@ fn pin_prompt_change(event: &Event) -> Option<PinPrompt> {
         | BackgroundEvent::ErrorNoCredentials
         | BackgroundEvent::ErrorPinAttemptsExhausted
         | BackgroundEvent::ErrorPinNotSet
-        | BackgroundEvent::ErrorCredentialExcluded => Some(PinPrompt::Closed),
+        | BackgroundEvent::ErrorCredentialExcluded
+        | BackgroundEvent::ErrorAuthenticator
+        | BackgroundEvent::ErrorInternal => Some(PinPrompt::Closed),
     }
 }
 
@@ -654,16 +646,21 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_error_during_pin_prompt_keeps_history() {
-        async_std::task::block_on(async {
-            let h = start();
-            h.connect_usb().await;
-            h.needs_pin().await;
-            assert!(h.enter_pin("1234").await);
-            let update = h.background(BackgroundEvent::ErrorAuthenticator).await;
-            assert!(matches!(update, ViewUpdate::Failed(_)));
-            assert!(!h.enter_pin("1234").await);
-        });
+    fn error_during_pin_prompt_wipes_history_and_salt() {
+        for error in [
+            BackgroundEvent::ErrorAuthenticator,
+            BackgroundEvent::ErrorInternal,
+        ] {
+            let (mut vm, _h) = view_model();
+            vm.track_pin_prompt(&Event::Background(BackgroundEvent::NeedsPin {
+                attempts_left: None,
+            }));
+            assert!(!vm.pin_already_tried("1234"));
+
+            vm.track_pin_prompt(&Event::Background(error));
+            assert!(vm.pin_salt.is_none());
+            assert!(vm.pin_history.as_ref().unwrap().is_empty());
+        }
     }
 
     #[test]

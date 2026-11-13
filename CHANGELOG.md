@@ -11,7 +11,7 @@
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
-- ui: Tell the user when they enter a PIN that was already tried for the current PIN prompt, instead of sending it again. Tried PINs are kept as peppered Argon2id hashes in locked memory excluded from core dumps, and wiped as soon as the prompt ends (#209)
+- ui: Tell the user when they enter a PIN that was already tried for the current PIN prompt, instead of sending it again. Tried PINs are kept as fixed-size SHA-256 hashes in locked memory excluded from core dumps, and wiped as soon as the prompt ends (#209)
 
 # 0.4.0 [2026-11-05]
 
