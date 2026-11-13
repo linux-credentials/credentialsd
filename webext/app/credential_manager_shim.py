@@ -57,26 +57,30 @@ def getMessage():
 
 class PortalError(Exception):
     def from_string(s: str):
+        """Maps a credentialsd D-Bus error to the matching WebAuthn DOMException.
+
+        The returned class name is used as the DOMException name in the browser.
+        """
         m = re.match(r"xyz.iinuwa.credentialsd.(\w+): (?:no description|(.*))", s)
-        if m:
-            (name, message) = m.groups()
-            match name:
-                case "AbortError":
-                    return AbortError
-                case "ConstraintError":
-                    return ConstraintError
-                case "InvalidStateError":
-                    return InvalidStateError
-                case "NotSupportedError":
-                    return NotSupportedError
-                case "SecurityError":
-                    return SecurityError
-                case "NotAllowedError":
-                    return NotAllowedError
-                case "TypeError":
-                    return TypeError
-                case _:
-                    return PortalError()
+        if not m:
+            return NotAllowedError
+        match m.group(1):
+            case "Aborted":
+                return AbortError
+            case (
+                "UserVerificationUnsatisfiable" | "DiscoverableCredentialUnsatisfiable"
+            ):
+                return ConstraintError
+            case "CredentialExcluded":
+                return InvalidStateError
+            case "NotSupported":
+                return NotSupportedError
+            case "InvalidOrigin" | "UntrustedCaller":
+                return SecurityError
+            case "InvalidUserId" | "InvalidOptions":
+                return TypeError
+            case _:
+                return NotAllowedError
 
 
 class AbortError(PortalError):

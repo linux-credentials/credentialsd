@@ -352,11 +352,11 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             .unwrap();
         let response = rx.await.map_err(|_| {
             tracing::error!("Credential response channel closed prematurely");
-            WebAuthnError::NotAllowedError
+            WebAuthnError::NotAllowed
         })?;
         response.map_err(|err| match err {
-            CredentialServiceError::CredentialExcluded => WebAuthnError::InvalidStateError,
-            _ => WebAuthnError::NotAllowedError,
+            CredentialServiceError::CredentialExcluded => WebAuthnError::CredentialExcluded,
+            _ => WebAuthnError::NotAllowed,
         })
     }
 }

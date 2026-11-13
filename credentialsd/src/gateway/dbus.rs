@@ -84,7 +84,7 @@ impl CredentialPortalGateway {
             (CredentialType::PublicKey, Some(json)) => json,
             (CredentialType::PublicKey, None) => {
                 tracing::warn!("Client did not send `public_key` request with type `publicKey`");
-                return Err(Error::TypeError).into();
+                return Err(Error::InvalidOptions).into();
             }
         };
 
@@ -150,7 +150,7 @@ impl CredentialPortalGateway {
 
         let Some(request_json) = public_key else {
             tracing::warn!("Client did not send parameters for any valid credential type.");
-            return Err(Error::TypeError).into();
+            return Err(Error::InvalidOptions).into();
         };
 
         let context = match app_validation_result {
@@ -227,59 +227,39 @@ struct GetCredentialPortalOptions {
     public_key: Option<String>,
 }
 
-#[allow(clippy::enum_variant_names)]
+/// Errors returned over D-Bus. See [`WebAuthnError`] for their meaning.
 #[derive(DBusError, Debug)]
 #[zbus(prefix = "xyz.iinuwa.credentialsd")]
 enum Error {
     #[zbus(error)]
     ZBus(zbus::Error),
-
-    /// The ceremony was cancelled by an AbortController. See § 5.6 Abort
-    /// Operations with AbortSignal and § 1.3.4 Aborting Authentication
-    /// Operations.
-    AbortError,
-
-    /// Either `residentKey` was set to required and no available authenticator
-    /// supported resident keys, or `userVerification` was set to required and no
-    /// available authenticator could perform user verification.
-    ConstraintError,
-
-    /// The authenticator used in the ceremony recognized an entry in
-    /// `excludeCredentials` after the user consented to registering a credential.
-    InvalidStateError,
-
-    /// No entry in `pubKeyCredParams` had a type property of `public-key`, or the
-    /// authenticator did not support any of the signature algorithms specified
-    /// in `pubKeyCredParams`.
-    NotSupportedError,
-
-    /// The effective domain was not a valid domain, or `rp.id` was not equal to
-    /// or a registrable domain suffix of the effective domain. In the latter
-    /// case, the client does not support related origin requests or the related
-    /// origins validation procedure failed.
-    SecurityError,
-
-    /// A catch-all error covering a wide range of possible reasons, including
-    /// common ones like the user canceling out of the ceremony. Some of these
-    /// causes are documented throughout this spec, while others are
-    /// client-specific.
-    NotAllowedError,
-
-    /// The options argument was not a valid `CredentialCreationOptions` value, or
-    /// the value of `user.id` was empty or was longer than 64 bytes.
-    TypeError,
+    Aborted,
+    UserVerificationUnsatisfiable,
+    DiscoverableCredentialUnsatisfiable,
+    CredentialExcluded,
+    NotSupported,
+    InvalidOrigin,
+    UntrustedCaller,
+    InvalidUserId,
+    InvalidOptions,
+    NotAllowed,
 }
 
 impl From<WebAuthnError> for Error {
     fn from(value: WebAuthnError) -> Self {
         match value {
-            WebAuthnError::AbortError => Self::AbortError,
-            WebAuthnError::ConstraintError => Self::ConstraintError,
-            WebAuthnError::InvalidStateError => Self::InvalidStateError,
-            WebAuthnError::NotSupportedError => Self::NotSupportedError,
-            WebAuthnError::SecurityError => Self::SecurityError,
-            WebAuthnError::NotAllowedError => Self::NotAllowedError,
-            WebAuthnError::TypeError => Self::TypeError,
+            WebAuthnError::Aborted => Self::Aborted,
+            WebAuthnError::UserVerificationUnsatisfiable => Self::UserVerificationUnsatisfiable,
+            WebAuthnError::DiscoverableCredentialUnsatisfiable => {
+                Self::DiscoverableCredentialUnsatisfiable
+            }
+            WebAuthnError::CredentialExcluded => Self::CredentialExcluded,
+            WebAuthnError::NotSupported => Self::NotSupported,
+            WebAuthnError::InvalidOrigin => Self::InvalidOrigin,
+            WebAuthnError::UntrustedCaller => Self::UntrustedCaller,
+            WebAuthnError::InvalidUserId => Self::InvalidUserId,
+            WebAuthnError::InvalidOptions => Self::InvalidOptions,
+            WebAuthnError::NotAllowed => Self::NotAllowed,
         }
     }
 }
@@ -339,18 +319,18 @@ async fn validate_app_details(
     claimed_top_origin: Option<String>,
 ) -> Result<RequestContext, Error> {
     let Some(unique_name) = header.sender() else {
-        return Err(Error::SecurityError);
+        return Err(Error::UntrustedCaller);
     };
     let claimed_app_id = if !claimed_app_id.is_empty() {
         claimed_app_id
     } else {
         tracing::warn!("App ID not specified on request. Rejecting request.");
-        return Err(Error::SecurityError);
+        return Err(Error::UntrustedCaller);
     };
 
     let app_id = {
         let Some(pidfd) = query_peer_pidfd(connection, unique_name).await else {
-            return Err(Error::SecurityError);
+            return Err(Error::UntrustedCaller);
         };
 
         if !super::should_trust_app_id(connection, pidfd.as_fd()).await {
@@ -358,13 +338,13 @@ async fn validate_app_details(
                 ?claimed_app_id,
                 "App ID could not be verified. Rejecting request."
             );
-            return Err(Error::SecurityError);
+            return Err(Error::UntrustedCaller);
         }
 
         // Now we can trust these app detail parameters.
         let Ok(app_id) = claimed_app_id.parse::<AppId>() else {
             tracing::warn!("Invalid app ID passed: {claimed_app_id}");
-            return Err(Error::SecurityError);
+            return Err(Error::InvalidOptions);
         };
         app_id
     };
@@ -372,13 +352,13 @@ async fn validate_app_details(
     // Verify that the origin is valid for the given app ID.
     let claimed_origin = claimed_origin.parse().map_err(|err| {
         tracing::warn!(%err, "Invalid origin passed: {claimed_origin}");
-        Error::SecurityError
+        Error::InvalidOrigin
     })?;
     let claimed_top_origin = claimed_top_origin
         .map(|o| {
             o.parse().map_err(|_| {
                 tracing::warn!("Invalid origin passed: {o}");
-                Error::SecurityError
+                Error::InvalidOrigin
             })
         })
         .transpose()?;

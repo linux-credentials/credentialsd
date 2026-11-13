@@ -55,6 +55,7 @@ sequenceDiagram
 - (Gateway): Flatten nested D-Bus struct with `request_json` on CreateCredential and GetCredential
 - (Gateway): Remove Client Capabilities method from Gateway API until further notice.
 - (UI Controller): Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+- (Gateway): Replaced WebAuthn DOMException-style error names with descriptive credentialsd errors. See [Errors](#errors).
 
 ### Improvements
 
@@ -303,10 +304,22 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-- `AbortError`: Request cancelled by client.
-- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
-- `TypeError`: An invalid request is made.
-- `NotAllowedError`: catch-all error.
+Errors are returned in the `error` result as `xyz.iinuwa.credentialsd.<Name>`.
+Only errors that the caller could deduce from its own request are reported
+specifically; anything that depends on what the user did during the ceremony is
+reported as `NotAllowed`, so that a caller cannot learn whether the user has
+credentials without their consent.
+
+- `Aborted`: Request cancelled by client. WebAuthn: `AbortError`. (Not returned yet; cancellation is currently reported through the portal response code.)
+- `InvalidOrigin`: The origin is not a valid HTTPS origin, or the RP ID (or AppID) is not valid for the origin. WebAuthn: `SecurityError`.
+- `UntrustedCaller`: The calling application could not be verified, or is not allowed to make requests for the given origin. WebAuthn: `SecurityError`.
+- `InvalidOptions`: The request options (or the app ID) are missing or malformed. WebAuthn: `TypeError`.
+- `InvalidUserId`: `user.id` is empty or longer than 64 bytes. WebAuthn: `TypeError`.
+- `NotSupported`: None of `pubKeyCredParams` is supported. WebAuthn: `NotSupportedError`.
+- `UserVerificationUnsatisfiable`: User verification is required, but no available authenticator supports it. WebAuthn: `ConstraintError`. (Not returned yet.)
+- `DiscoverableCredentialUnsatisfiable`: A discoverable credential is required, but no available authenticator supports it. WebAuthn: `ConstraintError`. (Not returned yet.)
+- `CredentialExcluded`: The authenticator contains a credential listed in `excludeCredentials`. WebAuthn: `InvalidStateError`.
+- `NotAllowed`: Catch-all error, including the user cancelling the ceremony, no matching credentials, or an internal failure. WebAuthn: `NotAllowedError`.
 
 ## `GetCredential(credRequest: GetCredentialRequest) -> GetCredentialResponse`
 
@@ -398,10 +411,14 @@ denoted by `type: "publicKey"`:
 
 ### Errors
 
-- `AbortError`: Request cancelled by client.
-- `SecurityError`: Security policies are not met, for example, requesting an RP credential whose origin does not match.
-- `TypeError`: An invalid request is made.
-- `NotAllowedError`: catch-all error.
+Errors are returned as for [`CreateCredential`](#errors).
+
+- `Aborted`: Request cancelled by client. WebAuthn: `AbortError`. (Not returned yet; cancellation is currently reported through the portal response code.)
+- `InvalidOrigin`: The origin is not a valid HTTPS origin, or the RP ID (or AppID) is not valid for the origin. WebAuthn: `SecurityError`.
+- `UntrustedCaller`: The calling application could not be verified, or is not allowed to make requests for the given origin. WebAuthn: `SecurityError`.
+- `InvalidOptions`: The request options (or the app ID) are missing or malformed. WebAuthn: `TypeError`.
+- `NotSupported`: A request option is not supported. WebAuthn: `NotSupportedError`.
+- `NotAllowed`: Catch-all error, including the user cancelling the ceremony, no matching credentials, or an internal failure. WebAuthn: `NotAllowedError`.
 
 # Flow Control API
 
