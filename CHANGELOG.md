@@ -5,12 +5,14 @@
 ### UI Controller API
 
 - Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
+- Added `NotifyDevicesChanged`, sent with the full device list when the available authenticator sources change during a request.
 
 ## Improvements
 
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
+- daemon: Only offer hybrid (QR code) when a Bluetooth adapter is powered on, and offer it as soon as Bluetooth is turned on during a request (#206)
 
 # 0.4.0 [2026-11-05]
 

@@ -57,6 +57,10 @@ pub enum BackgroundEvent {
     /// start page.
     UsbRestarting,
 
+    /// The set of available authenticator sources changed during the request,
+    /// e.g. because the user turned Bluetooth on. Contains the full new list.
+    DevicesChanged(Vec<Device>),
+
     ErrorInternal,
     ErrorTimedOut,
     ErrorCancelled,
@@ -165,6 +169,10 @@ pub struct NotifyNfcConnectedOptions {}
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct NotifyUsbConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyDevicesChangedOptions {}
 
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]

@@ -359,6 +359,10 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                Event::Background(BackgroundEvent::DevicesChanged(devices)) => {
+                    info!("Available devices changed");
+                    self.update_devices(devices).await;
+                }
                 Event::Background(BackgroundEvent::ErrorCancelled) => {
                     self.hybrid_qr_code_data = None;
                     break;
@@ -395,4 +399,59 @@ impl Debug for ViewEvent {
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use async_std::channel::unbounded;
+
+    use super::*;
+
+    #[test]
+    fn device_list_follows_daemon_updates() {
+        async_std::task::block_on(async {
+            let (_view_tx, view_rx) = unbounded();
+            let (bg_tx, bg_rx) = unbounded();
+            let (update_tx, updates) = unbounded();
+            let (client_tx, _sent) = unbounded();
+            let client = FlowControlClient {
+                tx: client_tx,
+                rx: AsyncMutex::new(Some(bg_rx)),
+            };
+            let request = ViewRequest {
+                operation: Operation::PublicKeyCreate,
+                rp_id: "example.com".to_string(),
+                requesting_app: RequestingApplication::default(),
+                initial_devices: Vec::new(),
+                window_handle: None,
+                activation_token: None,
+            };
+            let mut vm = ViewModel::new(
+                request,
+                Arc::new(AsyncMutex::new(client)),
+                view_rx,
+                update_tx,
+            );
+            async_std::task::spawn(async move { vm.start_event_loop().await });
+
+            let devices = vec![
+                Device {
+                    id: "0".to_string(),
+                    transport: Transport::Usb,
+                },
+                Device {
+                    id: "1".to_string(),
+                    transport: Transport::HybridQr,
+                },
+            ];
+            bg_tx
+                .send(BackgroundEvent::DevicesChanged(devices.clone()))
+                .await
+                .unwrap();
+            match updates.recv().await.unwrap() {
+                ViewUpdate::SetDevices(shown) => assert_eq!(shown, devices),
+                other => panic!("unexpected view update {other:?}"),
+            }
+        });
+    }
 }
