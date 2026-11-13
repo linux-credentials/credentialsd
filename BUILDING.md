@@ -57,6 +57,19 @@ sudo dnf install \
   python3-dbus-next
 ```
 
+### Arch Linux
+
+```shell
+# Build tools, Meson/Ninja, project dependencies, then web extension dependencies
+sudo pacman -S --needed \
+  base-devel git rust clang zip \
+  meson ninja \
+  gtk4 blueprint-compiler gettext dbus libnfc pcsclite openssl systemd-libs publicsuffix-list \
+  python-dbus-next
+```
+
+To build and install a package instead, see [Arch Linux package](#arch-linux-package).
+
 # For Installing/Testing
 
 If you are interested in installing the program, you can use `meson install` to
@@ -107,6 +120,22 @@ following contents:
 Environment="XDG_DESKTOP_PORTAL_ENABLE_EXPERIMENTAL=credential"
 Environment="G_MESSAGES_DEBUG=xdg-desktop-portal"
 ```
+
+xdg-desktop-portal only enables the Credential portal if its
+[`portals.conf`][portals-conf] selects a backend for it. Most desktops ship a
+`portals.conf` that lists their own backends as the default, which leaves out
+credentialsd, so add this line to the `[preferred]` section of your
+`~/.config/xdg-desktop-portal/<desktop>-portals.conf` (for example
+`gnome-portals.conf` or `hyprland-portals.conf`; copy the file from
+`/usr/share/xdg-desktop-portal/` first if you don't have one):
+
+```
+org.freedesktop.impl.portal.experimental.Credential=credentialsd
+```
+
+Then restart the portal with `systemctl --user restart xdg-desktop-portal.service`.
+
+[portals-conf]: https://flatpak.github.io/xdg-desktop-portal/docs/portals.conf.html
 
 ## Running the installed server
 
@@ -239,6 +268,33 @@ discovered, and disabled if they are not: missing dependencies will not fail the
 [Meson documentation on feature options][meson-features-doc] for more information on those values.
 
 [meson-features-doc]: https://mesonbuild.com/Build-options.html#features
+
+## Arch Linux package
+
+[`distrib/arch/PKGBUILD`](distrib/arch/PKGBUILD) is a reference
+`credentialsd-git` package that builds the latest commit on the main branch:
+
+```shell
+mkdir credentialsd-git && cd credentialsd-git
+cp /path/to/credentialsd/distrib/arch/PKGBUILD .
+makepkg -si
+```
+
+Browsers reach credentialsd through the Credential portal, which needs the
+patched xdg-desktop-portal (see [Installing patched
+xdg-desktop-portal](#installing-patched-xdg-desktop-portal)). On Arch, the
+[`xdg-desktop-portal-credentialsd`][aur-xdp-credentialsd] AUR package provides
+it and enables the experimental Credential portal; you still need to add
+credentialsd to your `portals.conf` as described in that section. Released
+versions of credentialsd are packaged in the AUR as
+[`credentialsd`][aur-credentialsd].
+
+The Cargo build targets are always considered out of date, so packages should
+install with `meson install --no-rebuild`. Otherwise `meson install` runs
+`cargo build` again in the packaging step.
+
+[aur-credentialsd]: https://aur.archlinux.org/packages/credentialsd
+[aur-xdp-credentialsd]: https://aur.archlinux.org/packages/xdg-desktop-portal-credentialsd
 
 # Running Tests
 
