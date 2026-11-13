@@ -37,14 +37,6 @@ else
   application_id = base_id
 endif
 
-meson.add_dist_script(
-  meson.project_source_root() / 'build-aux/dist-vendor.sh',
-  meson.project_build_root() / 'meson-dist' / gui_executable_name
-  + '-'
-  + version,
-  meson.project_source_root(),
-)
-
 if get_option('profile') == 'development'
   # Setup pre-commit hook for ensuring coding style is always consistent
   message('Setting up git pre-commit hook..')
