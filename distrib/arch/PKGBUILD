@@ -1,0 +1,121 @@
+# Reference PKGBUILD for building credentialsd from the main branch on Arch Linux.
+# See BUILDING.md for how to use it.
+#
+# It is split like the AUR `credentialsd` package, which packages releases:
+# `credentialsd-git` and `firefox-extension-credentialsd-git` provide
+# `credentialsd` and `firefox-extension-credentialsd`.
+
+pkgbase=credentialsd-git
+pkgname=(credentialsd-git firefox-extension-credentialsd-git)
+pkgver=0.4.0.r0.g0000000
+pkgrel=1
+pkgdesc='Linux credential manager service with WebAuthn/passkey support'
+arch=(x86_64 aarch64)
+url='https://github.com/linux-credentials/credentialsd'
+license=(LGPL-3.0-only)
+depends=(
+  dbus
+  gdk-pixbuf2
+  glib2
+  glibc
+  gtk4
+  hicolor-icon-theme
+  libgcc
+  libnfc
+  pcsclite
+  # Read at runtime to validate origins.
+  publicsuffix-list
+  systemd-libs
+)
+makedepends=(
+  blueprint-compiler
+  cargo
+  clang
+  git
+  meson
+  openssl
+  zip
+)
+# With LTO, makepkg compiles C dependencies such as hidapi to GCC LTO objects,
+# which rust-lld can't link.
+options=(!lto)
+# Release builds of Firefox only load extensions signed by Mozilla, so the
+# extension package uses the signed XPI of the latest release instead of the one
+# built here. Update it when a release changes the extension.
+_xpi_id=credentialsd-helper@iinuwa.xyz
+_xpi_ver=0.2.0
+_xpi_tag=v0.4.0
+source=('git+https://github.com/linux-credentials/credentialsd.git'
+        "$_xpi_id-$_xpi_ver.xpi::$url/releases/download/$_xpi_tag/$_xpi_id-$_xpi_ver.xpi")
+noextract=("$_xpi_id-$_xpi_ver.xpi")
+sha256sums=('SKIP'
+            '921a0a15b0ac0a0fd83b56c2a98f646135554373ba28a1e05c1f60dfbca133d2')
+
+pkgver() {
+  cd credentialsd
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd credentialsd
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_HOME="$srcdir/cargo-home"
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  export RUSTUP_TOOLCHAIN=stable
+  arch-meson credentialsd build \
+    -Dcargo_home="$srcdir/cargo-home" \
+    -Dcargo_locked=true \
+    -Dcargo_offline=true \
+    -Dfeature_demo_client=disabled
+  meson compile -C build
+}
+
+check() {
+  export RUSTUP_TOOLCHAIN=stable
+  meson test -C build --interactive
+}
+
+# Moves files, relative to the current directory, to "$srcdir/$1".
+_pick() {
+  local p="$1" f d; shift
+  for f; do
+    d="$srcdir/$p/$f"
+    mkdir -p "$(dirname "$d")"
+    mv "$f" "$d"
+    rmdir -p --ignore-fail-on-non-empty "$(dirname "$f")"
+  done
+}
+
+package_credentialsd-git() {
+  optdepends=(
+    'xdg-desktop-portal-credentialsd: xdg-desktop-portal with the Credential portal, needed by browsers'
+  )
+  provides=(credentialsd)
+  conflicts=(credentialsd)
+
+  # The Cargo targets are always stale, so a plain `meson install` would run
+  # `cargo build` again inside the packaging environment.
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+
+  # The native messaging helper is only used by the Firefox extension.
+  cd "$pkgdir"
+  _pick firefox-ext usr/bin/credentialsd-firefox-helper
+  _pick firefox-ext usr/lib/mozilla/native-messaging-hosts
+}
+
+package_firefox-extension-credentialsd-git() {
+  arch=(any)
+  pkgdesc='Firefox helper extension for credentialsd'
+  depends=('firefox>=140.0' python python-dbus-next credentialsd-git)
+  provides=(firefox-extension-credentialsd)
+  conflicts=(firefox-extension-credentialsd)
+
+  mv "$srcdir"/firefox-ext/* "$pkgdir"
+
+  # Install the extension for every Firefox profile.
+  install -Dm644 "$srcdir/$_xpi_id-$_xpi_ver.xpi" \
+    "$pkgdir/usr/lib/firefox/browser/extensions/$_xpi_id.xpi"
+}

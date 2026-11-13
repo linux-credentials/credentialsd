@@ -22,6 +22,7 @@
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
 - ui: Don't crash when a request ends while the UI is still sending it events, e.g. because the caller disconnected right after starting it
+- build: Add a reference Arch Linux PKGBUILD in `distrib/arch/` that builds `credentialsd-git` and `firefox-extension-credentialsd-git`, and document building on Arch and selecting credentialsd in xdg-desktop-portal's `portals.conf` (#232)
 
 # 0.4.0 [2026-11-05]
 
