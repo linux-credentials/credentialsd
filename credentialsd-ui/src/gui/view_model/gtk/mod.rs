@@ -14,7 +14,7 @@ use gtk::glib::{self, Bytes};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use qrcode::QrCode;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
 use application::CredentialsUi;
@@ -118,7 +118,9 @@ impl ViewModel {
         {
             let tx = view_model.imp().tx.borrow();
             let tx = tx.as_ref().expect("tx to exist");
-            tx.send_blocking(ViewEvent::Initiated).unwrap();
+            if tx.send_blocking(ViewEvent::Initiated).is_err() {
+                warn!("Request ended before the UI started");
+            }
         }
 
         view_model
@@ -325,7 +327,9 @@ impl ViewModel {
                 let id = button.widget_name().to_string();
                 let tx = tx.clone();
                 glib::spawn_future_local(async move {
-                    tx.send(ViewEvent::CredentialSelected(id)).await.unwrap();
+                    if tx.send(ViewEvent::CredentialSelected(id)).await.is_err() {
+                        warn!("Request ended before the credential selection was handled");
+                    }
                 });
             });
             button.into()
@@ -387,7 +391,11 @@ impl ViewModel {
 
     async fn send_event(&self, event: ViewEvent) {
         let tx = self.get_sender();
-        tx.send(event).await.unwrap();
+        if tx.send(event).await.is_err() {
+            // The request's event loop has ended, e.g. because the caller
+            // went away; the UI closes with it.
+            warn!("Request ended before the UI event was handled");
+        }
     }
 }
 
