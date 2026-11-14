@@ -14,6 +14,7 @@
 - daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
 - daemon: Show the UI through the backend that xdg-desktop-portal selects, passed in the new `ui_backend` option
 - daemon: Treat Debian's Firefox ESR (app ID `firefox-esr`) as a privileged client, like the other Firefox builds
+- build: Build the Rust code with Cargo's release profile again when Meson's `profile` is `release`. Since 0.4.0 it was built in debug mode.
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - daemon: Allow clients to cancel requests through xdg-desktop-portal.
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
