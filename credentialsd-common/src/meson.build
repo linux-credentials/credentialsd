@@ -1,7 +1,7 @@
 # Currently, we're not building this with meson and just letting cargo path dependencies for the other projects build this lib.
 # Not efficient, since the UI and daemon projects will build it separately, but leaving it this way for now.
 
-if get_option('profile') == 'default'
+if get_option('profile') == 'release'
   cargo_options += ['--release']
   rust_profile = 'release'
   message('Building in release mode')

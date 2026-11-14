@@ -8,6 +8,7 @@
 
 ## Improvements
 
+- build: Build the Rust code with Cargo's release profile again when Meson's `profile` is `release`. Since 0.4.0 it was built in debug mode.
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
