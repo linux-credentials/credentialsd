@@ -1,0 +1,42 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: credentialsd
+Upstream-Contact: https://github.com/linux-credentials/credentialsd/issues
+Source: https://github.com/linux-credentials/credentialsd
+
+Files: *
+Copyright: 2023-2026 Isaiah Inuwa and the credentialsd contributors
+License: LGPL-3.0-only
+
+Files: vendor/*
+Copyright: The authors of each crate, as listed in vendor/*/Cargo.toml
+License: various
+Comment:
+ vendor/ holds the Rust crates from Cargo.lock, added to the source tarball
+ by `meson dist` (build-aux/dist-vendor.sh). Each crate's license is given
+ in its Cargo.toml and license files. All are DFSG-free. The licenses used,
+ alone, as alternatives or combined, are MIT, Apache-2.0 (with or without
+ the LLVM exception), BSD-1-Clause, BSD-2-Clause, BSD-3-Clause, 0BSD, ISC,
+ Zlib, BSL-1.0, Unlicense, Unicode-3.0 and LGPL-2.1-or-later. This stanza needs to be expanded to one per crate before
+ the package can go into the Debian archive.
+
+Files: debian/*
+Copyright: 2026 K Panuragh <kpanuragh@gmail.com>
+License: LGPL-3.0-only
+
+License: various
+ The vendored crates are under the licenses listed in the vendor/*
+ stanza above; each crate's Cargo.toml names its license and the crate
+ directory holds the license text.
+
+License: LGPL-3.0-only
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation, version 3.
+ .
+ This program is distributed in the hope that it will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+ General Public License for more details.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public
+ License version 3 can be found in "/usr/share/common-licenses/LGPL-3".

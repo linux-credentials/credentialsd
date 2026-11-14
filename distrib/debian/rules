@@ -1,0 +1,59 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/architecture.mk
+
+# Ubuntu's dpkg-buildflags turn on LTO for C code. The C dependencies that
+# Cargo compiles (hidapi) then come out as GCC LTO objects, which the Rust
+# linker can't use.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+
+# Crates come from the vendor/ directory in the source tarball, which
+# .cargo/config points Cargo at. Keep Cargo's own state out of $HOME.
+CARGO_HOME = $(CURDIR)/debian/cargo-home
+
+# Cargo's release profile builds without debug info, which would leave the
+# -dbgsym packages empty. dh_strip moves the symbols out of the binaries.
+export CARGO_PROFILE_RELEASE_DEBUG = true
+
+# Don't record the build directory in the binaries' debug info.
+export RUSTFLAGS += --remap-path-prefix=$(CURDIR)=/usr/src/credentialsd
+
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+export CARGO_BUILD_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+endif
+
+%:
+	dh $@
+
+# --libdir=lib: Firefox looks for native messaging manifests in
+# /usr/lib/mozilla/native-messaging-hosts, not in the multiarch libdir.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		--libdir=lib \
+		-Dcargo_home=$(CARGO_HOME) \
+		-Dcargo_locked=true \
+		-Dcargo_offline=true \
+		-Dfeature_demo_client=disabled
+
+# The Cargo test targets compile their test binaries first, which takes longer
+# than Meson's 30 second default timeout, and parallel runs only wait on
+# Cargo's build directory lock.
+override_dh_auto_test:
+	dh_auto_test -- --num-processes=1 --timeout-multiplier=20
+
+# The Cargo targets are always stale, and in compat 13 dh_auto_install runs
+# `ninja install`, which would run `cargo build` again. (Compat 14 uses
+# `meson install --no-rebuild` itself, but needs debhelper >= 14.)
+override_dh_auto_install:
+	meson install -C obj-$(DEB_HOST_GNU_TYPE) --no-rebuild \
+		--destdir=$(CURDIR)/debian/tmp
+
+# dh_clean deletes *.orig files, but the vendored crates ship Cargo.toml.orig
+# and Cargo checks it against .cargo-checksum.json.
+override_dh_clean:
+	dh_clean -X.orig
+
+# Meson copies these generated files into the source tree at configure time.
+execute_after_dh_auto_clean:
+	rm -rf $(CARGO_HOME)
+	rm -f credentialsd-ui/src/config.rs credentialsd/tests/config/mod.rs

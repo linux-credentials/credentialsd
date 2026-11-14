@@ -1,0 +1,39 @@
+credentialsd for Debian
+=======================
+
+Source tarball
+--------------
+
+The package builds without network access, from the Rust crates in vendor/.
+Git does not contain them, so the .orig tarball is the one that `meson dist`
+produces, which adds vendor/ and a .cargo/config that points Cargo at it
+(build-aux/dist-vendor.sh). Releases up to 0.4.0 contain neither this
+packaging nor the fix that lets `meson dist` vendor the crates, so build
+from a git checkout that has both, and give the package a snapshot version:
+
+    cd credentialsd
+    meson setup _dist -Dfeature_demo_client=disabled
+    meson dist -C _dist --no-tests --formats xztar
+    VERSION=$(meson introspect --projectinfo _dist | jq -r .version)
+    cd ..
+    cp credentialsd/_dist/meson-dist/credentialsd-$VERSION.tar.xz \
+       credentialsd_$VERSION.orig.tar.xz
+
+Upstream keeps this packaging in distrib/debian/. Copy it to debian/ in
+the unpacked tarball, set the version in debian/changelog (for example with
+`dch -v $VERSION+git$(date +%Y%m%d)-1`, which also needs the .orig tarball
+renamed to match), and build:
+
+    tar xf credentialsd_$VERSION.orig.tar.xz
+    cp -r credentialsd-$VERSION/distrib/debian credentialsd-$VERSION/debian
+    cd credentialsd-$VERSION
+    dpkg-buildpackage -us -uc
+
+Vendored crates
+---------------
+
+Building against vendored crates is fine for third-party repositories such
+as the openSUSE Build Service. The Debian archive
+expects each crate to be packaged on its own (see the Debian Rust team
+policy), so an upload to Debian has to replace vendor/ with Build-Depends
+on librust-*-dev packages.
