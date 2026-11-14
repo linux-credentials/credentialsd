@@ -18,6 +18,7 @@ use tokio::sync::oneshot;
 use tokio::sync::{Mutex as AsyncMutex, mpsc::Sender};
 use tokio::task::AbortHandle;
 use zbus::connection::Connection;
+use zbus::names::OwnedWellKnownName;
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::dbus::UiControlServiceClient;
@@ -38,6 +39,8 @@ pub struct UiRequestContext {
     /// Client window handle
     window_handle: Option<WindowHandle>,
     activation_token: Option<String>,
+    /// UI backend chosen by the portal frontend, or `None` for the default.
+    ui_backend: Option<OwnedWellKnownName>,
     response_channel: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
 }
 
@@ -53,15 +56,16 @@ pub async fn start_flow_control_service<M: ManageDevice + Debug + Send + Sync + 
         while let Some(ui_request_ctx) = listener.recv().await {
             let svc = svc2.clone();
 
-            let ui_control_client = UiControlServiceClient::new(conn.clone());
-
             let UiRequestContext {
                 request,
                 app,
                 window_handle,
                 activation_token,
+                ui_backend,
                 response_channel,
             } = ui_request_ctx;
+
+            let ui_control_client = UiControlServiceClient::new(conn.clone(), ui_backend);
 
             let response = handle(
                 svc,
@@ -323,6 +327,7 @@ pub trait CredentialRequestController {
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
     ) -> Result<CredentialResponse, WebAuthnError>;
 }
 
@@ -338,6 +343,7 @@ impl CredentialRequestController for CredentialRequestControllerClient {
         request: CredentialRequest,
         window_handle: Option<WindowHandle>,
         activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
     ) -> Result<CredentialResponse, WebAuthnError> {
         let (tx, rx) = oneshot::channel();
         self.initiator
@@ -346,6 +352,7 @@ impl CredentialRequestController for CredentialRequestControllerClient {
                 app,
                 window_handle,
                 activation_token,
+                ui_backend,
                 response_channel: tx,
             })
             .await

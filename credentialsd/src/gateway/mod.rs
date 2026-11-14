@@ -16,6 +16,7 @@ use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     Connection,
+    names::OwnedWellKnownName,
     zvariant::{DeserializeDict, NoneValue, OwnedValue, SerializeDict, Type},
 };
 
@@ -83,6 +84,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
     ) -> Result<CreateCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -115,6 +117,7 @@ impl GatewayService {
                     cred_request,
                     parent_window,
                     activation_token,
+                    ui_backend,
                 )
                 .await?;
 
@@ -148,6 +151,7 @@ impl GatewayService {
         context: RequestContext,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
     ) -> Result<GetCredentialResponse, WebAuthnError> {
         let request_environment = validate_request(&context)?;
 
@@ -177,6 +181,7 @@ impl GatewayService {
                     cred_request,
                     parent_window,
                     activation_token,
+                    ui_backend,
                 )
                 .await?;
 

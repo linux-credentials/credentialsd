@@ -205,6 +205,7 @@ CreateCredentialRequest(
     IN options a{sv} {
         activation_token: s
         top_origin: s
+        ui_backend: s
         <type_specific_fields>
     },
     IN app_id s,
@@ -239,6 +240,21 @@ suffix, as defined by the [Public Suffix List][PSL].
 
 [web-origins]: https://html.spec.whatwg.org/multipage/browsers.html#concept-origin-tuple
 [PSL]: https://github.com/publicsuffix/list
+
+#### UI backend
+
+`options.ui_backend` is the D-Bus name of the
+`org.freedesktop.impl.portal.experimental.Credential` backend that shows the UI
+for this request, for example `org.freedesktop.impl.portal.desktop.gnome`.
+xdg-desktop-portal sets it to the backend chosen by the portal configuration
+(`portals.conf` and the `.portal` files); applications can't set it. If it is
+omitted or empty, the daemon uses `xyz.iinuwa.credentialsd.UiControl`. It must
+be a well-known name, otherwise the request is rejected.
+
+A backend such as a desktop's portal keeps its name for the whole session, so
+the daemon can't tell from the bus that its dialog was closed, only that the
+backend crashed. The backend must report a closed dialog itself, by sending
+`Closed` for the session.
 
 #### Credential Request Types
 
@@ -323,6 +339,7 @@ GetCredentialRequest (
     IN options a{sv} {
         activation_token: s
         top_origin: s
+        ui_backend: s
         <type_specific_fields>
         public_key: s
     },
@@ -342,8 +359,8 @@ there is no `type` field, and credential types are specified using the optional 
 
 #### Request Context
 
-The `GetCredential()` `origin` and `options.top_origin` have the same semantics and
-restrictions as in `CreateCredential()` described above.
+The `GetCredential()` `origin`, `options.top_origin` and `options.ui_backend` have
+the same semantics and restrictions as in `CreateCredential()` described above.
 
 When multiple credential types are specified, the request context applies to
 all credentials.

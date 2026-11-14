@@ -10,7 +10,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use zbus::{
     Connection, DBusError, interface,
     message::Header,
-    names::{BusName, UniqueName},
+    names::{BusName, OwnedWellKnownName, UniqueName},
     zvariant::{DeserializeDict, Optional, Type, Value},
 };
 
@@ -78,6 +78,7 @@ impl CredentialPortalGateway {
             activation_token,
             top_origin,
             public_key,
+            ui_backend,
         } = options;
 
         let request_json = match (&cred_type, public_key) {
@@ -100,6 +101,10 @@ impl CredentialPortalGateway {
             Ok(context) => context,
             Err(err) => return Err(err).into(),
         };
+        let ui_backend = match parse_ui_backend(ui_backend) {
+            Ok(ui_backend) => ui_backend,
+            Err(err) => return Err(err).into(),
+        };
 
         tracing::debug!(
             ?context,
@@ -117,7 +122,13 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_create_credential(request, context, parent_window.into(), activation_token)
+            .handle_create_credential(
+                request,
+                context,
+                parent_window.into(),
+                activation_token,
+                ui_backend,
+            )
             .await
             .map_err(Error::from);
 
@@ -138,6 +149,7 @@ impl CredentialPortalGateway {
             activation_token,
             top_origin,
             public_key,
+            ui_backend,
         } = options;
         let app_validation_result = validate_app_details(
             connection,
@@ -157,6 +169,10 @@ impl CredentialPortalGateway {
             Ok(context) => context,
             Err(err) => return Err(err).into(),
         };
+        let ui_backend = match parse_ui_backend(ui_backend) {
+            Ok(ui_backend) => ui_backend,
+            Err(err) => return Err(err).into(),
+        };
 
         tracing::trace!(
             ?context,
@@ -173,7 +189,13 @@ impl CredentialPortalGateway {
             .gateway_service
             .lock()
             .await
-            .handle_get_credential(request, context, parent_window.into(), activation_token)
+            .handle_get_credential(
+                request,
+                context,
+                parent_window.into(),
+                activation_token,
+                ui_backend,
+            )
             .await
             .map_err(Error::from);
         response.into()
@@ -209,6 +231,11 @@ struct CreateCredentialPortalOptions {
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
     public_key: Option<String>,
+
+    /// D-Bus name of the `org.freedesktop.impl.portal.experimental.Credential`
+    /// backend to show the UI with, as chosen by the portal configuration.
+    /// If omitted, the default UI is used.
+    ui_backend: Option<String>,
 }
 
 #[derive(Debug, DeserializeDict, Type)]
@@ -225,6 +252,11 @@ struct GetCredentialPortalOptions {
     /// [PublicKeyCredentialRequestOptions](https://www.w3.org/TR/webauthn-3/#publickeycredential)
     /// type.
     public_key: Option<String>,
+
+    /// D-Bus name of the `org.freedesktop.impl.portal.experimental.Credential`
+    /// backend to show the UI with, as chosen by the portal configuration.
+    /// If omitted, the default UI is used.
+    ui_backend: Option<String>,
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -331,6 +363,21 @@ impl<T, E> From<Result<T, E>> for PortalResult<T, E> {
     }
 }
 
+/// Validates the UI backend name passed by the portal frontend. Call this only
+/// after `validate_app_details`: only trusted callers get that far, so any valid
+/// well-known name is accepted.
+fn parse_ui_backend(ui_backend: Option<String>) -> Result<Option<OwnedWellKnownName>, Error> {
+    ui_backend
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            OwnedWellKnownName::try_from(name.as_str()).map_err(|err| {
+                tracing::warn!(%err, "Invalid UI backend name passed: {name}");
+                Error::SecurityError
+            })
+        })
+        .transpose()
+}
+
 async fn validate_app_details(
     connection: &Connection,
     header: &Header<'_>,
@@ -428,4 +475,34 @@ async fn query_peer_pidfd(
             |err| tracing::error!(%err, "Failed to duplicate peer process file descriptor"),
         )
         .ok()
+}
+
+#[cfg(test)]
+mod test {
+    use super::parse_ui_backend;
+
+    #[test]
+    fn test_ui_backend_defaults_when_missing_or_empty() {
+        assert_eq!(parse_ui_backend(None).unwrap(), None);
+        assert_eq!(parse_ui_backend(Some(String::new())).unwrap(), None);
+    }
+
+    #[test]
+    fn test_ui_backend_accepts_well_known_name() {
+        let backend = parse_ui_backend(Some("org.freedesktop.impl.portal.desktop.gnome".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            backend.as_str(),
+            "org.freedesktop.impl.portal.desktop.gnome"
+        );
+    }
+
+    #[test]
+    fn test_ui_backend_rejects_invalid_names() {
+        // Unique names would bypass activation and the owner checks.
+        for name in [":1.42", "not a name", "nodots", "/org/freedesktop"] {
+            assert!(parse_ui_backend(Some(name.into())).is_err(), "{name}");
+        }
+    }
 }
