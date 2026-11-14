@@ -348,6 +348,8 @@ fn check_origin_from_app(
             "org.mozilla.firefox",
             "firefox",
             "firefox-developer-edition",
+            // Debian's Firefox ESR, launched from firefox-esr.desktop
+            "firefox-esr",
             "xyz.iinuwa.credentialsd.DemoCredentialsUi",
         ];
         let mut privileged = trusted_clients.contains(&app_id.as_ref());
@@ -537,9 +539,11 @@ impl Display for WebAuthnError {
 
 #[cfg(test)]
 mod test {
-    use crate::webauthn::{NavigationContext, Origin};
+    use crate::webauthn::{AppId, NavigationContext, Origin};
 
-    use super::{WebAuthnError, check_origin_from_privileged_client};
+    use super::{
+        RequestKind, WebAuthnError, check_origin_from_app, check_origin_from_privileged_client,
+    };
 
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();
@@ -559,6 +563,28 @@ mod test {
         assert!(matches!(
             check_same_origin("app:com.example.App"),
             Err(WebAuthnError::SecurityError)
+        ))
+    }
+
+    fn request_kind_for_app(app_id: &str) -> RequestKind {
+        let app_id: AppId = app_id.parse().unwrap();
+        let origin = "https://example.com".parse().unwrap();
+        check_origin_from_app(&app_id, origin, None).unwrap()
+    }
+
+    #[test]
+    fn test_firefox_esr_is_privileged() {
+        assert!(matches!(
+            request_kind_for_app("firefox-esr"),
+            RequestKind::Privileged { .. }
+        ))
+    }
+
+    #[test]
+    fn test_unknown_app_is_unprivileged() {
+        assert!(matches!(
+            request_kind_for_app("com.example.App"),
+            RequestKind::Unprivileged(_)
         ))
     }
 }
