@@ -145,9 +145,15 @@ ln -s ${LIBDIR}/mozilla/native-messaging-hosts/xyz.iinuwa.credentialsd_helper.js
 ```
 git clone https://github.com/linux-credentials/credentialsd
 cd credentialsd
-meson setup -Dprofile=development build
+meson setup -Dprofile=development -Denable_trusted_client_overrides=true build
 ninja -C build
 ```
+
+`enable_trusted_client_overrides` lets the daemon read the
+`CREDSD_TRUSTED_CALLERS` and `CREDSD_TRUSTED_APP_IDS` environment variables,
+which are used [below](#running-the-server-for-development) to trust a
+development build of xdg-desktop-portal. Don't use it for builds you install:
+any process in your session could then request credentials for any origin.
 
 credentialsd-ui disables core dumps for itself, because it handles the PINs
 that users type. To debug a crash in the UI, turn core dumps back on:
@@ -221,6 +227,14 @@ enable_core_dumps      false                    [True, False]            Allow c
                                                                          for debugging crashes. Defaults to false
                                                                          because the UI handles PINs typed by the
                                                                          user.
+enable_trusted_client_overrides
+                       false                    [True, False]            Let the CREDSD_TRUSTED_CALLERS and
+                                                                         CREDSD_TRUSTED_APP_IDS environment variables
+                                                                         add trusted callers and privileged app IDs
+                                                                         to the daemon, for development. Defaults to
+                                                                         false because any process in the user
+                                                                         session could then request credentials for
+                                                                         any origin.
 feature_daemon         enabled                  [enabled, disabled,      Whether to build the credentialsd daemon
                                                  auto]
 feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client
@@ -229,9 +243,9 @@ feature_gui            enabled                  [enabled, disabled,      Whether
                                                  auto]
 feature_web_extension  enabled                  [enabled, disabled,      Whether to build the web extension
                                                  auto]
-profile                release                  [release, development]   The build profile for the targets. The
-                                                                         `development` profile also allows disabling
-                                                                         some security checks for easier development.
+profile                release                  [release, development]   The build profile for the targets. To relax
+                                                                         the security checks for development, see
+                                                                         `enable_trusted_client_overrides`.
 ```
 
 For the `feature_*` options, `auto` means that the feature will be enabled if its dependencies are

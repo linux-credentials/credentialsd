@@ -5,7 +5,7 @@ option(
   type: 'combo',
   choices: ['release', 'development'],
   value: 'release',
-  description: 'The build profile for the targets. The `development` profile also allows disabling some security checks for easier development.',
+  description: 'The build profile for the targets. To relax the security checks for development, see `enable_trusted_client_overrides`.',
 )
 option(
   'cargo_home',
@@ -29,6 +29,12 @@ option(
   type: 'boolean',
   value: false,
   description: 'Allow credentialsd-ui to write core dumps, for debugging crashes. Defaults to false because the UI handles PINs typed by the user.',
+)
+option(
+  'enable_trusted_client_overrides',
+  type: 'boolean',
+  value: false,
+  description: 'Let the CREDSD_TRUSTED_CALLERS and CREDSD_TRUSTED_APP_IDS environment variables add trusted callers and privileged app IDs to the daemon, for development. Defaults to false because any process in the user session could then request credentials for any origin.',
 )
 
 # Features
