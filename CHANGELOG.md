@@ -8,6 +8,8 @@
 
 ## Improvements
 
+- build: Build the Rust code with Cargo's release profile again when Meson's `profile` is `release`. Since 0.4.0 it was built in debug mode.
+- daemon: Only read `CREDSD_TRUSTED_CALLERS` and `CREDSD_TRUSTED_APP_IDS` when built with `-Denable_trusted_client_overrides=true`, instead of in every debug build. Since 0.4.0's release builds were debug builds, they read these variables too.
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)

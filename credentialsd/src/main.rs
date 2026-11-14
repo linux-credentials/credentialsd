@@ -23,6 +23,19 @@ pub const DBUS_SERVICE_NAME: &str = "xyz.iinuwa.credentialsd.Credentials";
 async fn main() {
     // Initialize logger
     tracing_subscriber::fmt::init();
+    if cfg!(feature = "trusted-client-overrides") {
+        tracing::warn!(
+            "CREDSD_TRUSTED_CALLERS and CREDSD_TRUSTED_APP_IDS are enabled by the enable_trusted_client_overrides build option"
+        );
+    } else {
+        for var in [gateway::TRUSTED_CALLERS_ENV, gateway::TRUSTED_APP_IDS_ENV] {
+            if std::env::var_os(var).is_some() {
+                tracing::warn!(
+                    "Ignoring {var}: build with -Denable_trusted_client_overrides=true to use it"
+                );
+            }
+        }
+    }
 
     println!("Starting...");
     run().await.unwrap();

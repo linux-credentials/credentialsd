@@ -50,6 +50,10 @@ endif
 if get_option('cargo_offline') == true
   cargo_options += ['--offline']
 endif
+if get_option('enable_trusted_client_overrides')
+  cargo_options += ['--features', 'trusted-client-overrides']
+  warning('CREDSD_TRUSTED_CALLERS and CREDSD_TRUSTED_APP_IDS are enabled. Do not use this build outside development.')
+endif
 
 subdir('src')
 subdir('tests')

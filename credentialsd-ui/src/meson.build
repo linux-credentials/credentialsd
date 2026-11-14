@@ -30,7 +30,7 @@ run_command(
   check: true,
 )
 
-if get_option('profile') == 'default'
+if get_option('profile') == 'release'
   cargo_options += ['--release']
   rust_profile = 'release'
   message('Building in release mode')

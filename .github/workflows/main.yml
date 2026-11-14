@@ -84,6 +84,9 @@ jobs:
         # Probably has to do with forking the test processes.
         run: meson test -C $BUILD_DIR --interactive
 
+      - name: Test trusted client overrides
+        run: cargo test --locked --manifest-path credentialsd/Cargo.toml --target-dir $BUILD_DIR/target --bins --features trusted-client-overrides
+
       - name: Check clippy recommendations
         run: cargo clippy --locked --workspace --all-features -- -Dwarnings
 

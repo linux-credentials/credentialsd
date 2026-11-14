@@ -274,8 +274,7 @@ async fn should_trust_app_id(connection: &Connection, pidfd: BorrowedFd<'_>) -> 
         PathBuf::from("/usr/local/lib/xdg-desktop-portal"),
         PathBuf::from("/usr/local/libexec/xdg-desktop-portal"),
     ];
-    if cfg!(debug_assertions) {
-        let trusted_callers_env = std::env::var("CREDSD_TRUSTED_CALLERS").unwrap_or_default();
+    if let Some(trusted_callers_env) = trusted_client_override(TRUSTED_CALLERS_ENV) {
         let custom_paths = trusted_callers_env
             .split(',')
             .filter_map(|path| Path::new(path).canonicalize().ok());
@@ -338,6 +337,19 @@ async fn read_pid_from_pidfd<'a>(pidfd: BorrowedFd<'a>) -> Option<u32> {
     Some(pid)
 }
 
+pub(crate) const TRUSTED_CALLERS_ENV: &str = "CREDSD_TRUSTED_CALLERS";
+pub(crate) const TRUSTED_APP_IDS_ENV: &str = "CREDSD_TRUSTED_APP_IDS";
+
+/// Reads a development-only override of the trusted callers or app IDs.
+/// Always `None` unless built with `-Denable_trusted_client_overrides=true`.
+fn trusted_client_override(var: &str) -> Option<String> {
+    if cfg!(feature = "trusted-client-overrides") {
+        Some(std::env::var(var).unwrap_or_default())
+    } else {
+        None
+    }
+}
+
 fn check_origin_from_app(
     app_id: &AppId,
     origin: Origin,
@@ -351,12 +363,10 @@ fn check_origin_from_app(
             "xyz.iinuwa.credentialsd.DemoCredentialsUi",
         ];
         let mut privileged = trusted_clients.contains(&app_id.as_ref());
-        if cfg!(debug_assertions) && !privileged {
-            let trusted_clients_env = std::env::var("CREDSD_TRUSTED_APP_IDS").unwrap_or_default();
-            privileged = trusted_clients_env
-                .split(',')
-                .map(String::from)
-                .any(|c| app_id.as_ref() == c);
+        if !privileged
+            && let Some(trusted_clients_env) = trusted_client_override(TRUSTED_APP_IDS_ENV)
+        {
+            privileged = trusted_clients_env.split(',').any(|c| app_id.as_ref() == c);
         }
         privileged
     };
@@ -539,7 +549,7 @@ impl Display for WebAuthnError {
 mod test {
     use crate::webauthn::{NavigationContext, Origin};
 
-    use super::{WebAuthnError, check_origin_from_privileged_client};
+    use super::{WebAuthnError, check_origin_from_privileged_client, trusted_client_override};
 
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();
@@ -560,5 +570,18 @@ mod test {
             check_same_origin("app:com.example.App"),
             Err(WebAuthnError::SecurityError)
         ))
+    }
+
+    // PATH is always set, so these check the feature gate without set_var.
+    #[cfg(not(feature = "trusted-client-overrides"))]
+    #[test]
+    fn test_env_overrides_are_ignored_without_overrides_feature() {
+        assert_eq!(trusted_client_override("PATH"), None);
+    }
+
+    #[cfg(feature = "trusted-client-overrides")]
+    #[test]
+    fn test_env_overrides_are_read_with_overrides_feature() {
+        assert!(trusted_client_override("PATH").is_some_and(|p| !p.is_empty()));
     }
 }
