@@ -39,6 +39,7 @@ fn run_gui(
             .ok()
     });
 
+    let activation_token = request.activation_token.clone();
     let (tx_update, rx_update) = async_std::channel::unbounded::<ViewUpdate>();
     let (tx_event, rx_event) = async_std::channel::unbounded::<ViewEvent>();
     let tx_event2 = tx_event.clone();
@@ -60,7 +61,7 @@ fn run_gui(
         // TODO: Clean up flow_object when request completes
     });
 
-    view_model::gtk::start_gtk_app(parent_window, tx_event, rx_update);
+    view_model::gtk::start_gtk_app(parent_window, activation_token, tx_event, rx_update);
 
     async_std::task::block_on(event_loop.cancel());
 }

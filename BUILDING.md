@@ -149,6 +149,14 @@ meson setup -Dprofile=development build
 ninja -C build
 ```
 
+credentialsd-ui disables core dumps for itself, because it handles the PINs
+that users type. To debug a crash in the UI, turn core dumps back on:
+
+```
+meson configure -Denable_core_dumps=true build
+ninja -C build
+```
+
 ## Building patched xdg-desktop-portal
 
 For more context on the patch, see the [instructions above](#installing-credentialsd-and-credentialsd-ui).
@@ -209,6 +217,10 @@ cargo_locked           false                    [True, False]            Whether
 cargo_offline          false                    [True, False]            Whether to perform an offline build with
                                                                          Cargo. Defaults to false to download crates
                                                                          from registries.
+enable_core_dumps      false                    [True, False]            Allow credentialsd-ui to write core dumps,
+                                                                         for debugging crashes. Defaults to false
+                                                                         because the UI handles PINs typed by the
+                                                                         user.
 feature_daemon         enabled                  [enabled, disabled,      Whether to build the credentialsd daemon
                                                  auto]
 feature_demo_client    auto                     [enabled, disabled,      Whether to build the demo client

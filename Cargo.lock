@@ -841,6 +841,7 @@ dependencies = [
  "gettext-rs",
  "gio-unix",
  "gtk4",
+ "libc",
  "qrcode",
  "serde",
  "tracing",

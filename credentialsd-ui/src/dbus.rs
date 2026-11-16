@@ -644,6 +644,7 @@ impl CeremonyObject {
                 },
                 initial_transports: self.ui_context.transports.clone(),
                 window_handle: self.ui_context.parent_window.clone(),
+                activation_token: activation_token(&self.ui_context.options),
             },
             Arc::new(AsyncMutex::new(flow_control_client)),
             cancel_rx,
@@ -804,5 +805,42 @@ impl CeremonySession {
             }
             Err(err) => Err(err),
         }
+    }
+}
+
+/// Returns the activation token from the request options, ignoring an empty
+/// string, which some callers send when they have no token.
+fn activation_token(options: &PortalBackendOptions) -> Option<String> {
+    options
+        .activation_token
+        .as_ref()
+        .filter(|token| !token.is_empty())
+        .cloned()
+}
+
+#[cfg(test)]
+mod activation_token_tests {
+    use super::*;
+
+    fn options(token: Option<&str>) -> PortalBackendOptions {
+        PortalBackendOptions {
+            activation_token: token.map(str::to_string).into(),
+            top_origin: None.into(),
+            rp_id: None.into(),
+        }
+    }
+
+    #[test]
+    fn token_is_passed_through() {
+        assert_eq!(
+            activation_token(&options(Some("abc123"))).as_deref(),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_token_is_none() {
+        assert_eq!(activation_token(&options(None)), None);
+        assert_eq!(activation_token(&options(Some(""))), None);
     }
 }
