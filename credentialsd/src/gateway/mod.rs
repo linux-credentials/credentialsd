@@ -14,6 +14,7 @@ use std::{
 
 use credentialsd_common::model::WindowHandle;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 use zbus::{
     Connection,
     names::OwnedWellKnownName,
@@ -82,6 +83,7 @@ impl GatewayService {
         &self,
         request: CreateCredentialRequest,
         context: RequestContext,
+        cancellation: CancellationToken,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
         ui_backend: Option<OwnedWellKnownName>,
@@ -115,6 +117,7 @@ impl GatewayService {
                 .request_credential(
                     context.into(),
                     cred_request,
+                    cancellation,
                     parent_window,
                     activation_token,
                     ui_backend,
@@ -149,6 +152,7 @@ impl GatewayService {
         &self,
         request: GetCredentialRequest,
         context: RequestContext,
+        cancellation: CancellationToken,
         parent_window: Option<WindowHandle>,
         activation_token: Option<String>,
         ui_backend: Option<OwnedWellKnownName>,
@@ -179,6 +183,7 @@ impl GatewayService {
                 .request_credential(
                     context.into(),
                     cred_request,
+                    cancellation,
                     parent_window,
                     activation_token,
                     ui_backend,
