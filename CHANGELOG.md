@@ -21,6 +21,19 @@
 
 # 0.4.0 [2026-11-05]
 
+## Breaking changes
+
+### Backend API
+
+- Adds new Background Event variants, `HybridRestarting`, `NfcRestarting`, and
+  `UsbRestarting`, which signal to the UI that a particular transport experienced a
+  non-ceremony-terminating transport error, and that the UI should refresh the UI
+  if that transport's UI was active.
+
+### Packaging
+
+- Changed the `default` profile to `release`, to be more clear. This may break packaging flows.
+
 ## Improvements
 
 - build: Make daemon, credentialsd-ui, demo client and web extension optional
