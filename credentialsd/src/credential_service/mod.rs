@@ -164,13 +164,13 @@ pub trait ManageDevice {
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
         cancellation_token: CancellationToken,
-    ) -> Result<RequestId, CredentialServiceError>;
+    ) -> Result<Ceremony<'_, impl ManageDevice>, CredentialServiceError>;
     fn get_transports(&self) -> Vec<Transport>;
 }
 
 #[derive(Debug)]
 pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
-    is_request_in_progress: AtomicBool,
+    is_request_in_progress: Mutex<Task>,
     hybrid_handler: Mutex<H>,
     nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
@@ -289,7 +289,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
         cancellation_token: CancellationToken,
-    ) -> Result<RequestId, CredentialServiceError> {
+    ) -> Result<Ceremony<'_>, CredentialServiceError> {
         if self
             .is_request_in_progress
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -311,24 +311,33 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             cancellation: cancellation_token,
             transports: supported_transports,
         };
-        _ = cred_request.insert(ctx);
-        Ok(request_id)
+        let (tx, rx) = oneshot::channel();
+        let ceremony = Ceremony {
+            ctx: Arc::new(Mutex::new(Some(ctx))),
+            request_id,
+            svc: self,
+            completion_signal:
+        };
+        tokio::spawn(async move {
+            tx.
+        })
+        // _ = request.insert(ctx);
+        Ok(ceremony)
     }
 }
 
-pub struct Ceremony<'a, H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> {
+pub struct Ceremony<'a, M: ManageDevice> {
     /// Current request and channel to respond to caller.
-    ctx: Arc<Mutex<Option<RequestContext>>>,
-
-    request_id:
-    svc: &'a CredentialService<H, N, U>,
+    ctx: Arc<Mutex<RequestContext>>,
+    request_id: RequestId,
+    svc: &'a M,
 
     /// Used to signal to the manager that this ceremony is ending
     completion_signal: oneshot::Receiver<()>,
 }
 
-impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Ceremony<'_, H, N, U> {
-    async fn cancel_request(self, request_id: RequestId) {
+impl Ceremony<'_, M> {
+    fn cancel_request(self) {
         let mut guard = self.ctx.lock().expect("Lock to be taken");
         let Some(ctx) = guard.take() else {
             // request cancelled multiple times, no-op;
@@ -350,11 +359,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Ceremo
         Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>,
         CredentialServiceError,
     > {
-        // TODO: Change this API so that this can't happen. Make a separate
-        // struct that is returned by init_request, and put this method on it.
         if self.ctx.lock().unwrap().is_none() {
             return Err(CredentialServiceError::Internal(
-                "StartDiscovery called without initialization".to_string(),
+                "StartDiscovery called after request is cancelled".to_string(),
             ));
         }
 
@@ -404,8 +411,10 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Ceremo
     }
 }
 
-impl Drop for Ceremony<'_, H, N, U> {
-
+impl Drop for Ceremony<'_, M> {
+    fn drop(&mut self) {
+        self.cancel_request()
+    }
 }
 
 pub struct HybridStateStream<H> {
