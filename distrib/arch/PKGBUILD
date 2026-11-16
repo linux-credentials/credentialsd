@@ -1,0 +1,77 @@
+# Reference PKGBUILD for building credentialsd from the main branch on Arch Linux.
+# See BUILDING.md for how to use it.
+
+pkgname=credentialsd-git
+pkgver=0.4.0.r0.g0000000
+pkgrel=1
+pkgdesc='Linux credential manager service with WebAuthn/passkey support'
+arch=(x86_64 aarch64)
+url='https://github.com/linux-credentials/credentialsd'
+license=(LGPL-3.0-only)
+depends=(
+  dbus
+  gdk-pixbuf2
+  glib2
+  glibc
+  gtk4
+  hicolor-icon-theme
+  libgcc
+  libnfc
+  pcsclite
+  # Read at runtime to validate origins.
+  publicsuffix-list
+  systemd-libs
+)
+makedepends=(
+  blueprint-compiler
+  cargo
+  clang
+  git
+  meson
+  openssl
+  zip
+)
+optdepends=(
+  'xdg-desktop-portal-credentialsd: xdg-desktop-portal with the Credential portal, needed by browsers'
+  'python-dbus-next: Firefox web extension helper'
+)
+# With LTO, makepkg compiles C dependencies such as hidapi to GCC LTO objects,
+# which rust-lld can't link.
+options=(!lto)
+provides=(credentialsd)
+conflicts=(credentialsd)
+source=('git+https://github.com/linux-credentials/credentialsd.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd credentialsd
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd credentialsd
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_HOME="$srcdir/cargo-home"
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  export RUSTUP_TOOLCHAIN=stable
+  arch-meson credentialsd build \
+    -Dcargo_home="$srcdir/cargo-home" \
+    -Dcargo_locked=true \
+    -Dcargo_offline=true \
+    -Dfeature_demo_client=disabled
+  meson compile -C build
+}
+
+check() {
+  export RUSTUP_TOOLCHAIN=stable
+  meson test -C build --interactive
+}
+
+package() {
+  # The Cargo targets are always stale, so a plain `meson install` would run
+  # `cargo build` again inside the packaging environment.
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+}
