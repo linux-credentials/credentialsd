@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 use zbus::{
     Connection, MatchRule, MessageStream,
     fdo::{self, DBusProxy},
-    names::{OwnedUniqueName, WellKnownName},
+    names::{OwnedUniqueName, OwnedWellKnownName, WellKnownName},
     proxy,
     zvariant::{ObjectPath, Optional, OwnedFd, OwnedObjectPath},
 };
@@ -410,11 +410,13 @@ trait CeremonySession {
 #[derive(Debug)]
 pub struct UiControlServiceClient {
     conn: Connection,
+    /// Backend to show the UI with; the default service if `None`.
+    backend: Option<OwnedWellKnownName>,
 }
 
 impl UiControlServiceClient {
-    pub fn new(conn: Connection) -> Self {
-        Self { conn }
+    pub fn new(conn: Connection, backend: Option<OwnedWellKnownName>) -> Self {
+        Self { conn, backend }
     }
 }
 
@@ -431,7 +433,19 @@ impl UiController for UiControlServiceClient {
         options: PortalBackendOptions,
     ) -> Result<Ceremony, Box<dyn Error>> {
         let (from_ui_tx, from_ui_rx) = mpsc::channel(32);
-        let backend_proxy = UiControlServiceProxy::new(&self.conn).await?;
+        let backend_proxy = match &self.backend {
+            Some(backend) => {
+                UiControlServiceProxy::builder(&self.conn)
+                    .destination(backend.clone())?
+                    .build()
+                    .await?
+            }
+            None => UiControlServiceProxy::new(&self.conn).await?,
+        };
+        tracing::debug!(
+            backend = %backend_proxy.as_ref().destination(),
+            "Launching UI"
+        );
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
         // Calling `create_session()` below would activate the service automatically,
         // but we want to subscribe to UI-events before creating a session, and filter
@@ -446,7 +460,7 @@ impl UiController for UiControlServiceClient {
             Ok(sender) => sender,
             Err(fdo::Error::NameHasNoOwner(_)) => {
                 let service_name = WellKnownName::try_from(destination.clone())
-                    .expect("UiControl destination is a well-known name");
+                    .expect("UI backend destination is a well-known name");
                 dbus_proxy.start_service_by_name(service_name, 0).await?;
                 dbus_proxy.get_name_owner(destination).await?
             }

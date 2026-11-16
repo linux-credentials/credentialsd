@@ -12,6 +12,7 @@
 
 - ui: Display restart reason in case of premature failure
 - daemon: Stop retrying a transport after 5 consecutive failures before user interaction; other transports keep running.
+- daemon: Show the UI through the backend that xdg-desktop-portal selects, passed in the new `ui_backend` option
 - daemon: Treat Debian's Firefox ESR (app ID `firefox-esr`) as a privileged client, like the other Firefox builds
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
