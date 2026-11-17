@@ -1,3 +1,4 @@
+pub mod bluetooth;
 pub mod hybrid;
 pub mod nfc;
 pub mod usb;
@@ -7,6 +8,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex, OnceLock},
     task::Poll,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -32,6 +34,7 @@ use crate::{
 };
 
 use self::{
+    bluetooth::BluetoothState,
     hybrid::{HybridHandler, HybridState, HybridStateInternal},
     usb::{UsbHandler, UsbStateInternal},
 };
@@ -170,7 +173,9 @@ pub struct CredentialService<H: HybridHandler, N: NfcHandler, U: UsbHandler> {
     /// Current request and channel to respond to caller.
     ctx: Arc<Mutex<Option<RequestContext>>>,
 
-    hybrid_handler: Mutex<H>,
+    /// Shared so hybrid discovery can be started later in a request, once
+    /// Bluetooth becomes available.
+    hybrid_handler: Arc<Mutex<H>>,
     nfc_handler: Mutex<N>,
     usb_handler: Mutex<U>,
 }
@@ -182,7 +187,7 @@ impl<H: HybridHandler + Debug, N: NfcHandler + Debug, U: UsbHandler + Debug>
         Self {
             ctx: Arc::new(Mutex::new(None)),
 
-            hybrid_handler: Mutex::new(hybrid_handler),
+            hybrid_handler: Arc::new(Mutex::new(hybrid_handler)),
             nfc_handler: Mutex::new(nfc_handler),
             usb_handler: Mutex::new(usb_handler),
         }
@@ -195,29 +200,15 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
     async fn get_hybrid_credential(
         &self,
     ) -> Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>> {
-        let guard = self.ctx.lock().unwrap();
-        if let Some(RequestContext {
-            ref request,
-            ref cancellation,
-            ..
-        }) = *guard
-        {
-            let stream = self
-                .hybrid_handler
-                .lock()
-                .unwrap()
-                .start(request, cancellation.clone());
-            let ctx = self.ctx.clone();
-            Box::pin(HybridStateStream {
-                inner: stream,
-                ctx,
-                cancellation_token: cancellation.clone(),
-            })
-        } else {
-            tracing::error!(
-                "Attempted to start hybrid credential flow, but no request context was found."
-            );
-            todo!("Handle error when context is not set up.")
+        let request_id = self.ctx.lock().unwrap().as_ref().map(|ctx| ctx.request_id);
+        match request_id.and_then(|id| start_hybrid(&self.hybrid_handler, &self.ctx, id)) {
+            Some(stream) => stream,
+            None => {
+                tracing::error!(
+                    "Attempted to start hybrid credential flow, but no request context was found."
+                );
+                todo!("Handle error when context is not set up.")
+            }
         }
     }
 
@@ -277,7 +268,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send>
 }
 
 #[async_trait]
-impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> ManageDevice
+impl<H: HybridHandler + Send + 'static, N: NfcHandler + Send, U: UsbHandler + Send> ManageDevice
     for CredentialService<H, N, U>
 {
     async fn init_request(
@@ -285,7 +276,7 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
         request: &CredentialRequest,
         tx: oneshot::Sender<Result<CredentialResponse, CredentialServiceError>>,
     ) -> Result<(RequestId, CancellationToken), CredentialServiceError> {
-        let supported_transports = supported_transports(&available_transports().await);
+        let supported_transports = supported_transports(&usable_transports().await);
         let mut cred_request = self.ctx.lock().unwrap();
         if cred_request.is_some() {
             Err(CredentialServiceError::Internal(
@@ -362,6 +353,25 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
                 .map(DeviceStateUpdate::from)
                 .boxed();
             selected_transports.push(hybrid);
+        } else if let Some((request_id, cancellation)) = self
+            .ctx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|ctx| (ctx.request_id, ctx.cancellation.clone()))
+        {
+            // Hybrid wasn't offered because Bluetooth was off. Offer and start it
+            // as soon as the user turns Bluetooth on.
+            let handler = self.hybrid_handler.clone();
+            let ctx = self.ctx.clone();
+            let watch = hybrid_when_available(
+                bluetooth::bluetooth_state,
+                TRANSPORT_POLL_INTERVAL,
+                cancellation,
+                move || add_hybrid(&handler, &ctx, request_id),
+            )
+            .boxed();
+            selected_transports.push(watch);
         }
         futures::stream::select_all(selected_transports).boxed()
     }
@@ -518,11 +528,16 @@ pub enum DeviceStateUpdate {
     Hybrid(HybridState),
     Nfc(NfcState),
     Usb(UsbState),
+    /// The transports offered to the user changed during the request.
+    TransportsChanged(Vec<Transport>),
 }
 
 impl From<DeviceStateUpdate> for BackgroundEvent {
     fn from(value: DeviceStateUpdate) -> Self {
         match value {
+            DeviceStateUpdate::TransportsChanged(transports) => {
+                BackgroundEvent::TransportsChanged(transports)
+            }
             DeviceStateUpdate::Hybrid(state) => (&state).into(),
             DeviceStateUpdate::Nfc(state) => (&state).into(),
             DeviceStateUpdate::Usb(state) => (&state).into(),
@@ -583,6 +598,124 @@ pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
         // Transient internal errors: do not kill the ceremony.
         CredentialServiceError::Internal(_) => false,
     }
+}
+
+/// The transports that can be used right now: libwebauthn's list, without
+/// the Bluetooth-based ones unless an adapter is powered on.
+async fn usable_transports() -> Vec<libwebauthn::Transport> {
+    let transports = available_transports().await;
+    let powered = transports.contains(&libwebauthn::Transport::Hybrid)
+        && bluetooth::bluetooth_state().await == BluetoothState::Powered;
+    with_bluetooth_power(transports, powered)
+}
+
+fn with_bluetooth_power(
+    mut transports: Vec<libwebauthn::Transport>,
+    powered: bool,
+) -> Vec<libwebauthn::Transport> {
+    if !powered {
+        transports.retain(|t| {
+            !matches!(
+                t,
+                libwebauthn::Transport::Ble | libwebauthn::Transport::Hybrid
+            )
+        });
+    }
+    transports
+}
+
+/// How often to check whether Bluetooth became available during a request.
+const TRANSPORT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Starts hybrid discovery for request `request_id`, or returns `None` if that
+/// request is no longer the current one.
+fn start_hybrid<H: HybridHandler>(
+    handler: &Mutex<H>,
+    ctx: &Arc<Mutex<Option<RequestContext>>>,
+    request_id: RequestId,
+) -> Option<Pin<Box<dyn Stream<Item = HybridState> + Send + 'static>>> {
+    let guard = ctx.lock().unwrap();
+    let RequestContext {
+        request,
+        cancellation,
+        ..
+    } = guard.as_ref().filter(|ctx| ctx.request_id == request_id)?;
+    let stream = handler.lock().unwrap().start(request, cancellation.clone());
+    Some(Box::pin(HybridStateStream {
+        inner: stream,
+        ctx: ctx.clone(),
+        cancellation_token: cancellation.clone(),
+    }))
+}
+
+type DeviceUpdateStream = Pin<Box<dyn Stream<Item = DeviceStateUpdate> + Send + 'static>>;
+
+/// Adds hybrid to the transports of request `request_id` and starts it.
+/// Returns the new transport list and the hybrid stream, or `None` if that
+/// request is no longer the current one.
+fn add_hybrid<H: HybridHandler>(
+    handler: &Mutex<H>,
+    ctx: &Arc<Mutex<Option<RequestContext>>>,
+    request_id: RequestId,
+) -> Option<(Vec<Transport>, DeviceUpdateStream)> {
+    let transports = {
+        let mut guard = ctx.lock().unwrap();
+        let ctx = guard.as_mut().filter(|ctx| ctx.request_id == request_id)?;
+        if !ctx.transports.contains(&Transport::HybridQr) {
+            ctx.transports.push(Transport::HybridQr);
+        }
+        ctx.transports.clone()
+    };
+    let hybrid = start_hybrid(handler, ctx, request_id)?;
+    Some((transports, hybrid.map(DeviceStateUpdate::from).boxed()))
+}
+
+/// Waits for hybrid to become usable during a request, e.g. because the user
+/// turned Bluetooth on, by calling `bluetooth_state` every `interval`. Once an
+/// adapter is powered on, calls `start_hybrid`, yields the new transport list
+/// and continues with the hybrid stream.
+///
+/// Ends without yielding anything if `cancellation` fires first (the request
+/// finished or was cancelled), if there is no Bluetooth to wait for (BlueZ
+/// isn't running or has no adapter), or if `start_hybrid` returns `None`.
+fn hybrid_when_available<P, F, S>(
+    mut bluetooth_state: P,
+    interval: Duration,
+    cancellation: CancellationToken,
+    start_hybrid: impl FnOnce() -> Option<(Vec<Transport>, S)> + Send + 'static,
+) -> impl Stream<Item = DeviceStateUpdate> + Send + 'static
+where
+    P: FnMut() -> F + Send + 'static,
+    F: Future<Output = BluetoothState> + Send,
+    S: Stream<Item = DeviceStateUpdate> + Send + 'static,
+{
+    let wait_for_hybrid = async move {
+        let state = cancellation
+            .run_until_cancelled(async {
+                loop {
+                    tokio::time::sleep(interval).await;
+                    match bluetooth_state().await {
+                        BluetoothState::Off => continue,
+                        state => break state,
+                    }
+                }
+            })
+            .await?;
+        if state == BluetoothState::Unavailable {
+            tracing::debug!("No Bluetooth adapter to wait for, not offering hybrid");
+            return None;
+        }
+        if cancellation.is_cancelled() {
+            return None;
+        }
+        let (transports, hybrid) = start_hybrid()?;
+        tracing::debug!("Bluetooth became available, starting hybrid discovery");
+        let changed = DeviceStateUpdate::TransportsChanged(transports);
+        Some(futures_lite::stream::once(changed).chain(hybrid))
+    };
+    futures_lite::stream::once_future(wait_for_hybrid)
+        .filter_map(|stream| stream)
+        .flatten()
 }
 
 /// Maps the transports libwebauthn found to the ones this service runs.
@@ -756,6 +889,144 @@ mod tests {
                 .expect("Failed to parse request JSON");
 
         CredentialRequest::CreatePublicKeyCredentialRequest(make_credentials_request)
+    }
+
+    #[test]
+    fn bluetooth_transports_are_dropped_when_powered_off() {
+        use libwebauthn::Transport::{Ble, Hybrid, Nfc, Usb};
+        assert_eq!(
+            with_bluetooth_power(vec![Usb, Ble, Hybrid, Nfc], false),
+            [Usb, Nfc]
+        );
+        assert_eq!(
+            with_bluetooth_power(vec![Usb, Ble, Hybrid], true),
+            [Usb, Ble, Hybrid]
+        );
+    }
+
+    const POLL: Duration = Duration::from_millis(5);
+
+    /// A check that reports Bluetooth as off for the first `misses` calls,
+    /// then as `then`.
+    fn bluetooth_after(
+        misses: usize,
+        then: BluetoothState,
+    ) -> impl FnMut() -> std::future::Ready<BluetoothState> + Send + 'static {
+        let mut calls = 0;
+        move || {
+            calls += 1;
+            std::future::ready(if calls > misses {
+                then
+            } else {
+                BluetoothState::Off
+            })
+        }
+    }
+
+    type FakeHybrid = Option<(
+        Vec<Transport>,
+        futures_lite::stream::Boxed<DeviceStateUpdate>,
+    )>;
+
+    fn fake_hybrid() -> FakeHybrid {
+        Some((
+            vec![Transport::Usb, Transport::HybridQr],
+            futures_lite::stream::once(DeviceStateUpdate::Hybrid(HybridState::Connecting)).boxed(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn hybrid_starts_when_bluetooth_becomes_available() {
+        let updates: Vec<_> = hybrid_when_available(
+            bluetooth_after(2, BluetoothState::Powered),
+            POLL,
+            CancellationToken::new(),
+            fake_hybrid,
+        )
+        .collect()
+        .await;
+
+        assert_eq!(updates.len(), 2);
+        let DeviceStateUpdate::TransportsChanged(transports) = &updates[0] else {
+            panic!("expected the new transport list first");
+        };
+        assert_eq!(transports, &[Transport::Usb, Transport::HybridQr]);
+        assert!(matches!(
+            updates[1],
+            DeviceStateUpdate::Hybrid(HybridState::Connecting)
+        ));
+    }
+
+    #[tokio::test]
+    async fn bluetooth_watch_ends_when_request_ends() {
+        let cancellation = CancellationToken::new();
+        let mut updates = hybrid_when_available(
+            bluetooth_after(usize::MAX, BluetoothState::Powered),
+            POLL,
+            cancellation.clone(),
+            || -> FakeHybrid { panic!("hybrid must not start") },
+        )
+        .boxed();
+        tokio::time::sleep(POLL * 3).await;
+        cancellation.cancel();
+        let next = tokio::time::timeout(Duration::from_secs(1), updates.next()).await;
+        assert!(matches!(next, Ok(None)), "stream should end once cancelled");
+    }
+
+    #[tokio::test]
+    async fn bluetooth_watch_ends_if_request_context_is_gone() {
+        let updates: Vec<_> = hybrid_when_available(
+            bluetooth_after(0, BluetoothState::Powered),
+            POLL,
+            CancellationToken::new(),
+            || -> FakeHybrid { None },
+        )
+        .collect()
+        .await;
+        assert!(updates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bluetooth_watch_ends_without_bluetooth() {
+        let updates: Vec<_> = hybrid_when_available(
+            bluetooth_after(1, BluetoothState::Unavailable),
+            POLL,
+            CancellationToken::new(),
+            || -> FakeHybrid { panic!("hybrid must not start") },
+        )
+        .collect()
+        .await;
+        assert!(updates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn late_hybrid_start_only_applies_to_its_own_request() {
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, MockUsbHandler);
+        let (tx, _rx) = oneshot::channel();
+        let (request_id, _) = service
+            .init_request(&create_test_request().await, tx)
+            .await
+            .unwrap();
+        // As if Bluetooth was off when the request started.
+        service.ctx.lock().unwrap().as_mut().unwrap().transports = vec![Transport::Usb];
+
+        assert!(
+            add_hybrid(
+                &service.hybrid_handler,
+                &service.ctx,
+                request_id.wrapping_add(1)
+            )
+            .is_none()
+        );
+        assert_eq!(service.get_transports(), [Transport::Usb]);
+
+        let (transports, _) =
+            add_hybrid(&service.hybrid_handler, &service.ctx, request_id).unwrap();
+        assert_eq!(transports, [Transport::Usb, Transport::HybridQr]);
+        assert_eq!(service.get_transports(), transports);
+
+        service.cancel_request(request_id).await;
+        assert!(add_hybrid(&service.hybrid_handler, &service.ctx, request_id).is_none());
     }
 
     #[tokio::test]

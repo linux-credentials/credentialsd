@@ -30,9 +30,9 @@ use credentialsd_common::model::{
     NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
     NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
     NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
-    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, Transport,
-    TransportRestartReason, UserInteractedEvent, WindowHandle,
+    NotifySelectingCredentialOptions, NotifyTransportsChangedOptions, NotifyUsbConnectedOptions,
+    NotifyUsbRestartingOptions, Operation, PinNotSetError, PortalBackendOptions,
+    SetDevicePinOptions, Transport, TransportRestartReason, UserInteractedEvent, WindowHandle,
 };
 
 use crate::{RequestingApplication, ViewRequest, client::FlowControlClient};
@@ -281,6 +281,24 @@ impl CredentialPortalBackend {
             object_server,
             session_handle,
             BackgroundEvent::HybridConnected,
+        )
+        .await
+    }
+
+    /// Called when the transports offered to the user change during the
+    /// request, e.g. because Bluetooth was turned on. `transports` is the full
+    /// new list.
+    async fn notify_transports_changed(
+        &self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        session_handle: ObjectPath<'_>,
+        transports: Vec<Transport>,
+        _options: NotifyTransportsChangedOptions,
+    ) -> fdo::Result<()> {
+        self.notify_state_changed(
+            object_server,
+            session_handle,
+            BackgroundEvent::TransportsChanged(transports),
         )
         .await
     }

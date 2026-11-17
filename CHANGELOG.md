@@ -7,6 +7,7 @@
 - Renamed the `username` field of `Credential` to `display_name`, matching WebAuthn's `user.displayName`.
 - `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
 - daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
+- Added `NotifyTransportsChanged`, sent with the full transport list when the transports offered to the user change during a request.
 
 ## Improvements
 
@@ -18,6 +19,7 @@
 - daemon: Allow clients to cancel requests through xdg-desktop-portal.
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
+- daemon: Only offer hybrid (QR code) when a Bluetooth adapter is powered on, and offer it as soon as Bluetooth is turned on during a request (#206)
 
 # 0.4.0 [2026-11-05]
 
