@@ -23,9 +23,9 @@ use credentialsd_common::model::{
     NotifyHybridConnectingOptions, NotifyHybridRestartingOptions, NotifyHybridStartedOptions,
     NotifyNeedsPinOptions, NotifyNeedsUserPresenceOptions, NotifyNeedsUserVerificationOptions,
     NotifyNfcConnectedOptions, NotifyNfcRestartingOptions, NotifyPinNotSetOptions,
-    NotifySelectingCredentialOptions, NotifyUsbConnectedOptions, NotifyUsbRestartingOptions,
-    Operation, PinNotSetError, PortalBackendOptions, SetDevicePinOptions, Transport,
-    TransportRestartReason, UserInteractedEvent, WindowHandle,
+    NotifySelectingCredentialOptions, NotifyTransportsChangedOptions, NotifyUsbConnectedOptions,
+    NotifyUsbRestartingOptions, Operation, PinNotSetError, PortalBackendOptions,
+    SetDevicePinOptions, Transport, TransportRestartReason, UserInteractedEvent, WindowHandle,
 };
 
 /// Used by the credential service to control the UI.
@@ -132,6 +132,17 @@ trait UiControlService {
         &self,
         session_handle: ObjectPath<'_>,
         _options: NotifyHybridConnectedOptions,
+    ) -> fdo::Result<()>;
+
+    /// Called when the transports offered to the user change during the
+    /// request, e.g. because Bluetooth was turned on. `transports` is the full
+    /// new list.
+    #[zbus(no_reply)]
+    async fn notify_transports_changed(
+        &self,
+        session_handle: ObjectPath<'_>,
+        transports: Vec<Transport>,
+        _options: NotifyTransportsChangedOptions,
     ) -> fdo::Result<()>;
 
     #[zbus(no_reply)]
@@ -338,6 +349,15 @@ impl Ceremony {
                         self.session_handle.as_ref(),
                         reason,
                         NotifyUsbRestartingOptions {},
+                    )
+                    .await
+            }
+            BackgroundEvent::TransportsChanged(transports) => {
+                self.proxy
+                    .notify_transports_changed(
+                        self.session_handle.as_ref(),
+                        transports,
+                        NotifyTransportsChangedOptions {},
                     )
                     .await
             }

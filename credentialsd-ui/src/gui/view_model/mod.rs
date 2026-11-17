@@ -33,6 +33,8 @@ pub(crate) struct ViewModel {
 
     // Transports offered to the user, e.g. USB and hybrid
     transports: Vec<Transport>,
+    // Transports that gave up for this request, kept out of later updates
+    stopped_transports: Vec<Transport>,
     selected_device: Option<Device>,
 
     hybrid_qr_code_data: Option<Vec<u8>>,
@@ -64,6 +66,7 @@ impl ViewModel {
             title: String::default(),
             subtitle: String::default(),
             transports,
+            stopped_transports: Vec::new(),
             selected_device: None,
             hybrid_qr_code_data: None,
         }
@@ -128,8 +131,19 @@ impl ViewModel {
             .unwrap();
     }
 
+    /// Offers the transports the daemon now reports, e.g. hybrid once Bluetooth
+    /// was turned on, except those that gave up earlier in this request.
+    async fn set_transports(&mut self, transports: Vec<Transport>) {
+        self.transports = transports
+            .into_iter()
+            .filter(|transport| !self.stopped_transports.contains(transport))
+            .collect();
+        self.send_transports().await;
+    }
+
     /// Stops offering transports that gave up for this request.
     async fn drop_transports(&mut self, gone: &[Transport]) {
+        self.stopped_transports.extend_from_slice(gone);
         self.transports
             .retain(|transport| !gone.contains(transport));
         self.send_transports().await;
@@ -338,6 +352,10 @@ impl ViewModel {
                         .await
                         .unwrap();
                 }
+                Event::Background(BackgroundEvent::TransportsChanged(transports)) => {
+                    info!("Available transports changed: {transports:?}");
+                    self.set_transports(transports).await;
+                }
                 // A transport gave up for this request: stop offering it. No
                 // TransportRestarting here, as that would pull the user off the page
                 // of a transport that still works.
@@ -422,4 +440,97 @@ fn localized_transport_restart_reason(reason: &TransportRestartReason) -> String
 pub enum Event {
     Background(BackgroundEvent),
     View(ViewEvent),
+}
+
+#[cfg(test)]
+mod tests {
+    use async_std::channel::unbounded;
+
+    use super::*;
+
+    /// Starts a view model offering `transports`, and returns the channel to
+    /// send it daemon events and the channel it sends view updates to.
+    fn start_view_model(
+        transports: Vec<Transport>,
+    ) -> (Sender<BackgroundEvent>, Receiver<ViewUpdate>) {
+        let (_view_tx, view_rx) = unbounded();
+        let (bg_tx, bg_rx) = unbounded();
+        let (update_tx, updates) = unbounded();
+        let (client_tx, _sent) = unbounded();
+        let client = FlowControlClient {
+            tx: client_tx,
+            rx: AsyncMutex::new(Some(bg_rx)),
+        };
+        let request = ViewRequest {
+            operation: Operation::PublicKeyCreate,
+            rp_id: "example.com".to_string(),
+            requesting_app: RequestingApplication::default(),
+            initial_transports: transports,
+            window_handle: None,
+            activation_token: None,
+        };
+        let mut vm = ViewModel::new(
+            request,
+            Arc::new(AsyncMutex::new(client)),
+            view_rx,
+            update_tx,
+        );
+        async_std::task::spawn(async move { vm.start_event_loop().await });
+        (bg_tx, updates)
+    }
+
+    async fn next_transports(updates: &Receiver<ViewUpdate>) -> Vec<Transport> {
+        match updates.recv().await.unwrap() {
+            ViewUpdate::SetTransports(transports) => transports,
+            other => panic!("expected SetTransports, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transport_list_follows_daemon_updates() {
+        async_std::task::block_on(async {
+            let (bg_tx, updates) = start_view_model(vec![Transport::Usb]);
+
+            bg_tx
+                .send(BackgroundEvent::TransportsChanged(vec![
+                    Transport::Usb,
+                    Transport::HybridQr,
+                ]))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                next_transports(&updates).await,
+                [Transport::Usb, Transport::HybridQr]
+            );
+        });
+    }
+
+    #[test]
+    fn stopped_transport_stays_hidden_after_daemon_update() {
+        async_std::task::block_on(async {
+            let (bg_tx, updates) = start_view_model(vec![Transport::Usb, Transport::Nfc]);
+
+            bg_tx
+                .send(BackgroundEvent::UsbRestarting {
+                    reason: TransportRestartReason::TransportUnavailable,
+                })
+                .await
+                .unwrap();
+            assert_eq!(next_transports(&updates).await, [Transport::Nfc]);
+
+            bg_tx
+                .send(BackgroundEvent::TransportsChanged(vec![
+                    Transport::Usb,
+                    Transport::Nfc,
+                    Transport::HybridQr,
+                ]))
+                .await
+                .unwrap();
+            assert_eq!(
+                next_transports(&updates).await,
+                [Transport::Nfc, Transport::HybridQr]
+            );
+        });
+    }
 }

@@ -63,6 +63,10 @@ pub enum BackgroundEvent {
         reason: TransportRestartReason,
     },
 
+    /// The transports offered to the user changed during the request, e.g.
+    /// because the user turned Bluetooth on. Contains the full new list.
+    TransportsChanged(Vec<Transport>),
+
     ErrorInternal,
     ErrorTimedOut,
     ErrorCancelled,
@@ -164,6 +168,10 @@ pub struct NotifyHybridConnectedOptions {}
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
 pub struct NotifyNfcConnectedOptions {}
+
+#[derive(Debug, SerializeDict, DeserializeDict, Type)]
+#[zvariant(signature = "dict")]
+pub struct NotifyTransportsChangedOptions {}
 
 #[derive(Debug, SerializeDict, DeserializeDict, Type)]
 #[zvariant(signature = "dict")]
