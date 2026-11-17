@@ -809,6 +809,7 @@ dependencies = [
  "rand 0.10.2",
  "ring",
  "serde",
+ "serde_cbor_2",
  "serde_json",
  "tokio",
  "tokio-stream",

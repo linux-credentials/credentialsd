@@ -59,3 +59,10 @@ option(
   value: 'enabled',
   description: 'Whether to build the web extension',
 )
+
+option(
+  'test_authenticator',
+  type: 'boolean',
+  value: false,
+  description: 'Build an in-memory authenticator for testing without hardware. It is offered only when CREDSD_TEST_AUTHENTICATOR=1 is set and only to test sites. Never enable for distribution builds.',
+)

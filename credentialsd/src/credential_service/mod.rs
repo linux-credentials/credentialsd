@@ -1,5 +1,7 @@
 pub mod hybrid;
 pub mod nfc;
+#[cfg(feature = "test-authenticator")]
+pub(crate) mod test_authenticator;
 pub mod usb;
 
 use std::{
