@@ -1,0 +1,6 @@
+# Files inside the vendored crates (vendor/), which `cargo vendor` copies
+# as published on crates.io. None of them are used for a Linux build.
+credentialsd source: source-contains-prebuilt-java-object [vendor/*]
+credentialsd source: source-contains-prebuilt-wasm-binary [vendor/*]
+credentialsd source: source-contains-prebuilt-windows-binary [vendor/*]
+credentialsd source: very-long-line-length-in-source-file * [vendor/*]

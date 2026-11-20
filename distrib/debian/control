@@ -1,0 +1,97 @@
+Source: credentialsd
+Section: utils
+Maintainer: K Panuragh <kpanuragh@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ appstream <!nocheck>,
+ blueprint-compiler (>= 0.20.4),
+ cargo (>= 1.92),
+ clang,
+ dbus-daemon <!nocheck>,
+ gettext,
+ libclang-dev,
+ libdbus-1-dev,
+ libglib2.0-dev,
+ libglib2.0-dev-bin,
+ libgtk-4-dev,
+ libnfc-dev (>= 1.8.0),
+ libpcsclite-dev (>= 2.0.3),
+ libssl-dev,
+ libudev-dev,
+ libxml2-utils,
+ meson (>= 1.5.0),
+ ninja-build,
+ pkgconf,
+ rustc (>= 1.92),
+ systemd-dev,
+ zip,
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://github.com/linux-credentials/credentialsd
+Vcs-Browser: https://github.com/linux-credentials/credentialsd
+Vcs-Git: https://github.com/linux-credentials/credentialsd.git
+
+Package: credentialsd
+Architecture: linux-any
+Depends:
+ publicsuffix,
+ ${misc:Depends},
+ ${shlibs:Depends},
+Recommends:
+ credentialsd-ui,
+ dbus-user-session,
+Suggests:
+ credentialsd-webextension,
+Description: credential manager service with WebAuthn/passkey support
+ credentialsd is a D-Bus service that lets applications create and use
+ WebAuthn credentials (passkeys) with security keys over USB, NFC and
+ hybrid (caBLE) transports.
+ .
+ This package contains the daemon, its D-Bus activation file and systemd
+ user unit.
+ .
+ Applications reach the service through the experimental Credential
+ interface of xdg-desktop-portal, which is not in upstream
+ xdg-desktop-portal yet and needs a patched build of it.
+
+Package: credentialsd-ui
+Architecture: linux-any
+Depends:
+ credentialsd (= ${binary:Version}),
+ ${misc:Depends},
+ ${shlibs:Depends},
+Suggests:
+ xdg-desktop-portal,
+Description: credential manager service with WebAuthn/passkey support - GTK UI
+ credentialsd is a D-Bus service that lets applications create and use
+ WebAuthn credentials (passkeys) with security keys over USB, NFC and
+ hybrid (caBLE) transports.
+ .
+ This package contains the GTK 4 dialog that asks the user to choose a
+ device, enter a PIN or confirm a request, and the xdg-desktop-portal
+ backend description that points the Credential portal at it.
+
+Package: credentialsd-webextension
+Architecture: all
+Depends:
+ credentialsd (>= ${source:Version}),
+ python3,
+ python3-dbus-next,
+ ${misc:Depends},
+Enhances:
+ firefox,
+ firefox-esr,
+Description: credential manager service with WebAuthn/passkey support - browser helper
+ credentialsd is a D-Bus service that lets applications create and use
+ WebAuthn credentials (passkeys) with security keys over USB, NFC and
+ hybrid (caBLE) transports.
+ .
+ This package contains the native messaging host that connects the
+ credentialsd browser extension to the service, for Firefox builds without
+ native portal integration, and the unsigned extension archives for
+ Firefox and Chromium. The native messaging host is registered for
+ Firefox from the Debian package; Firefox installed as a Snap or Flatpak
+ does not read it.
+ .
+ Release builds of Firefox only install signed extensions; upstream
+ publishes a signed build of the extension with each release.
