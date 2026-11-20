@@ -7,6 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use zbus::{
     Connection, DBusError, fdo, interface,
@@ -244,8 +245,21 @@ where
     Fut: Future<Output = Result<T, Error>>,
 {
     let cancellation = CancellationToken::new();
+    // Cancel the request if the caller leaves the bus, e.g. because it crashed.
+    let _caller_watch = match sender {
+        Some(sender) => match watch_caller(connection, sender, cancellation.clone()).await {
+            Ok(watch) => Some(watch),
+            Err(err) => {
+                tracing::warn!(%sender, %err, "Failed to watch caller for disconnection");
+                None
+            }
+        },
+        None => None,
+    };
+
     let Some(request_handle) = request_handle else {
-        return ceremony(cancellation).await.into();
+        let result = ceremony(cancellation.clone()).await;
+        return ceremony_result(result, &cancellation, None);
     };
 
     let Some(sender) = sender else {
@@ -285,11 +299,61 @@ where
         tracing::warn!(%request_handle, %err, "Failed to remove request handle after ceremony completed");
     }
 
+    ceremony_result(result, &cancellation, Some(&request_handle))
+}
+
+/// Reports a ceremony that failed because it was cancelled as cancelled.
+fn ceremony_result<T>(
+    result: Result<T, Error>,
+    cancellation: &CancellationToken,
+    request_handle: Option<&OwnedObjectPath>,
+) -> PortalResult<T, Error> {
     if result.is_err() && cancellation.is_cancelled() {
-        tracing::debug!(%request_handle, "Request cancelled by client");
+        tracing::debug!(?request_handle, "Request cancelled");
         PortalResult::cancelled()
     } else {
         result.into()
+    }
+}
+
+/// Cancels `cancellation` once `caller` has left the bus.
+///
+/// Watching stops when the returned guard is dropped.
+async fn watch_caller(
+    connection: &Connection,
+    caller: &UniqueName<'_>,
+    cancellation: CancellationToken,
+) -> zbus::Result<CallerWatch> {
+    let dbus = fdo::DBusProxy::new(connection).await?;
+    let mut changes = dbus
+        .receive_name_owner_changed_with_args(&[(0, caller.as_str())])
+        .await?;
+    // The caller may have left before the match rule was added.
+    if !dbus.name_has_owner(BusName::Unique(caller.clone())).await? {
+        tracing::debug!(%caller, "Caller left the bus, cancelling request");
+        cancellation.cancel();
+    }
+    let caller = caller.to_owned();
+    let task = tokio::spawn(async move {
+        while let Some(signal) = changes.next().await {
+            // Unique names are never reused, so losing the owner means the
+            // caller has disconnected.
+            if signal.args().is_ok_and(|args| args.new_owner().is_none()) {
+                tracing::debug!(%caller, "Caller left the bus, cancelling request");
+                cancellation.cancel();
+                break;
+            }
+        }
+    });
+    Ok(CallerWatch(task))
+}
+
+/// Stops watching the caller when dropped.
+struct CallerWatch(tokio::task::JoinHandle<()>);
+
+impl Drop for CallerWatch {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -767,6 +831,89 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_caller_disconnect_cancels_ceremony() {
+        let (gateway, bus) = connect_test_bus(None).await;
+        let (caller, _) = connect_test_bus(Some(&bus)).await;
+        let caller_name = caller.unique_name().unwrap().to_owned();
+        let handle = OwnedObjectPath::try_from(REQUEST_HANDLE).unwrap();
+        let (started_tx, started_rx) = oneshot::channel();
+
+        let ceremony = run_ceremony(
+            &gateway,
+            Some(&caller_name),
+            Some(handle.clone()),
+            |cancellation| async move {
+                started_tx.send(()).unwrap();
+                cancellation.cancelled().await;
+                Err::<TestResponse, _>(Error::NotAllowedError)
+            },
+        );
+        let client = async {
+            started_rx.await.unwrap();
+            caller.close().await.unwrap();
+        };
+        let (result, ()) = expect_cancelled_in_time(async { tokio::join!(ceremony, client) }).await;
+
+        assert_eq!(
+            decode_portal_result(result).0,
+            PortalResponse::Cancelled as u32
+        );
+    }
+
+    #[tokio::test]
+    async fn test_caller_disconnect_cancels_ceremony_without_request_handle() {
+        let (gateway, bus) = connect_test_bus(None).await;
+        let (caller, _) = connect_test_bus(Some(&bus)).await;
+        let caller_name = caller.unique_name().unwrap().to_owned();
+        let (started_tx, started_rx) = oneshot::channel();
+
+        let ceremony = run_ceremony(
+            &gateway,
+            Some(&caller_name),
+            None,
+            |cancellation| async move {
+                started_tx.send(()).unwrap();
+                cancellation.cancelled().await;
+                Err::<TestResponse, _>(Error::NotAllowedError)
+            },
+        );
+        let client = async {
+            started_rx.await.unwrap();
+            caller.close().await.unwrap();
+        };
+        let (result, ()) = expect_cancelled_in_time(async { tokio::join!(ceremony, client) }).await;
+
+        assert_eq!(
+            decode_portal_result(result).0,
+            PortalResponse::Cancelled as u32
+        );
+    }
+
+    #[tokio::test]
+    async fn test_caller_already_gone_cancels_ceremony() {
+        let (gateway, bus) = connect_test_bus(None).await;
+        let (caller, _) = connect_test_bus(Some(&bus)).await;
+        let caller_name = caller.unique_name().unwrap().to_owned();
+        caller.close().await.unwrap();
+
+        let ceremony = run_ceremony(
+            &gateway,
+            Some(&caller_name),
+            None,
+            |cancellation| async move {
+                cancellation.cancelled().await;
+                Err::<TestResponse, _>(Error::NotAllowedError)
+            },
+        );
+        let result = expect_cancelled_in_time(ceremony).await;
+
+        assert_eq!(
+            decode_portal_result(result).0,
+            PortalResponse::Cancelled as u32
+        );
+    }
+
+    #[tokio::test]
     async fn test_request_handle_removed_after_success() {
         let (gateway, bus) = connect_test_bus(None).await;
         let (caller, _) = connect_test_bus(Some(&bus)).await;
@@ -785,6 +932,13 @@ mod test {
             PortalResponse::Success as u32
         );
         assert!(close_request(&caller, &gateway, &handle).await.is_err());
+    }
+
+    /// Fails the test instead of hanging if the ceremony is never cancelled.
+    async fn expect_cancelled_in_time<F: Future>(future: F) -> F::Output {
+        tokio::time::timeout(std::time::Duration::from_secs(5), future)
+            .await
+            .expect("ceremony was not cancelled")
     }
 
     /// Connects to a private test bus, starting one if `bus` is `None`.
