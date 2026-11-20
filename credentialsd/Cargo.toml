@@ -5,6 +5,11 @@ authors = ["Isaiah Inuwa <isaiah.inuwa@gmail.com>", "Martin Sirringhaus <martin.
 edition = "2024"
 license = "LGPL-3.0-only"
 
+[features]
+# Lets CREDSD_TRUSTED_CALLERS and CREDSD_TRUSTED_APP_IDS add trusted callers
+# and privileged app IDs. For development only.
+trusted-client-overrides = []
+
 [dependencies]
 credentialsd-common = { path = "../credentialsd-common" }
 
