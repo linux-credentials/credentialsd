@@ -79,6 +79,10 @@ impl CredentialPortalGateway {
         options: CreateCredentialPortalOptions,
         claimed_app_id: String,
     ) -> PortalResult<CreateCredentialResponse, Error> {
+        // We only serve requests over the bus, so every request has a sender.
+        let Some(sender) = header.sender() else {
+            return Err(Error::SecurityError).into();
+        };
         let CreateCredentialPortalOptions {
             activation_token,
             top_origin,
@@ -97,7 +101,7 @@ impl CredentialPortalGateway {
 
         let app_validation_result = validate_app_details(
             connection,
-            &header,
+            sender,
             claimed_app_id,
             origin.clone(),
             top_origin.clone(),
@@ -126,7 +130,7 @@ impl CredentialPortalGateway {
 
         run_ceremony(
             connection,
-            header.sender(),
+            sender,
             request_handle,
             |cancellation| async move {
                 let Some(svc) = cancellation
@@ -160,6 +164,10 @@ impl CredentialPortalGateway {
         options: GetCredentialPortalOptions,
         claimed_app_id: String,
     ) -> PortalResult<GetCredentialResponse, Error> {
+        // We only serve requests over the bus, so every request has a sender.
+        let Some(sender) = header.sender() else {
+            return Err(Error::SecurityError).into();
+        };
         let GetCredentialPortalOptions {
             activation_token,
             top_origin,
@@ -169,7 +177,7 @@ impl CredentialPortalGateway {
         } = options;
         let app_validation_result = validate_app_details(
             connection,
-            &header,
+            sender,
             claimed_app_id,
             origin.clone(),
             top_origin.clone(),
@@ -203,7 +211,7 @@ impl CredentialPortalGateway {
 
         run_ceremony(
             connection,
-            header.sender(),
+            sender,
             request_handle,
             |cancellation| async move {
                 let Some(svc) = cancellation
@@ -236,7 +244,7 @@ impl CredentialPortalGateway {
 /// the token passed to `ceremony`, and the ceremony is reported as cancelled.
 async fn run_ceremony<T, F, Fut>(
     connection: &Connection,
-    sender: Option<&UniqueName<'_>>,
+    sender: &UniqueName<'_>,
     request_handle: Option<OwnedObjectPath>,
     ceremony: F,
 ) -> PortalResult<T, Error>
@@ -246,15 +254,12 @@ where
 {
     let cancellation = CancellationToken::new();
     // Cancel the request if the caller leaves the bus, e.g. because it crashed.
-    let _caller_watch = match sender {
-        Some(sender) => match watch_caller(connection, sender, cancellation.clone()).await {
-            Ok(watch) => Some(watch),
-            Err(err) => {
-                tracing::warn!(%sender, %err, "Failed to watch caller for disconnection");
-                None
-            }
-        },
-        None => None,
+    let _caller_watch = match watch_caller(connection, sender, cancellation.clone()).await {
+        Ok(watch) => Some(watch),
+        Err(err) => {
+            tracing::warn!(%sender, %err, "Failed to watch caller for disconnection");
+            None
+        }
     };
 
     let Some(request_handle) = request_handle else {
@@ -262,9 +267,6 @@ where
         return ceremony_result(result, &cancellation, None);
     };
 
-    let Some(sender) = sender else {
-        return Err(Error::SecurityError).into();
-    };
     if !request_handle
         .as_str()
         .starts_with(PORTAL_REQUEST_PATH_PREFIX)
@@ -582,14 +584,11 @@ fn parse_ui_backend(ui_backend: Option<String>) -> Result<Option<OwnedWellKnownN
 
 async fn validate_app_details(
     connection: &Connection,
-    header: &Header<'_>,
+    unique_name: &UniqueName<'_>,
     claimed_app_id: String,
     claimed_origin: String,
     claimed_top_origin: Option<String>,
 ) -> Result<RequestContext, Error> {
-    let Some(unique_name) = header.sender() else {
-        return Err(Error::SecurityError);
-    };
     let claimed_app_id = if !claimed_app_id.is_empty() {
         claimed_app_id
     } else {
@@ -767,9 +766,10 @@ mod test {
 
     #[tokio::test]
     async fn test_ceremony_without_request_handle_is_not_cancellable() {
+        let (connection, _bus) = connect_test_bus(None).await;
         let result = run_ceremony(
-            &connect_test_bus(None).await.0,
-            None,
+            &connection,
+            connection.unique_name().unwrap(),
             None,
             |cancellation| async move {
                 assert!(!cancellation.is_cancelled());
@@ -789,7 +789,7 @@ mod test {
         let handle = OwnedObjectPath::try_from(PORTAL_SERVICE_PATH).unwrap();
         let result = run_ceremony(
             &connection,
-            connection.unique_name().map(|n| n.inner()),
+            connection.unique_name().unwrap(),
             Some(handle),
             |_| async { Ok(TestResponse::new()) },
         )
@@ -807,7 +807,7 @@ mod test {
 
         let ceremony = run_ceremony(
             &gateway,
-            caller.unique_name().map(|n| n.inner()),
+            caller.unique_name().unwrap(),
             Some(handle.clone()),
             |cancellation| async move {
                 started_tx.send(()).unwrap();
@@ -840,7 +840,7 @@ mod test {
 
         let ceremony = run_ceremony(
             &gateway,
-            Some(&caller_name),
+            &caller_name,
             Some(handle.clone()),
             |cancellation| async move {
                 started_tx.send(()).unwrap();
@@ -867,16 +867,11 @@ mod test {
         let caller_name = caller.unique_name().unwrap().to_owned();
         let (started_tx, started_rx) = oneshot::channel();
 
-        let ceremony = run_ceremony(
-            &gateway,
-            Some(&caller_name),
-            None,
-            |cancellation| async move {
-                started_tx.send(()).unwrap();
-                cancellation.cancelled().await;
-                Err::<TestResponse, _>(Error::NotAllowedError)
-            },
-        );
+        let ceremony = run_ceremony(&gateway, &caller_name, None, |cancellation| async move {
+            started_tx.send(()).unwrap();
+            cancellation.cancelled().await;
+            Err::<TestResponse, _>(Error::NotAllowedError)
+        });
         let client = async {
             started_rx.await.unwrap();
             caller.close().await.unwrap();
@@ -896,15 +891,10 @@ mod test {
         let caller_name = caller.unique_name().unwrap().to_owned();
         caller.close().await.unwrap();
 
-        let ceremony = run_ceremony(
-            &gateway,
-            Some(&caller_name),
-            None,
-            |cancellation| async move {
-                cancellation.cancelled().await;
-                Err::<TestResponse, _>(Error::NotAllowedError)
-            },
-        );
+        let ceremony = run_ceremony(&gateway, &caller_name, None, |cancellation| async move {
+            cancellation.cancelled().await;
+            Err::<TestResponse, _>(Error::NotAllowedError)
+        });
         let result = expect_cancelled_in_time(ceremony).await;
 
         assert_eq!(
@@ -921,7 +911,7 @@ mod test {
 
         let result = run_ceremony(
             &gateway,
-            caller.unique_name().map(|n| n.inner()),
+            caller.unique_name().unwrap(),
             Some(handle.clone()),
             |_| async { Ok(TestResponse::new()) },
         )
