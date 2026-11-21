@@ -798,9 +798,10 @@ impl From<&UsbState> for BackgroundEvent {
             UsbState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
             }
-            UsbState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
-                BackgroundEvent::ErrorCancelled
-            }
+            UsbState::Failed(
+                CredentialServiceError::NonTerminatingCancellation
+                | CredentialServiceError::Cancelled,
+            ) => BackgroundEvent::ErrorCancelled,
             UsbState::Failed(CredentialServiceError::Internal(_))
             | UsbState::Failed(CredentialServiceError::NoCredentials)
             | UsbState::Failed(CredentialServiceError::PinAttemptsExhausted) => {

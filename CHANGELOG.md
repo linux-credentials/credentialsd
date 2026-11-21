@@ -8,6 +8,11 @@
 - `CreateSession` takes the list of available transports (`as`) instead of placeholder devices (`a(ss)`).
 - daemon/ui: Add `TransportUnavailable` restart reason, sent when a transport stops after repeated failures; the UI then stops offering it.
 
+### Gateway API
+
+- Replaced the WebAuthn DOMException-style error names (`SecurityError`, `TypeError`, etc.) returned by `CreateCredential` and `GetCredential` with more descriptive credentialsd errors, such as `InvalidOrigin`, `UntrustedCaller`, `InvalidOptions` and `InvalidUserId`. See `doc/api.md` for the full list and their WebAuthn equivalents. The web extension's native messaging shim must be updated together with the daemon. (#212)
+- Privileged clients get `UserCancelled` when the user cancels the ceremony and `Internal` when it fails because of an internal error. Unprivileged callers still get `NotAllowed` for both. (#212)
+
 ## Improvements
 
 - ui: Display restart reason in case of premature failure
@@ -19,9 +24,13 @@
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - daemon: Allow clients to cancel requests through xdg-desktop-portal.
 - daemon: Cancel a request when the client that started it disconnects, e.g. because it crashed (#274)
+- daemon: End a ceremony when the request's `timeout` passes, kept within WebAuthn's recommended range of 5 to 10 minutes. Until now a ceremony could stay open indefinitely. Privileged clients get the new `Timeout` error; other callers get `NotAllowed`.
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
 - ui: Don't crash when a request ends while the UI is still sending it events, e.g. because the caller disconnected right after starting it
+- daemon: Reject registration requests whose `user.id` is empty or longer than 64 bytes. (#212)
+- daemon: Report an RP ID that does not match the origin as `InvalidOrigin` (previously `TypeError`). (#212)
+- daemon: Return `InvalidOrigin` instead of crashing when an unprivileged client sends an `app:` origin. (#212)
 
 # 0.4.0 [2026-11-05]
 

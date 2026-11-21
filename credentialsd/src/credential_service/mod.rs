@@ -93,6 +93,8 @@ pub enum CredentialServiceError {
     // TODO: We may want to hide the details on this variant from the public API.
     /// Something went wrong with the credential service itself, not the authenticator.
     Internal(String),
+    /// The request was cancelled, by the user in the UI or by the client.
+    Cancelled,
 }
 
 impl std::error::Error for CredentialServiceError {}
@@ -107,6 +109,7 @@ impl Display for CredentialServiceError {
             Self::NonTerminatingCancellation => f.write_str("NonTerminatingCancellation"),
             Self::UnrecoverableTransportError => f.write_str("UnrecoverableTransportError"),
             Self::Internal(s) => write!(f, "InternalError: {s}"),
+            Self::Cancelled => f.write_str("Cancelled"),
         }
     }
 }
@@ -123,6 +126,7 @@ impl TryFrom<&Value<'_>> for CredentialServiceError {
             "PinAttemptsExhausted" => Self::PinAttemptsExhausted,
             "NonTerminatingCancellation" => Self::NonTerminatingCancellation,
             "UnrecoverableTransportError" => Self::UnrecoverableTransportError,
+            "Cancelled" => Self::Cancelled,
             s => Self::Internal(String::from(s)),
         };
         Ok(err)
@@ -318,12 +322,9 @@ impl<H: HybridHandler + Send, N: NfcHandler + Send, U: UsbHandler + Send> Manage
             ctx.cancellation.cancel();
 
             // It's fine if the requestor is no longer listening for the response.
-            // TODO: create Cancelled variant
             _ = ctx
                 .response_channel
-                .send(Err(CredentialServiceError::Internal(format!(
-                    "Cancelled request {request_id}."
-                ))));
+                .send(Err(CredentialServiceError::Cancelled));
         }
     }
 
@@ -582,6 +583,10 @@ pub(super) fn is_ceremony_terminating(err: &CredentialServiceError) -> bool {
 
         // Transient internal errors: do not kill the ceremony.
         CredentialServiceError::Internal(_) => false,
+
+        // Only `cancel_request()` responds with this, and it ends the request
+        // itself.
+        CredentialServiceError::Cancelled => false,
     }
 }
 
@@ -980,6 +985,21 @@ mod tests {
                 state,
             })
         }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_request_responds_with_cancelled() {
+        let service = CredentialService::new(MockHybridHandler, MockNfcHandler, MockUsbHandler);
+        let request = create_test_request().await;
+        let (tx, rx) = oneshot::channel();
+        let (request_id, _) = service.init_request(&request, tx).await.unwrap();
+
+        service.cancel_request(request_id).await;
+
+        assert!(matches!(
+            rx.await.unwrap(),
+            Err(CredentialServiceError::Cancelled)
+        ));
     }
 
     #[tokio::test]
