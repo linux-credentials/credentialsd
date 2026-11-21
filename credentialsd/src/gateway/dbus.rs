@@ -681,9 +681,14 @@ async fn query_peer_pidfd(
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, rc::Rc};
+    use std::{
+        collections::HashMap,
+        io::{BufRead, BufReader},
+        process::{Child, Command, Stdio},
+        rc::Rc,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
-    use gio::{TestDBus, TestDBusFlags};
     use tokio::sync::oneshot;
     use zbus::zvariant::{LE, ObjectPath, OwnedValue, Value, serialized::Context, to_bytes};
 
@@ -973,28 +978,77 @@ mod test {
             .map_err(fdo::Error::from)
     }
 
+    /// Configuration for a private test bus: no service activation, and
+    /// anyone may own any name and send to anyone, like `gio::TestDBus`.
+    const TEST_BUS_CONFIG: &str = r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#;
+
+    /// A private message bus, shared by the connections of one test.
+    ///
+    /// This runs `dbus-daemon` directly rather than using `gio::TestDBus`.
+    /// `TestDBus` sets `DBUS_SESSION_BUS_ADDRESS` and forks a watcher process,
+    /// neither of which is safe while other tests run on other threads: test
+    /// runs aborted spawning `dbus-daemon`, and stuck watchers kept the test
+    /// output open after the run ended.
     #[derive(Clone)]
     struct TestBus {
         address: String,
-        _bus: Rc<TestBusGuard>,
+        _daemon: Rc<TestBusDaemon>,
     }
 
-    struct TestBusGuard(TestDBus);
+    struct TestBusDaemon(Child);
 
-    impl Drop for TestBusGuard {
+    impl Drop for TestBusDaemon {
         fn drop(&mut self) {
-            self.0.down();
+            let _ = self.0.kill();
+            let _ = self.0.wait();
         }
     }
 
     impl TestBus {
         fn new() -> Self {
-            let bus = TestDBus::new(TestDBusFlags::NONE);
-            bus.up();
-            let address = bus.bus_address().expect("test bus to be up").to_string();
+            static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+            let config_path = std::env::temp_dir().join(format!(
+                "credentialsd-test-bus-{}-{}.conf",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::write(&config_path, TEST_BUS_CONFIG).unwrap();
+
+            let spawned = Command::new("dbus-daemon")
+                .arg(format!("--config-file={}", config_path.display()))
+                .args(["--nofork", "--print-address=1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .spawn();
+            let mut daemon = match spawned {
+                Ok(child) => TestBusDaemon(child),
+                Err(err) => {
+                    let _ = std::fs::remove_file(&config_path);
+                    panic!("dbus-daemon must be installed to run these tests: {err}");
+                }
+            };
+            let mut address = String::new();
+            let read = BufReader::new(daemon.0.stdout.take().unwrap()).read_line(&mut address);
+            // The daemon has read its configuration once it prints its address.
+            let _ = std::fs::remove_file(&config_path);
+            read.unwrap();
+            let address = address.trim().to_string();
+            assert!(!address.is_empty(), "dbus-daemon did not print its address");
             Self {
                 address,
-                _bus: Rc::new(TestBusGuard(bus)),
+                _daemon: Rc::new(daemon),
             }
         }
     }
