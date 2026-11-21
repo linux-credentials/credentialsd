@@ -14,7 +14,9 @@ credentialsd-common = { path = "../credentialsd-common" }
 
 futures-lite.workspace = true
 libc.workspace = true
+rand = "=0.10.2"
 serde.workspace = true
+sha2 = "=0.10.9"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 zbus = { workspace = true, default-features = false, features = ["async-io"]}
@@ -25,3 +27,4 @@ gio-unix = "=0.22.8"
 gtk = { version = "=0.11.4", package = "gtk4", features = ["v4_14"] }
 gdk-wayland = { version = "=0.11.4", package = "gdk4-wayland", optional = true }
 qrcode = "=0.14.1"
+zeroize = "=1.9.0"

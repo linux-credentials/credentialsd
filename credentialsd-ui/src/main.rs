@@ -4,6 +4,7 @@ mod config;
 mod dbus;
 mod gui;
 mod hardening;
+mod pin_history;
 
 use std::error::Error;
 
