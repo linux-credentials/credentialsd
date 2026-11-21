@@ -107,9 +107,8 @@ async fn handle<M: ManageDevice + Debug + Send + Sync + 'static, UC: UiControlle
     client_cancellation: CancellationToken,
 ) -> Result<CredentialResponse, CredentialServiceError> {
     if client_cancellation.is_cancelled() {
-        return Err(CredentialServiceError::Internal(
-            "Request cancelled by client before it started.".to_string(),
-        ));
+        tracing::debug!("Request cancelled by client before it started.");
+        return Err(CredentialServiceError::Cancelled);
     }
     let (request_tx, request_rx) = oneshot::channel();
     let (request_id, cancellation_token) = svc.lock().await.init_request(&msg, request_tx).await?;
@@ -412,12 +411,30 @@ impl CredentialRequestController for CredentialRequestControllerClient {
             .unwrap();
         let response = rx.await.map_err(|_| {
             tracing::error!("Credential response channel closed prematurely");
-            WebAuthnError::NotAllowedError
+            WebAuthnError::Internal
         })?;
-        response.map_err(|err| match err {
-            CredentialServiceError::CredentialExcluded => WebAuthnError::InvalidStateError,
-            _ => WebAuthnError::NotAllowedError,
-        })
+        response.map_err(ceremony_error)
+    }
+}
+
+/// Maps the error a ceremony ended with to the error reported to the client.
+///
+/// Errors about the authenticators themselves, like a device with no matching
+/// credentials, don't end a ceremony: the transport restarts and the user can
+/// try again. So apart from an excluded credential and a cancelled request,
+/// anything that ends a ceremony is an internal failure.
+fn ceremony_error(err: CredentialServiceError) -> WebAuthnError {
+    match err {
+        CredentialServiceError::CredentialExcluded => WebAuthnError::CredentialExcluded,
+        CredentialServiceError::Cancelled => WebAuthnError::UserCancelled,
+        CredentialServiceError::Internal(err) => {
+            tracing::error!(%err, "Ceremony failed");
+            WebAuthnError::Internal
+        }
+        err => {
+            tracing::error!(?err, "Ceremony ended with an unexpected error");
+            WebAuthnError::Internal
+        }
     }
 }
 
@@ -508,6 +525,36 @@ mod tests {
             .await
             .expect("Failed to parse request JSON");
         CredentialRequest::CreatePublicKeyCredentialRequest(request)
+    }
+
+    #[test]
+    fn test_cancelled_ceremony_is_reported_as_user_cancelled() {
+        assert_eq!(
+            ceremony_error(CredentialServiceError::Cancelled),
+            WebAuthnError::UserCancelled
+        );
+    }
+
+    #[test]
+    fn test_excluded_credential_is_reported_as_excluded() {
+        assert_eq!(
+            ceremony_error(CredentialServiceError::CredentialExcluded),
+            WebAuthnError::CredentialExcluded
+        );
+    }
+
+    #[test]
+    fn test_other_ceremony_failures_are_reported_as_internal() {
+        for err in [
+            CredentialServiceError::Internal("UI not available".to_string()),
+            CredentialServiceError::AuthenticatorError,
+            CredentialServiceError::NoCredentials,
+            CredentialServiceError::PinAttemptsExhausted,
+            CredentialServiceError::UnrecoverableTransportError,
+            CredentialServiceError::NonTerminatingCancellation,
+        ] {
+            assert_eq!(ceremony_error(err), WebAuthnError::Internal);
+        }
     }
 
     #[tokio::test]

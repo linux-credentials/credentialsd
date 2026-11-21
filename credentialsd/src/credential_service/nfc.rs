@@ -660,9 +660,10 @@ impl From<&NfcState> for BackgroundEvent {
             NfcState::Failed(CredentialServiceError::CredentialExcluded) => {
                 BackgroundEvent::ErrorCredentialExcluded
             }
-            NfcState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
-                BackgroundEvent::ErrorCancelled
-            }
+            NfcState::Failed(
+                CredentialServiceError::NonTerminatingCancellation
+                | CredentialServiceError::Cancelled,
+            ) => BackgroundEvent::ErrorCancelled,
             NfcState::Failed(CredentialServiceError::Internal(_))
             | NfcState::Failed(CredentialServiceError::NoCredentials)
             | NfcState::Failed(CredentialServiceError::PinAttemptsExhausted) => {

@@ -273,9 +273,10 @@ impl From<&HybridState> for BackgroundEvent {
                 BackgroundEvent::ErrorCredentialExcluded
             }
             // This should currently never be reached, but we'll likely use it in future refactoring
-            HybridState::Failed(CredentialServiceError::NonTerminatingCancellation) => {
-                BackgroundEvent::ErrorCancelled
-            }
+            HybridState::Failed(
+                CredentialServiceError::NonTerminatingCancellation
+                | CredentialServiceError::Cancelled,
+            ) => BackgroundEvent::ErrorCancelled,
             HybridState::Failed(CredentialServiceError::Internal(_))
             | HybridState::Failed(CredentialServiceError::NoCredentials)
             | HybridState::Failed(CredentialServiceError::PinAttemptsExhausted) => {
