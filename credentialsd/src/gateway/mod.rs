@@ -61,6 +61,12 @@ struct RequestContext {
     request_kind: RequestKind,
 }
 
+impl RequestContext {
+    fn is_privileged(&self) -> bool {
+        matches!(self.request_kind, RequestKind::Privileged { .. })
+    }
+}
+
 impl From<RequestContext> for ClientDetails {
     fn from(value: RequestContext) -> Self {
         ClientDetails {
@@ -80,6 +86,50 @@ struct GatewayService {
 
 impl GatewayService {
     async fn handle_create_credential(
+        &self,
+        request: CreateCredentialRequest,
+        context: RequestContext,
+        cancellation: CancellationToken,
+        parent_window: Option<WindowHandle>,
+        activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
+    ) -> Result<CreateCredentialResponse, WebAuthnError> {
+        let privileged = context.is_privileged();
+        self.create_credential(
+            request,
+            context,
+            cancellation,
+            parent_window,
+            activation_token,
+            ui_backend,
+        )
+        .await
+        .map_err(|err| err.for_caller(privileged))
+    }
+
+    async fn handle_get_credential(
+        &self,
+        request: GetCredentialRequest,
+        context: RequestContext,
+        cancellation: CancellationToken,
+        parent_window: Option<WindowHandle>,
+        activation_token: Option<String>,
+        ui_backend: Option<OwnedWellKnownName>,
+    ) -> Result<GetCredentialResponse, WebAuthnError> {
+        let privileged = context.is_privileged();
+        self.get_credential(
+            request,
+            context,
+            cancellation,
+            parent_window,
+            activation_token,
+            ui_backend,
+        )
+        .await
+        .map_err(|err| err.for_caller(privileged))
+    }
+
+    async fn create_credential(
         &self,
         request: CreateCredentialRequest,
         context: RequestContext,
@@ -131,16 +181,14 @@ impl GatewayService {
                         tracing::error!(
                             "Failed to parse credential response from authenticator: {err}"
                         );
-                        // Using NotAllowed as a catch-all error.
-                        WebAuthnError::NotAllowed
+                        WebAuthnError::Internal
                     })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
                 // tracing::error!("Expected create public key credential response, received {response:?}");
                 tracing::error!("Did not receive expected create public key credential response.");
-                // Using NotAllowed as a catch-all error.
-                Err(WebAuthnError::NotAllowed)
+                Err(WebAuthnError::Internal)
             }
         } else {
             tracing::error!("Unknown credential type request: {}", request.r#type);
@@ -148,7 +196,7 @@ impl GatewayService {
         }
     }
 
-    async fn handle_get_credential(
+    async fn get_credential(
         &self,
         request: GetCredentialRequest,
         context: RequestContext,
@@ -198,16 +246,14 @@ impl GatewayService {
                             tracing::error!(
                                 "Failed to parse credential response from authenticator: {err}"
                             );
-                            // Using NotAllowed as a catch-all error.
-                            WebAuthnError::NotAllowed
+                            WebAuthnError::Internal
                         })?;
                 Ok(public_key_response.into())
             } else {
                 // TODO: is response safe to log here?
                 // tracing::error!("Expected get public key credential response, received {response:?}");
                 tracing::error!("Did not receive expected get public key credential response.");
-                // Using NotAllowed as a catch-all error.
-                Err(WebAuthnError::NotAllowed)
+                Err(WebAuthnError::Internal)
             }
         } else {
             tracing::error!(
@@ -508,12 +554,14 @@ impl From<CreatePublicKeyCredentialResponse> for CreateCredentialResponse {
 /// that they can carry more detail and be used by non-WebAuthn callers. Clients
 /// map them back to WebAuthn errors as needed.
 ///
-/// Only errors that the caller could deduce from its own request parameters
-/// are reported specifically. Anything that depends on what the user did (or
-/// did not do) during the ceremony is reported as [`WebAuthnError::NotAllowed`],
-/// so that an unprivileged caller cannot learn whether the user has
-/// credentials without their consent.
-#[derive(Debug, PartialEq, Eq)]
+/// Errors that the caller could deduce from its own request parameters are
+/// reported to every caller. Errors about how the ceremony went, like the user
+/// cancelling it, are only reported to privileged clients, which are trusted
+/// to pass them on to websites as WebAuthn errors that keep the user's
+/// privacy. Other callers get [`WebAuthnError::NotAllowed`] instead (see
+/// [`WebAuthnError::for_caller`]), so that they cannot learn whether the user
+/// has credentials without the user's consent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WebAuthnError {
     /// The request was cancelled by the client. Not returned yet.
     ///
@@ -565,11 +613,34 @@ pub enum WebAuthnError {
     /// WebAuthn equivalent: `TypeError`.
     InvalidOptions,
 
-    /// A catch-all error, including the user cancelling the ceremony, no
-    /// matching credentials, or an internal failure.
+    /// The user cancelled the ceremony. Only reported to privileged clients.
+    ///
+    /// WebAuthn equivalent: `NotAllowedError`.
+    UserCancelled,
+
+    /// The ceremony failed because of a problem in credentialsd or its UI,
+    /// not because of anything the user or the request did. Only reported to
+    /// privileged clients.
+    ///
+    /// WebAuthn equivalent: `NotAllowedError`.
+    Internal,
+
+    /// A catch-all error. Unprivileged clients get this for the errors that
+    /// only privileged clients are told about.
     ///
     /// WebAuthn equivalent: `NotAllowedError`.
     NotAllowed,
+}
+
+impl WebAuthnError {
+    /// Returns the error to report to a caller, hiding the ones that only
+    /// privileged clients may see.
+    fn for_caller(self, privileged: bool) -> Self {
+        match self {
+            Self::UserCancelled | Self::Internal if !privileged => Self::NotAllowed,
+            err => err,
+        }
+    }
 }
 
 impl std::error::Error for WebAuthnError {}
@@ -592,6 +663,8 @@ impl Display for WebAuthnError {
             WebAuthnError::UntrustedCaller => "The calling application could not be verified.",
             WebAuthnError::InvalidUserId => "user.id must be between 1 and 64 bytes long.",
             WebAuthnError::InvalidOptions => "Invalid request options specified.",
+            WebAuthnError::UserCancelled => "The user cancelled the operation.",
+            WebAuthnError::Internal => "The operation failed because of an internal error.",
             WebAuthnError::NotAllowed => {
                 "An unspecified error occurred, and the operation is not allowed to continue."
             }
@@ -603,10 +676,132 @@ impl Display for WebAuthnError {
 mod test {
     use crate::webauthn::{AppId, NavigationContext, Origin};
 
+    use async_trait::async_trait;
+    use credentialsd_common::model::WindowHandle;
+    use tokio_util::sync::CancellationToken;
+    use zbus::names::OwnedWellKnownName;
+
+    use crate::{
+        dbus::CredentialRequestController,
+        model::{ClientDetails, CredentialRequest, CredentialResponse},
+    };
+
     use super::{
+        CreateCredentialRequest, CreatePublicKeyCredentialRequest, GatewayService, RequestContext,
         RequestKind, WebAuthnError, check_origin_from_app, check_origin_from_privileged_client,
         trusted_client_override,
     };
+
+    /// A controller whose ceremonies always fail with the given error.
+    struct FailingController(WebAuthnError);
+
+    #[async_trait]
+    impl CredentialRequestController for FailingController {
+        async fn request_credential(
+            &self,
+            _requesting_app: ClientDetails,
+            _request: CredentialRequest,
+            _cancellation: CancellationToken,
+            _window_handle: Option<WindowHandle>,
+            _activation_token: Option<String>,
+            _ui_backend: Option<OwnedWellKnownName>,
+        ) -> Result<CredentialResponse, WebAuthnError> {
+            Err(self.0)
+        }
+    }
+
+    async fn create_credential_error(
+        err: WebAuthnError,
+        request_kind: RequestKind,
+    ) -> WebAuthnError {
+        let service = GatewayService {
+            request_controller: Box::new(FailingController(err)),
+        };
+        let request = CreateCredentialRequest {
+            r#type: "publicKey".to_string(),
+            public_key: Some(CreatePublicKeyCredentialRequest {
+                request_json: r#"{"rp":{"id":"example.com","name":"x"},"user":{"id":"AAAA","name":"a","displayName":"a"},"challenge":"AAAAAAAAAAAAAAAAAAAAAA","pubKeyCredParams":[{"type":"public-key","alg":-7}]}"#.to_string(),
+            }),
+        };
+        let context = RequestContext {
+            app_id: "org.example.App".parse().unwrap(),
+            pid: 0,
+            request_kind,
+        };
+        service
+            .handle_create_credential(request, context, CancellationToken::new(), None, None, None)
+            .await
+            .err()
+            .expect("the ceremony should fail")
+    }
+
+    #[tokio::test]
+    async fn test_gateway_hides_outcome_errors_from_unprivileged_callers() {
+        let origin: Origin = "https://example.com".parse().unwrap();
+        for err in OUTCOME_ERRORS {
+            assert_eq!(
+                create_credential_error(err, RequestKind::Unprivileged(origin.clone())).await,
+                WebAuthnError::NotAllowed,
+                "{err:?}"
+            );
+            assert_eq!(
+                create_credential_error(
+                    err,
+                    RequestKind::Privileged {
+                        origin: origin.clone(),
+                        top_origin: None,
+                    }
+                )
+                .await,
+                err
+            );
+        }
+    }
+
+    /// Errors that every caller may see. Apart from `CredentialExcluded`, which
+    /// WebAuthn also reports to websites once the user has confirmed it on the
+    /// authenticator, they only depend on the request.
+    const REQUEST_ERRORS: [WebAuthnError; 9] = [
+        WebAuthnError::Aborted,
+        WebAuthnError::UserVerificationUnsatisfiable,
+        WebAuthnError::DiscoverableCredentialUnsatisfiable,
+        WebAuthnError::CredentialExcluded,
+        WebAuthnError::NotSupported,
+        WebAuthnError::InvalidOrigin,
+        WebAuthnError::UntrustedCaller,
+        WebAuthnError::InvalidUserId,
+        WebAuthnError::InvalidOptions,
+    ];
+
+    /// Errors about how the ceremony went, which only privileged callers see.
+    const OUTCOME_ERRORS: [WebAuthnError; 2] =
+        [WebAuthnError::UserCancelled, WebAuthnError::Internal];
+
+    #[test]
+    fn test_outcome_errors_are_hidden_from_unprivileged_callers() {
+        for err in OUTCOME_ERRORS {
+            assert_eq!(err.for_caller(false), WebAuthnError::NotAllowed, "{err:?}");
+        }
+    }
+
+    #[test]
+    fn test_outcome_errors_are_shown_to_privileged_callers() {
+        for err in OUTCOME_ERRORS {
+            assert_eq!(err.for_caller(true), err);
+        }
+    }
+
+    #[test]
+    fn test_request_errors_are_shown_to_every_caller() {
+        for privileged in [true, false] {
+            for err in REQUEST_ERRORS
+                .into_iter()
+                .chain([WebAuthnError::NotAllowed])
+            {
+                assert_eq!(err.for_caller(privileged), err, "privileged: {privileged}");
+            }
+        }
+    }
 
     fn check_same_origin(origin: &str) -> Result<NavigationContext, WebAuthnError> {
         let origin = origin.parse().unwrap();

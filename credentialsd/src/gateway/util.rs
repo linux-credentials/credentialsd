@@ -57,14 +57,14 @@ impl TryFrom<&NavigationContext> for LibwebauthnRequestOrigin {
 fn load_system_psl() -> Result<SystemPublicSuffixList, WebAuthnError> {
     SystemPublicSuffixList::auto().map_err(|err| {
         tracing::error!("Failed to load system Public Suffix List: {err}");
-        WebAuthnError::NotAllowed
+        WebAuthnError::Internal
     })
 }
 
 fn build_related_origins_source() -> Result<ReqwestRelatedOriginsSource, WebAuthnError> {
     ReqwestRelatedOriginsSource::new().map_err(|err| {
         tracing::error!("Failed to build related-origins source: {err}");
-        WebAuthnError::NotAllowed
+        WebAuthnError::Internal
     })
 }
 

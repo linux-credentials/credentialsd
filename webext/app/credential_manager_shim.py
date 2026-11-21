@@ -79,6 +79,9 @@ class PortalError(Exception):
                 return SecurityError
             case "InvalidUserId" | "InvalidOptions":
                 return TypeError
+            case "UserCancelled" | "Internal":
+                # Browsers must not tell websites why a ceremony failed.
+                return NotAllowedError
             case _:
                 return NotAllowedError
 

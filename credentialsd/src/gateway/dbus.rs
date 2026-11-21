@@ -465,6 +465,8 @@ enum Error {
     UntrustedCaller,
     InvalidUserId,
     InvalidOptions,
+    UserCancelled,
+    Internal,
     NotAllowed,
 }
 
@@ -482,6 +484,8 @@ impl From<WebAuthnError> for Error {
             WebAuthnError::UntrustedCaller => Self::UntrustedCaller,
             WebAuthnError::InvalidUserId => Self::InvalidUserId,
             WebAuthnError::InvalidOptions => Self::InvalidOptions,
+            WebAuthnError::UserCancelled => Self::UserCancelled,
+            WebAuthnError::Internal => Self::Internal,
             WebAuthnError::NotAllowed => Self::NotAllowed,
         }
     }

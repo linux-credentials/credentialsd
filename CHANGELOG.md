@@ -11,6 +11,7 @@
 ### Gateway API
 
 - Replaced the WebAuthn DOMException-style error names (`SecurityError`, `TypeError`, etc.) returned by `CreateCredential` and `GetCredential` with more descriptive credentialsd errors, such as `InvalidOrigin`, `UntrustedCaller`, `InvalidOptions` and `InvalidUserId`. See `doc/api.md` for the full list and their WebAuthn equivalents. The web extension's native messaging shim must be updated together with the daemon. (#212)
+- Privileged clients get `UserCancelled` when the user cancels the ceremony and `Internal` when it fails because of an internal error. Unprivileged callers still get `NotAllowed` for both. (#212)
 
 ## Improvements
 
