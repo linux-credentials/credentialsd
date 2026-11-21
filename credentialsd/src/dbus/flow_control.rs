@@ -343,7 +343,7 @@ async fn cancel_on_client_request<M: ManageDevice>(
         biased;
         _ = request_cancellation.cancelled() => false,
         _ = client_cancellation.cancelled() => {
-            tracing::debug!(%request_id, "Client closed the request, cancelling");
+            tracing::debug!(%request_id, "Request cancelled by the client or timed out, cancelling");
             svc.lock().await.cancel_request(request_id).await;
             true
         }

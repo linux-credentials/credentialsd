@@ -7,9 +7,11 @@ mod util;
 use std::{
     collections::HashMap,
     fmt::Display,
+    future::Future,
     os::fd::{AsRawFd, BorrowedFd},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use credentialsd_common::model::WindowHandle;
@@ -162,17 +164,21 @@ impl GatewayService {
             let cred_request =
                 CredentialRequest::CreatePublicKeyCredentialRequest(make_cred_request.clone());
 
-            let response = self
-                .request_controller
-                .request_credential(
-                    context.into(),
-                    cred_request,
-                    cancellation,
-                    parent_window,
-                    activation_token,
-                    ui_backend,
-                )
-                .await?;
+            let response = with_timeout(
+                ceremony_timeout(make_cred_request.timeout),
+                &cancellation,
+                |cancellation| {
+                    self.request_controller.request_credential(
+                        context.into(),
+                        cred_request,
+                        cancellation,
+                        parent_window,
+                        activation_token,
+                        ui_backend,
+                    )
+                },
+            )
+            .await?;
 
             if let CredentialResponse::CreatePublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response =
@@ -227,17 +233,21 @@ impl GatewayService {
             let cred_request =
                 CredentialRequest::GetPublicKeyCredentialRequest(get_cred_request.clone());
 
-            let response = self
-                .request_controller
-                .request_credential(
-                    context.into(),
-                    cred_request,
-                    cancellation,
-                    parent_window,
-                    activation_token,
-                    ui_backend,
-                )
-                .await?;
+            let response = with_timeout(
+                ceremony_timeout(get_cred_request.timeout),
+                &cancellation,
+                |cancellation| {
+                    self.request_controller.request_credential(
+                        context.into(),
+                        cred_request,
+                        cancellation,
+                        parent_window,
+                        activation_token,
+                        ui_backend,
+                    )
+                },
+            )
+            .await?;
 
             if let CredentialResponse::GetPublicKeyCredentialResponse(cred_response) = response {
                 let public_key_response =
@@ -260,6 +270,56 @@ impl GatewayService {
                 "Request did not match any known credential types. Supported types: [`public_key`]."
             );
             Err(WebAuthnError::InvalidOptions)
+        }
+    }
+}
+
+/// The shortest time a ceremony may take, following WebAuthn's recommended
+/// range for ceremony timeouts.
+const MIN_CEREMONY_TIMEOUT: Duration = Duration::from_secs(300);
+/// The longest time a ceremony may take, following WebAuthn's recommended
+/// range for ceremony timeouts.
+const MAX_CEREMONY_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Returns how long a ceremony may take, given the request's `timeout`.
+///
+/// Requests that leave `timeout` out get libwebauthn's default of 5 minutes.
+/// libwebauthn still uses the request's own `timeout` for each command it
+/// sends to an authenticator.
+fn ceremony_timeout(requested: Duration) -> Duration {
+    requested.clamp(MIN_CEREMONY_TIMEOUT, MAX_CEREMONY_TIMEOUT)
+}
+
+/// Runs `ceremony`, cancelling it if it takes longer than `timeout`.
+///
+/// `ceremony` is given a token that is cancelled when the client cancels the
+/// request or the timeout passes. It should end soon after that. A timeout is
+/// reported as [`WebAuthnError::Timeout`], unless the ceremony still ends in
+/// another way, e.g. because the authenticator answered at the same time.
+async fn with_timeout<T, F, Fut>(
+    timeout: Duration,
+    client_cancellation: &CancellationToken,
+    ceremony: F,
+) -> Result<T, WebAuthnError>
+where
+    F: FnOnce(CancellationToken) -> Fut,
+    Fut: Future<Output = Result<T, WebAuthnError>>,
+{
+    let cancellation = client_cancellation.child_token();
+    let ceremony = ceremony(cancellation.clone());
+    tokio::pin!(ceremony);
+    tokio::select! {
+        biased;
+        result = &mut ceremony => result,
+        () = tokio::time::sleep(timeout) => {
+            tracing::info!(?timeout, "Ceremony timed out, cancelling it");
+            cancellation.cancel();
+            // Wait for the ceremony to end, so that its UI is dismissed before
+            // the next request starts.
+            ceremony.await.map_err(|err| match err {
+                WebAuthnError::UserCancelled => WebAuthnError::Timeout,
+                err => err,
+            })
         }
     }
 }
@@ -618,6 +678,12 @@ pub enum WebAuthnError {
     /// WebAuthn equivalent: `NotAllowedError`.
     UserCancelled,
 
+    /// The ceremony did not finish before its timeout. Only reported to
+    /// privileged clients.
+    ///
+    /// WebAuthn equivalent: `NotAllowedError`.
+    Timeout,
+
     /// The ceremony failed because of a problem in credentialsd or its UI,
     /// not because of anything the user or the request did. Only reported to
     /// privileged clients.
@@ -637,7 +703,7 @@ impl WebAuthnError {
     /// privileged clients may see.
     fn for_caller(self, privileged: bool) -> Self {
         match self {
-            Self::UserCancelled | Self::Internal if !privileged => Self::NotAllowed,
+            Self::UserCancelled | Self::Timeout | Self::Internal if !privileged => Self::NotAllowed,
             err => err,
         }
     }
@@ -664,6 +730,7 @@ impl Display for WebAuthnError {
             WebAuthnError::InvalidUserId => "user.id must be between 1 and 64 bytes long.",
             WebAuthnError::InvalidOptions => "Invalid request options specified.",
             WebAuthnError::UserCancelled => "The user cancelled the operation.",
+            WebAuthnError::Timeout => "The operation timed out.",
             WebAuthnError::Internal => "The operation failed because of an internal error.",
             WebAuthnError::NotAllowed => {
                 "An unspecified error occurred, and the operation is not allowed to continue."
@@ -675,6 +742,8 @@ impl Display for WebAuthnError {
 #[cfg(test)]
 mod test {
     use crate::webauthn::{AppId, NavigationContext, Origin};
+
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use credentialsd_common::model::WindowHandle;
@@ -688,8 +757,8 @@ mod test {
 
     use super::{
         CreateCredentialRequest, CreatePublicKeyCredentialRequest, GatewayService, RequestContext,
-        RequestKind, WebAuthnError, check_origin_from_app, check_origin_from_privileged_client,
-        trusted_client_override,
+        RequestKind, WebAuthnError, ceremony_timeout, check_origin_from_app,
+        check_origin_from_privileged_client, trusted_client_override, with_timeout,
     };
 
     /// A controller whose ceremonies always fail with the given error.
@@ -774,8 +843,82 @@ mod test {
     ];
 
     /// Errors about how the ceremony went, which only privileged callers see.
-    const OUTCOME_ERRORS: [WebAuthnError; 2] =
-        [WebAuthnError::UserCancelled, WebAuthnError::Internal];
+    const OUTCOME_ERRORS: [WebAuthnError; 3] = [
+        WebAuthnError::UserCancelled,
+        WebAuthnError::Timeout,
+        WebAuthnError::Internal,
+    ];
+
+    #[test]
+    fn test_ceremony_timeout_is_kept_within_the_recommended_range() {
+        let secs = Duration::from_secs;
+        assert_eq!(ceremony_timeout(secs(30)), secs(300));
+        assert_eq!(ceremony_timeout(secs(300)), secs(300));
+        assert_eq!(ceremony_timeout(secs(450)), secs(450));
+        assert_eq!(ceremony_timeout(secs(3600)), secs(600));
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_is_cancelled_when_it_times_out() {
+        let client_cancellation = CancellationToken::new();
+        let result: Result<(), _> = with_timeout(
+            Duration::from_millis(10),
+            &client_cancellation,
+            |cancellation| async move {
+                // Like the real flow, end the ceremony once it is cancelled.
+                cancellation.cancelled().await;
+                Err(WebAuthnError::UserCancelled)
+            },
+        )
+        .await;
+        assert_eq!(result, Err(WebAuthnError::Timeout));
+        assert!(
+            !client_cancellation.is_cancelled(),
+            "a timeout must not look like the client cancelling"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_other_errors_are_kept_when_the_ceremony_times_out() {
+        let result: Result<(), _> = with_timeout(
+            Duration::from_millis(10),
+            &CancellationToken::new(),
+            |cancellation| async move {
+                // The authenticator answered just as the ceremony was cancelled.
+                cancellation.cancelled().await;
+                Err(WebAuthnError::CredentialExcluded)
+            },
+        )
+        .await;
+        assert_eq!(result, Err(WebAuthnError::CredentialExcluded));
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_result_is_kept_when_it_ends_in_time() {
+        let result: Result<(), _> = with_timeout(
+            Duration::from_secs(60),
+            &CancellationToken::new(),
+            |_| async { Err(WebAuthnError::CredentialExcluded) },
+        )
+        .await;
+        assert_eq!(result, Err(WebAuthnError::CredentialExcluded));
+    }
+
+    #[tokio::test]
+    async fn test_ceremony_is_cancelled_when_the_client_cancels() {
+        let client_cancellation = CancellationToken::new();
+        client_cancellation.cancel();
+        let result: Result<(), _> = with_timeout(
+            Duration::from_secs(60),
+            &client_cancellation,
+            |cancellation| async move {
+                cancellation.cancelled().await;
+                Err(WebAuthnError::UserCancelled)
+            },
+        )
+        .await;
+        assert_eq!(result, Err(WebAuthnError::UserCancelled));
+    }
 
     #[test]
     fn test_outcome_errors_are_hidden_from_unprivileged_callers() {

@@ -324,7 +324,7 @@ Errors are returned in the `error` result as `xyz.iinuwa.credentialsd.<Name>`.
 Errors that the caller could deduce from its own request are reported
 specifically to every caller, as is `CredentialExcluded`, which WebAuthn also
 reports to websites once the user has confirmed it on the authenticator. Errors about how the ceremony ended
-(`UserCancelled`, `Internal`) are only reported to privileged clients, such as
+(`UserCancelled`, `Timeout`, `Internal`) are only reported to privileged clients, such as
 browsers, which need them to tell the user what happened but must still map them
 to `NotAllowedError` before passing them to a website. Unprivileged callers get
 `NotAllowed` instead, so that they cannot learn whether the user has credentials
@@ -340,8 +340,9 @@ without their consent.
 - `DiscoverableCredentialUnsatisfiable`: A discoverable credential is required, but no available authenticator supports it. WebAuthn: `ConstraintError`. (Not returned yet.)
 - `CredentialExcluded`: The authenticator contains a credential listed in `excludeCredentials`. WebAuthn: `InvalidStateError`.
 - `UserCancelled`: The user cancelled the ceremony. Privileged clients only. WebAuthn: `NotAllowedError`.
+- `Timeout`: The ceremony did not finish in time. The ceremony as a whole may take the request's `timeout`, kept between 5 and 10 minutes (WebAuthn's recommended range), or 5 minutes without one. The timer starts when the ceremony starts, not while the request waits for an earlier one. Privileged clients only. WebAuthn: `NotAllowedError`.
 - `Internal`: The ceremony failed because of an internal error in credentialsd. Privileged clients only. WebAuthn: `NotAllowedError`.
-- `NotAllowed`: Catch-all error. Unprivileged callers also get it instead of `UserCancelled` and `Internal`. WebAuthn: `NotAllowedError`.
+- `NotAllowed`: Catch-all error. Unprivileged callers also get it instead of `UserCancelled`, `Timeout` and `Internal`. WebAuthn: `NotAllowedError`.
 
 ## `GetCredential(credRequest: GetCredentialRequest) -> GetCredentialResponse`
 
@@ -442,8 +443,9 @@ Errors are returned as for [`CreateCredential`](#errors).
 - `InvalidOptions`: The request options (or the app ID) are missing or malformed. WebAuthn: `TypeError`.
 - `NotSupported`: A request option is not supported. WebAuthn: `NotSupportedError`.
 - `UserCancelled`: The user cancelled the ceremony. Privileged clients only. WebAuthn: `NotAllowedError`.
+- `Timeout`: The ceremony did not finish in time. The ceremony as a whole may take the request's `timeout`, kept between 5 and 10 minutes (WebAuthn's recommended range), or 5 minutes without one. The timer starts when the ceremony starts, not while the request waits for an earlier one. Privileged clients only. WebAuthn: `NotAllowedError`.
 - `Internal`: The ceremony failed because of an internal error in credentialsd. Privileged clients only. WebAuthn: `NotAllowedError`.
-- `NotAllowed`: Catch-all error. Unprivileged callers also get it instead of `UserCancelled` and `Internal`. WebAuthn: `NotAllowedError`.
+- `NotAllowed`: Catch-all error. Unprivileged callers also get it instead of `UserCancelled`, `Timeout` and `Internal`. WebAuthn: `NotAllowedError`.
 
 # Flow Control API
 

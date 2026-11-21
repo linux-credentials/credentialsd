@@ -466,6 +466,7 @@ enum Error {
     InvalidUserId,
     InvalidOptions,
     UserCancelled,
+    Timeout,
     Internal,
     NotAllowed,
 }
@@ -485,6 +486,7 @@ impl From<WebAuthnError> for Error {
             WebAuthnError::InvalidUserId => Self::InvalidUserId,
             WebAuthnError::InvalidOptions => Self::InvalidOptions,
             WebAuthnError::UserCancelled => Self::UserCancelled,
+            WebAuthnError::Timeout => Self::Timeout,
             WebAuthnError::Internal => Self::Internal,
             WebAuthnError::NotAllowed => Self::NotAllowed,
         }

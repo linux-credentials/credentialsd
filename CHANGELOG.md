@@ -24,6 +24,7 @@
 - daemon: Build the list of devices offered to the user from libwebauthn's `available_transports()`, the same source discovery uses (#32)
 - daemon: Allow clients to cancel requests through xdg-desktop-portal.
 - daemon: Cancel a request when the client that started it disconnects, e.g. because it crashed (#274)
+- daemon: End a ceremony when the request's `timeout` passes, kept within WebAuthn's recommended range of 5 to 10 minutes. Until now a ceremony could stay open indefinitely. Privileged clients get the new `Timeout` error; other callers get `NotAllowed`.
 - ui: Pass the caller's activation token to the compositor when showing the dialog, so it can take focus when the requesting window is in the background (#152)
 - ui: Disable core dumps for the UI process, which handles typed PINs. Build with `-Denable_core_dumps=true` to allow them for debugging (#209)
 - ui: Don't crash when a request ends while the UI is still sending it events, e.g. because the caller disconnected right after starting it
